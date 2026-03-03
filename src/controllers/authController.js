@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { generateToken, hashPassword, verifyPassword } = require('../utils/helpers');
+const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
@@ -16,95 +17,87 @@ const createTransporter = () => nodemailer.createTransport({
 
 
 // User Registration
-const register = async (req, res) => {
-  try {// Always normalise email — prevents duplicate accounts with different casing
-    const email = (req.body.email || '').toLowerCase().trim();
-    const { password, username, deviceFingerprint } = req.body;
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-
-    // Validation
-    if (!email || !password || password.length < 6) {
-      return res.status(400).json({
-        error: 'Invalid input',
-        message: 'Email and password (min 6 chars) are required'
-      });
-    }
-
-    // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email }
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        error: 'User already exists',
-        message: 'Email is already registered'
-      });
-    }
-
-    // Process referral if provided
-    let referredById = null;
-    if (req.body.referredByCode) {
-      const inviter = await prisma.user.findUnique({
-        where: { referralCode: req.body.referredByCode }
-      });
-      if (inviter) {
-        referredById = inviter.id;
-      }
-    }
-
-    // Hash password
-    const hashedPassword = await hashPassword(password);
-
-    // Generate unique referral code for this new user
-    const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
-
-    // Create user
-    const user = await prisma.$transaction(async (tx) => {
-      const newUser = await tx.user.create({
-        data: {
-          email,
-          password: hashedPassword,
-          username: username || email.split('@')[0],
-          referralCode,
-          referredById,
-          ipAddress,
-          deviceFingerprint: deviceFingerprint || null
-        }
-      });
-
-      if (referredById) {
-        await tx.user.update({
-          where: { id: referredById },
-          data: { totalReferrals: { increment: 1 } }
-        });
-      }
-
-      return newUser;
-    });
-
-    // Generate token
-    const token = generateToken(user.id);
-
-    res.status(201).json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username
-        },
-        token
-      }
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
-      error: 'Registration failed',
-      message: error.message
-    });
+const register = catchAsync(async (req, res, next) => {
+  if (!req || !req.body) {
+    throw new AppError('Request body is missing or empty', 400);
   }
-};
+
+  // Always normalise email — prevents duplicate accounts with different casing
+  const email = (req.body.email || '').toLowerCase().trim();
+  const { password, username, deviceFingerprint, referredByCode } = req.body;
+  const ipAddress = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+
+  // Validation
+  if (!email || !password || password.length < 6) {
+    throw new AppError('Email and password (min 6 chars) are required', 400);
+  }
+
+  // Check if user exists
+  const existingUser = await prisma.user.findUnique({
+    where: { email }
+  });
+
+  if (existingUser) {
+    throw new AppError('Email is already registered', 409);
+  }
+
+  // Process referral if provided
+  let referredById = null;
+  if (referredByCode) {
+    const inviter = await prisma.user.findUnique({
+      where: { referralCode: referredByCode }
+    });
+    if (inviter) {
+      referredById = inviter.id;
+    }
+  }
+
+  // Hash password
+  const hashedPassword = await hashPassword(password);
+
+  // Generate unique referral code for this new user
+  const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
+
+  // Create user
+  const user = await prisma.$transaction(async (tx) => {
+    const newUser = await tx.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        username: username || email.split('@')[0],
+        referralCode,
+        referredById,
+        ipAddress,
+        deviceFingerprint: deviceFingerprint || null
+      }
+    });
+
+    if (referredById) {
+      await tx.user.update({
+        where: { id: referredById },
+        data: { totalReferrals: { increment: 1 } }
+      });
+    }
+
+    return newUser;
+  });
+
+  // Generate token
+  const token = generateToken(user.id);
+
+  res.status(201).json({
+    success: true,
+    data: {
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username
+      },
+      token
+    }
+  });
+});
+
 
 // User Login
 const login = async (req, res) => {
