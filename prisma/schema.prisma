@@ -1,0 +1,382 @@
+// This is your Prisma schema file for CloraAI
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Subscription Plan Enums ────────────────────────────────────────────────
+enum Plan {
+  FREE
+  PRO
+  LIFETIME
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  PAST_DUE
+}
+
+enum PlanSource {
+  RAZORPAY
+  ADMIN
+  REFERRAL
+}
+
+// ─── Users Table ─────────────────────────────────────────────────────────────
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  password     String
+  username     String?
+  phoneNumber  String?
+  profileImage String? @db.LongText
+  pushToken    String? // Expo push token
+  role         String  @default("USER") // USER | ADMIN | SUSPENDED | BANNED
+  tokenVersion Int     @default(0)    // Enforces forced-logout (Phase 1)
+
+  // ── Subscription Plan (single-source-of-truth) ──────────────────────────
+  plan               Plan                @default(FREE)
+  subscriptionStatus SubscriptionStatus? // null = never subscribed
+  planSource         PlanSource?
+  planStartDate      DateTime?
+  planEndDate        DateTime? // null = LIFETIME / never expires
+  manuallyUpgraded   Boolean             @default(false) // Admin override flag
+
+  // ── Razorpay Live Link ───────────────────────────────────────────────────
+  // Set in createOrder so webhook can find userId without depending on PaymentHistory.
+  // Nulled on admin downgrade to block webhook from re-upgrading the user.
+  activeRazorpaySubscriptionId String? @unique // e.g. sub_XXXXX
+
+  // ── Referral & Growth Engine ───────────────────────────────────────────
+  referralCode          String?             @unique
+  referredById          String?
+  referredBy            User?               @relation("ReferralHistory", fields: [referredById], references: [id])
+  referrals             User[]              @relation("ReferralHistory")
+  
+  // Analytics & Rewards Tracking
+  totalReferrals        Int                 @default(0)
+  paidReferrals         Int                 @default(0)
+  milestoneClaimedCount Int                 @default(0)
+  
+  // Fraud Detection Surface
+  fraudScore            Int                 @default(0)
+  isFlagged             Boolean             @default(false)
+  ipAddress             String?
+  deviceFingerprint     String?
+
+  referralTransactionsGiven ReferralTransaction[] @relation("GivenRewards")
+  referralTransactionsGot   ReferralTransaction[] @relation("ReceivedRewards")
+
+  // ── Relations ───────────────────────────────────────────────────────────
+  instagramAccounts InstagramAccount[]
+  paymentHistory    PaymentHistory[]
+  captions          Caption[]
+  scheduledPosts    ScheduledPost[]
+  dmAutomations     DMAutomation[]
+  dmInteractions    DmInteraction[]
+  analyticsSnapshot AnalyticsSnapshot[]
+  calendarTasks     CalendarTask[]
+  notifications     Notification[]
+  aiUsage           AIUsage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([plan])
+  @@index([planEndDate])
+}
+
+// Calendar Tasks
+model CalendarTask {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  date      DateTime
+  startTime String?
+  endTime   String?
+  repeat    String   @default("one-time") // one-time, daily, weekly
+  notes     String?  @db.Text
+  color     String   @default("#6D28D9")
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// In-App Notifications
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   @default("system") // system | brand_deal | milestone | schedule | referral
+  icon      String   @default("notifications")
+  color     String   @default("#6D28D9")
+  title     String
+  body      String   @db.Text
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Instagram Account Integration
+model InstagramAccount {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  instagramUserId   String    @unique
+  username          String
+  profileImage      String?
+  followers         Int       @default(0)
+  following         Int       @default(0)
+  mediaCount        Int       @default(0)
+  bio               String?
+  accessToken       String
+  accessTokenExpiry DateTime?
+  refreshToken      String?
+
+  isConnected  Boolean   @default(true)
+  connectedAt  DateTime  @default(now())
+  lastSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([instagramUserId])
+}
+
+// ─── Payment History (Razorpay Audit Trail) ───────────────────────────────────
+model PaymentHistory {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  razorpaySubscriptionId String? // Razorpay sub_xxx id
+  razorpayPaymentId      String? @unique // Razorpay pay_xxx id
+  razorpayOrderId        String? // Razorpay order_xxx id
+
+  amount   Int // amount in paise (₹199 = 19900)
+  currency String @default("INR")
+  status   String @default("PENDING") // PENDING | SUCCESS | FAILED | REFUNDED
+
+  planName      String    @default("PRO") // snapshot of plan they paid for
+  startDate     DateTime?
+  endDate       DateTime?
+  paymentMethod String? // upi | card | netbanking | wallet
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([razorpaySubscriptionId])
+  @@index([status])
+}
+
+// ─── Razorpay Webhook Event Deduplication ────────────────────────────────────
+// Stores processed Razorpay event IDs to guarantee exactly-once processing.
+// On duplicate delivery, @unique on eventId causes early return (idempotent).
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique // Razorpay event.id (e.g. "evt_XXXXX")
+  eventType   String // e.g. "subscription.charged"
+  processedAt DateTime @default(now())
+
+  @@index([eventId])
+}
+
+// AI Generated Captions
+model Caption {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  topic    String
+  tone     String // professional, casual, funny, motivational
+  length   String // short, medium, long
+  content  String @db.LongText
+  hashtags String @db.Text // comma-separated
+
+  isUsed       Boolean   @default(false)
+  usedInPostId String?
+  usedAt       DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isUsed])
+}
+
+// Scheduled Posts
+model ScheduledPost {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  mediaUrl String  @db.LongText
+  caption  String  @db.LongText
+  hashtags String?
+
+  scheduledTime DateTime
+  status        String    @default("scheduled") // scheduled, published, failed
+  publishedAt   DateTime?
+  retryCount    Int       @default(0) // tracks failed attempts
+
+  instagramPostId String?
+  errorMessage    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledTime])
+}
+
+// Analytics Snapshots
+model AnalyticsSnapshot {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  followers         Int
+  following         Int
+  mediaCount        Int
+  engagementRate    Float   @default(0)
+  impressions       Int     @default(0)
+  reach             Int     @default(0)
+  topPostId         String?
+  topPostEngagement Float   @default(0)
+
+  snapshotDate DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([snapshotDate])
+}
+
+// DM Automation Rules
+model DMAutomation {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  keyword          String
+  autoReplyMessage String  @db.LongText
+  isActive         Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, keyword])
+  @@index([userId])
+}
+
+// DM Automation Interaction Log (Idempotency + Daily Limit)
+model DmInteraction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId String   @unique // Meta message mid — ensures idempotency
+  ruleId    String? // Which rule triggered this reply
+  status    String   @default("sent") // sent | skipped | failed
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt]) // Fast rolling 24hr window queries
+}
+
+// Brand Deal Detection
+model BrandDeal {
+  id String @id @default(cuid())
+
+  dmContent      String @db.LongText
+  senderUsername String
+
+  confidence   Float   @default(0) // 0-1
+  isBrandDeal  Boolean @default(false)
+  dealCategory String? // fitness, fashion, tech, etc.
+
+  flaggedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+}
+
+// Password Reset Tokens
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+// Cron Worker Leader Lock (Multi-Instance Safety)
+model CronLock {
+  lockName String   @id // e.g., 'scheduler', 'token-refresh'
+  lockedAt DateTime // Timestamp when lock was acquired
+  lockedBy String? // Optional: process identifier (e.g., hostname)
+}
+
+// ── Enterprise Referral Ledger ─────────────────────────────────────────────
+model ReferralTransaction {
+  id               String   @id @default(uuid())
+  inviterId        String
+  referredUserId   String
+  rewardMonths     Int      @default(0)
+  status           String   @default("PENDING") // PENDING, APPROVED, BLOCKED, REVERSED
+  razorpayEventId  String   @unique             // Webhook idempotency link
+  fraudReason      String?  
+  unlocksAt        DateTime                     // Enforces the 7-day maturation delay
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  inviter      User @relation("GivenRewards", fields: [inviterId], references: [id], onDelete: Cascade)
+  referredUser User @relation("ReceivedRewards", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, unlocksAt])
+  @@index([inviterId])
+}
+
+// ─── AI Usage Tracking (Cost Protection) ─────────────────────────────────
+// Tracks per-user AI token consumption for financial safety and observability.
+// month column ("YYYY-MM") enables O(1) global monthly aggregation at 50k users.
+model AIUsage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feature   String   // "caption" | "brand_deal"
+  tokens    Int      // OpenAI usage.total_tokens from API response
+  month     String   // "YYYY-MM" pre-computed for fast monthly GROUP BY
+  createdAt DateTime @default(now())
+
+  @@index([userId, feature, createdAt]) // fast per-user daily cap checks
+  @@index([month, feature])             // fast global monthly aggregation
+}
+
+// ─── Admin Audit Log ─────────────────────────────────────────────────
+// Permanent record of all admin plan overrides for compliance and debugging.
+model AuditLog {
+  id       String   @id @default(cuid())
+  adminId  String   // Admin userId who performed the action
+  targetId String   // userId of the affected user
+  action   String   // UPGRADE_PRO | DOWNGRADE_FREE | GRANT_LIFETIME | EXTEND | CANCEL | BLOCK_AI | UNBLOCK_AI
+  details  String?  @db.Text // JSON: { before, after, reason }
+  createdAt DateTime @default(now())
+
+  @@index([targetId])
+  @@index([adminId])
+  @@index([createdAt])
+}

@@ -1,0 +1,38 @@
+{
+  "subscriptionPrice": 199,
+  "yearlyPrice": 2388,
+  "offerPriceMonthly": 99,
+  "offerPriceYearly": 1199,
+  "freeFeatures": [
+    "3 AI captions per day",
+    "Basic analytics",
+    "7-day calendar",
+    "1 Dm Rules"
+  ],
+  "proFeatures": [
+    "Unlimited AI Captions",
+    "Unlimited Auto-DM Rules",
+    "AI Brand Deal Detection",
+    "Full Year Content Calendar",
+    "Advanced Analytics + Graphs",
+    "24/7 Priority Support & Beta"
+  ],
+  "maintenanceMode": false,
+  "minAppVersion": "1.0.0",
+  "featureFlags": {
+    "aiCaptionsEnabled": true,
+    "autoDMEnabled": true,
+    "reelSchedulerEnabled": true,
+    "brandDealsEnabled": true
+  },
+  "aiLimits": {
+    "freeDailyCaptions": 3,
+    "proDailyCaptions": 100,
+    "freeDailyDMs": 1,
+    "proDailyDMs": 1000,
+    "aiTemperature": 0.7,
+    "aiModel": "gpt-3.5-turbo"
+  },
+  "blockedFromAI": [],
+  "freeTrialDays": 7
+}
