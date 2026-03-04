@@ -56,42 +56,56 @@ const runSubscriptionExpiry = async () => {
 
     const now = new Date();
 
-    // Downgrade ACTIVE + CANCELLED users whose paid time has ended
-    const result = await prisma.user.updateMany({
+    // Find ACTIVE + CANCELLED users whose paid time has ended
+    const activeOrCancelledExpired = await prisma.user.findMany({
         where: {
             plan: 'PRO',
             subscriptionStatus: { in: ['ACTIVE', 'CANCELLED'] },
             planEndDate: { lt: now },
-            // LIFETIME users always have planEndDate = null, so lt: now never matches them
         },
-        data: {
-            plan: 'FREE',
-            subscriptionStatus: 'EXPIRED',
-            activeRazorpaySubscriptionId: null,
-        },
+        select: { id: true },
     });
 
-    // Downgrade PAST_DUE users whose grace period is also expired
-    const pastDueResult = await prisma.user.updateMany({
+    // Find PAST_DUE users whose grace period is also expired
+    const pastDueExpired = await prisma.user.findMany({
         where: {
             plan: 'PRO',
             subscriptionStatus: 'PAST_DUE',
             planEndDate: { lt: now },
         },
-        data: {
-            plan: 'FREE',
-            subscriptionStatus: 'EXPIRED',
-            activeRazorpaySubscriptionId: null,
-        },
+        select: { id: true },
     });
+
+    let downgradeCount = 0;
+
+    // Process downgrades sequentially (or in batches) to avoid MongoDB updateMany invocation errors
+    const allUsersToDowngrade = [...activeOrCancelledExpired, ...pastDueExpired];
+
+    if (allUsersToDowngrade.length > 0) {
+        await Promise.all(
+            allUsersToDowngrade.map(user =>
+                prisma.user.update({
+                    where: { id: user.id },
+                    data: {
+                        plan: 'FREE',
+                        subscriptionStatus: 'EXPIRED',
+                        activeRazorpaySubscriptionId: null,
+                    }
+                }).catch(e => {
+                    logger.error('CRON:SUBSCRIPTIONS', `Failed to downgrade user ${user.id}`, { error: e.message });
+                })
+            )
+        );
+        downgradeCount = allUsersToDowngrade.length;
+    }
 
     const elapsed = Date.now() - jobStart;
     logger.info(
         'CRON:SUBSCRIPTIONS',
-        `Expiry sweep done in ${elapsed}ms. Downgraded ${result.count} ACTIVE/CANCELLED + ${pastDueResult.count} PAST_DUE users to FREE.`
+        `Expiry sweep done in ${elapsed}ms. Downgraded ${activeOrCancelledExpired.length} ACTIVE/CANCELLED + ${pastDueExpired.length} PAST_DUE users to FREE.`
     );
 
-    return result.count + pastDueResult.count;
+    return downgradeCount;
 };
 
 // ─── Startup Reconciliation (fire-and-forget on require) ─────────────────────

@@ -531,7 +531,7 @@ const getSubscriptions = async (req, res) => {
     try {
         const { plan, status, page = 1, limit = 20 } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
-        const where = { plan: { not: 'FREE' } };
+        const where = { plan: { in: ['PRO', 'LIFETIME'] } };
         if (plan) where.plan = plan.toUpperCase();
         if (status) where.subscriptionStatus = status.toUpperCase();
 

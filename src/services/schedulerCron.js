@@ -90,18 +90,30 @@ const handleFailure = async (postId, currentRetryCount, errorMessage, oldSchedul
 const recoverOrphanedPosts = async () => {
     const orphanThreshold = new Date(Date.now() - 15 * 60 * 1000); // 15 minutes
     try {
-        const recovered = await prisma.scheduledPost.updateMany({
+        const orphaned = await prisma.scheduledPost.findMany({
             where: {
                 status: 'publishing',
                 updatedAt: { lt: orphanThreshold }
             },
-            data: {
-                status: 'scheduled',
-                errorMessage: 'Auto-recovered: was stuck in publishing state after server restart.'
-            }
+            select: { id: true }
         });
-        if (recovered.count > 0) {
-            logger.warn('CRON:RECOVERY', `Recovered ${recovered.count} orphaned post(s) stuck in 'publishing'.`);
+
+        if (orphaned.length > 0) {
+            await Promise.all(
+                orphaned.map(post =>
+                    prisma.scheduledPost.update({
+                        where: { id: post.id },
+                        data: {
+                            status: 'scheduled',
+                            errorMessage: 'Auto-recovered: was stuck in publishing state after server restart.'
+                        }
+                    }).catch(e => {
+                        logger.error('CRON:RECOVERY', `Failed to recover post ${post.id}`, { error: e.message });
+                    })
+                )
+            );
+
+            logger.warn('CRON:RECOVERY', `Recovered ${orphaned.length} orphaned post(s) stuck in 'publishing'.`);
             logger.increment('schedulerOrphansRecovered');
         }
     } catch (e) {
