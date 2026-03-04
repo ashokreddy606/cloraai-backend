@@ -36,7 +36,8 @@ const authenticate = async (req, res, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      decoded = verifyToken(token);
+      console.log("Decoded JWT:", decoded);
     } catch (err) {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
