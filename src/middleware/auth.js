@@ -12,6 +12,7 @@ const { verifyToken } = require('../utils/helpers');
 const { PrismaClient } = require('@prisma/client');
 const expressRateLimit = require('express-rate-limit');
 const logger = require('../utils/logger');
+const jwt = require('jsonwebtoken');
 
 const prisma = new PrismaClient();
 
@@ -27,18 +28,16 @@ const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Authentication required' });
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No token provided" });
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.split(" ")[1];
 
-    let decoded;
-    try {
-      decoded = verifyToken(token);
-    } catch (error) {
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    req.user = decoded;
+    req.userId = decoded.userId;
 
     // ── DB lookup: tokenVersion check + role gate ─────────────────────────
     // One indexed read per request — acceptable cost for security guarantee.
@@ -83,9 +82,11 @@ const authenticate = async (req, res, next) => {
       });
     }
 
-    req.userId = decoded.userId;
     next();
   } catch (error) {
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
     logger.error('AUTH', 'Unexpected authentication error', { error: error.message });
     res.status(500).json({ error: 'Authentication error' });
   }
