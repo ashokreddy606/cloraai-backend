@@ -44,7 +44,7 @@ const register = catchAsync(async (req, res, next) => {
   // Process referral if provided
   let referredById = null;
   if (referredByCode) {
-    const inviter = await prisma.user.findUnique({
+    const inviter = await prisma.user.findFirst({
       where: { referralCode: referredByCode }
     });
     if (inviter) {

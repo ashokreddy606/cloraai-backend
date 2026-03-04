@@ -52,10 +52,11 @@ model User {
   // ── Razorpay Live Link ───────────────────────────────────────────────────
   // Set in createOrder so webhook can find userId without depending on PaymentHistory.
   // Nulled on admin downgrade to block webhook from re-upgrading the user.
-  activeRazorpaySubscriptionId String? @unique // e.g. sub_XXXXX
+  activeRazorpaySubscriptionId String?
 
   // ── Referral & Growth Engine ───────────────────────────────────────────
-  referralCode String? @unique
+  referralCode String?
+
   referredById String? @db.ObjectId
   referredBy   User?   @relation("ReferralHistory", fields: [referredById], references: [id], onDelete: NoAction, onUpdate: NoAction)
   referrals    User[]  @relation("ReferralHistory")

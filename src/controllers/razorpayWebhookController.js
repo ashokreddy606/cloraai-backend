@@ -41,7 +41,7 @@ const verifyWebhookSignature = (rawBody, signature, secret) => {
 // This ensures a payment is NEVER silently dropped even if /verify was never called.
 const getUserIdFromSubId = async (subscriptionId) => {
     // Path 1: Direct link on User (set during createOrder)
-    const userByActiveSubId = await prisma.user.findUnique({
+    const userByActiveSubId = await prisma.user.findFirst({
         where: { activeRazorpaySubscriptionId: subscriptionId },
         select: { userId: undefined, id: true },
     });
