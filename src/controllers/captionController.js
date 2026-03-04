@@ -90,10 +90,26 @@ const generateCaption = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Generate caption error:', error);
+    console.error('Generate caption error:', error.response?.data || error.message);
+
+    // Handle OpenAI specific errors for better frontend UX
+    if (error.response?.status === 401 || error.message.includes('401')) {
+      return res.status(500).json({
+        error: 'OpenAI Configuration Error',
+        message: 'The backend OpenAI API key is invalid or missing. Please check the Railway environment variables.'
+      });
+    }
+
+    if (error.response?.status === 429 || error.message.includes('429')) {
+      return res.status(500).json({
+        error: 'OpenAI Quota Exceeded',
+        message: 'The configured OpenAI account has run out of credits or hit its rate limit.'
+      });
+    }
+
     res.status(500).json({
       error: 'Failed to generate caption',
-      message: error.message
+      message: error.response?.data?.error?.message || error.message
     });
   }
 };
