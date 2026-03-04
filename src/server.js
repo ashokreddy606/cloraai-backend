@@ -108,10 +108,29 @@ app.use(helmet({
 }));
 
 // CORS — restrict in production
+const allowedOrigins = [
+  'http://localhost:8081',   // Expo mobile dev
+  'http://localhost:5173',   // Vite admin dev (default)
+  'http://localhost:5174',   // Vite admin dev (fallback port)
+  'http://localhost:5175',   // Vite admin dev (tertiary fallback)
+  'http://localhost:3000',   // Generic React/Node
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+];
+
+if (process.env.FRONTEND_URL) {
+  process.env.FRONTEND_URL.split(',').forEach(url => allowedOrigins.push(url.trim()));
+}
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : false)
-    : '*',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // In development, allow everything
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
   credentials: true
 }));
 
