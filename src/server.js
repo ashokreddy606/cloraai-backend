@@ -218,12 +218,24 @@ app.use(errorHandler);
 // Start server
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log("🚀 CloraAI Backend running");
-  console.log("Environment:", process.env.NODE_ENV);
-  console.log("Node version:", process.version);
-  console.log("Port:", PORT);
-});
+const startServer = async () => {
+  try {
+    await prisma.$connect();
+    console.log("Database connected");
+  } catch (error) {
+    console.error("Database connection failed, server will still start:", error);
+  }
+
+  // Bind to port unconditionally for Railway health checks
+  app.listen(PORT, () => {
+    console.log("🚀 CloraAI Backend running");
+    console.log("Environment:", process.env.NODE_ENV);
+    console.log("Node version:", process.version);
+    console.log("Port:", PORT);
+  });
+};
+
+startServer();
 
 // Graceful shutdown handler
 const gracefulShutdown = async (signal) => {

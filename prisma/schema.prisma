@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
 }
 
@@ -31,15 +31,15 @@ enum PlanSource {
 
 // ─── Users Table ─────────────────────────────────────────────────────────────
 model User {
-  id           String  @id @default(cuid())
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
   email        String  @unique
   password     String
   username     String?
   phoneNumber  String?
-  profileImage String? @db.LongText
+  profileImage String?
   pushToken    String? // Expo push token
   role         String  @default("USER") // USER | ADMIN | SUSPENDED | BANNED
-  tokenVersion Int     @default(0)    // Enforces forced-logout (Phase 1)
+  tokenVersion Int     @default(0) // Enforces forced-logout (Phase 1)
 
   // ── Subscription Plan (single-source-of-truth) ──────────────────────────
   plan               Plan                @default(FREE)
@@ -55,21 +55,21 @@ model User {
   activeRazorpaySubscriptionId String? @unique // e.g. sub_XXXXX
 
   // ── Referral & Growth Engine ───────────────────────────────────────────
-  referralCode          String?             @unique
-  referredById          String?
-  referredBy            User?               @relation("ReferralHistory", fields: [referredById], references: [id])
-  referrals             User[]              @relation("ReferralHistory")
-  
+  referralCode String? @unique
+  referredById String? @db.ObjectId
+  referredBy   User?   @relation("ReferralHistory", fields: [referredById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  referrals    User[]  @relation("ReferralHistory")
+
   // Analytics & Rewards Tracking
-  totalReferrals        Int                 @default(0)
-  paidReferrals         Int                 @default(0)
-  milestoneClaimedCount Int                 @default(0)
-  
+  totalReferrals        Int @default(0)
+  paidReferrals         Int @default(0)
+  milestoneClaimedCount Int @default(0)
+
   // Fraud Detection Surface
-  fraudScore            Int                 @default(0)
-  isFlagged             Boolean             @default(false)
-  ipAddress             String?
-  deviceFingerprint     String?
+  fraudScore        Int     @default(0)
+  isFlagged         Boolean @default(false)
+  ipAddress         String?
+  deviceFingerprint String?
 
   referralTransactionsGiven ReferralTransaction[] @relation("GivenRewards")
   referralTransactionsGot   ReferralTransaction[] @relation("ReceivedRewards")
@@ -89,22 +89,21 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([email])
   @@index([plan])
   @@index([planEndDate])
 }
 
 // Calendar Tasks
 model CalendarTask {
-  id        String   @id @default(cuid())
-  userId    String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   date      DateTime
   startTime String?
   endTime   String?
   repeat    String   @default("one-time") // one-time, daily, weekly
-  notes     String?  @db.Text
+  notes     String?
   color     String   @default("#6D28D9")
   completed Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -115,14 +114,14 @@ model CalendarTask {
 
 // In-App Notifications
 model Notification {
-  id        String   @id @default(cuid())
-  userId    String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      String   @default("system") // system | brand_deal | milestone | schedule | referral
   icon      String   @default("notifications")
   color     String   @default("#6D28D9")
   title     String
-  body      String   @db.Text
+  body      String
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 
@@ -131,8 +130,8 @@ model Notification {
 
 // Instagram Account Integration
 model InstagramAccount {
-  id     String @id @default(cuid())
-  userId String @unique
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @unique @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   instagramUserId   String    @unique
@@ -152,15 +151,12 @@ model InstagramAccount {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([instagramUserId])
 }
 
 // ─── Payment History (Razorpay Audit Trail) ───────────────────────────────────
 model PaymentHistory {
-  id     String @id @default(cuid())
-  userId String
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   razorpaySubscriptionId String? // Razorpay sub_xxx id
@@ -187,25 +183,23 @@ model PaymentHistory {
 // Stores processed Razorpay event IDs to guarantee exactly-once processing.
 // On duplicate delivery, @unique on eventId causes early return (idempotent).
 model WebhookEvent {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   eventId     String   @unique // Razorpay event.id (e.g. "evt_XXXXX")
   eventType   String // e.g. "subscription.charged"
   processedAt DateTime @default(now())
-
-  @@index([eventId])
 }
 
 // AI Generated Captions
 model Caption {
-  id     String @id @default(cuid())
-  userId String
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   topic    String
   tone     String // professional, casual, funny, motivational
   length   String // short, medium, long
-  content  String @db.LongText
-  hashtags String @db.Text // comma-separated
+  content  String
+  hashtags String // comma-separated
 
   isUsed       Boolean   @default(false)
   usedInPostId String?
@@ -219,12 +213,12 @@ model Caption {
 
 // Scheduled Posts
 model ScheduledPost {
-  id     String @id @default(cuid())
-  userId String
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  mediaUrl String  @db.LongText
-  caption  String  @db.LongText
+  mediaUrl String
+  caption  String
   hashtags String?
 
   scheduledTime DateTime
@@ -245,8 +239,8 @@ model ScheduledPost {
 
 // Analytics Snapshots
 model AnalyticsSnapshot {
-  id     String @id @default(cuid())
-  userId String
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   followers         Int
@@ -267,12 +261,12 @@ model AnalyticsSnapshot {
 
 // DM Automation Rules
 model DMAutomation {
-  id     String @id @default(cuid())
-  userId String
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   keyword          String
-  autoReplyMessage String  @db.LongText
+  autoReplyMessage String
   isActive         Boolean @default(true)
 
   createdAt DateTime @default(now())
@@ -284,8 +278,8 @@ model DMAutomation {
 
 // DM Automation Interaction Log (Idempotency + Daily Limit)
 model DmInteraction {
-  id        String   @id @default(cuid())
-  userId    String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   messageId String   @unique // Meta message mid — ensures idempotency
   ruleId    String? // Which rule triggered this reply
@@ -297,9 +291,9 @@ model DmInteraction {
 
 // Brand Deal Detection
 model BrandDeal {
-  id String @id @default(cuid())
+  id String @id @default(auto()) @map("_id") @db.ObjectId
 
-  dmContent      String @db.LongText
+  dmContent      String
   senderUsername String
 
   confidence   Float   @default(0) // 0-1
@@ -312,36 +306,36 @@ model BrandDeal {
 
 // Password Reset Tokens
 model PasswordReset {
-  id        String   @id @default(cuid())
-  userId    String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
   token     String   @unique
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  @@index([token])
   @@index([userId])
 }
 
 // Cron Worker Leader Lock (Multi-Instance Safety)
 model CronLock {
-  lockName String   @id // e.g., 'scheduler', 'token-refresh'
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  lockName String   @unique // e.g., 'scheduler', 'token-refresh'
   lockedAt DateTime // Timestamp when lock was acquired
   lockedBy String? // Optional: process identifier (e.g., hostname)
 }
 
 // ── Enterprise Referral Ledger ─────────────────────────────────────────────
 model ReferralTransaction {
-  id               String   @id @default(uuid())
-  inviterId        String
-  referredUserId   String
-  rewardMonths     Int      @default(0)
-  status           String   @default("PENDING") // PENDING, APPROVED, BLOCKED, REVERSED
-  razorpayEventId  String   @unique             // Webhook idempotency link
-  fraudReason      String?  
-  unlocksAt        DateTime                     // Enforces the 7-day maturation delay
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  inviterId       String   @db.ObjectId
+  referredUserId  String   @db.ObjectId
+  rewardMonths    Int      @default(0)
+  status          String   @default("PENDING") // PENDING, APPROVED, BLOCKED, REVERSED
+  razorpayEventId String   @unique // Webhook idempotency link
+  fraudReason     String?
+  unlocksAt       DateTime // Enforces the 7-day maturation delay
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   inviter      User @relation("GivenRewards", fields: [inviterId], references: [id], onDelete: Cascade)
   referredUser User @relation("ReceivedRewards", fields: [referredUserId], references: [id], onDelete: Cascade)
@@ -354,26 +348,26 @@ model ReferralTransaction {
 // Tracks per-user AI token consumption for financial safety and observability.
 // month column ("YYYY-MM") enables O(1) global monthly aggregation at 50k users.
 model AIUsage {
-  id        String   @id @default(cuid())
-  userId    String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  feature   String   // "caption" | "brand_deal"
-  tokens    Int      // OpenAI usage.total_tokens from API response
-  month     String   // "YYYY-MM" pre-computed for fast monthly GROUP BY
+  feature   String // "caption" | "brand_deal"
+  tokens    Int // OpenAI usage.total_tokens from API response
+  month     String // "YYYY-MM" pre-computed for fast monthly GROUP BY
   createdAt DateTime @default(now())
 
   @@index([userId, feature, createdAt]) // fast per-user daily cap checks
-  @@index([month, feature])             // fast global monthly aggregation
+  @@index([month, feature]) // fast global monthly aggregation
 }
 
 // ─── Admin Audit Log ─────────────────────────────────────────────────
 // Permanent record of all admin plan overrides for compliance and debugging.
 model AuditLog {
-  id       String   @id @default(cuid())
-  adminId  String   // Admin userId who performed the action
-  targetId String   // userId of the affected user
-  action   String   // UPGRADE_PRO | DOWNGRADE_FREE | GRANT_LIFETIME | EXTEND | CANCEL | BLOCK_AI | UNBLOCK_AI
-  details  String?  @db.Text // JSON: { before, after, reason }
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  adminId   String // Admin userId who performed the action
+  targetId  String // userId of the affected user
+  action    String // UPGRADE_PRO | DOWNGRADE_FREE | GRANT_LIFETIME | EXTEND | CANCEL | BLOCK_AI | UNBLOCK_AI
+  details   String? // JSON: { before, after, reason }
   createdAt DateTime @default(now())
 
   @@index([targetId])
