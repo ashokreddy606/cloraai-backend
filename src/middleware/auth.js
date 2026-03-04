@@ -34,7 +34,12 @@ const authenticate = async (req, res, next) => {
 
     const token = authHeader.split(" ")[1];
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
 
     req.user = decoded;
     req.userId = decoded.userId;
@@ -42,7 +47,7 @@ const authenticate = async (req, res, next) => {
     // ── DB lookup: tokenVersion check + role gate ─────────────────────────
     // One indexed read per request — acceptable cost for security guarantee.
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
+      where: { id: req.userId },
       select: { id: true, role: true, tokenVersion: true },
     });
 
@@ -84,9 +89,6 @@ const authenticate = async (req, res, next) => {
 
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
     logger.error('AUTH', 'Unexpected authentication error', { error: error.message });
     res.status(500).json({ error: 'Authentication error' });
   }
