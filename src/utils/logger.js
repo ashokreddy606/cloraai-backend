@@ -1,5 +1,5 @@
 /**
- * logger.js — Production-safe structured logger for CloraAI
+ * logger.js — Production-safe structured logger for CloraAI using winston
  * 
  * - Never logs tokens, secrets, or signatures
  * - Suppresses verbose logs in production
@@ -7,6 +7,7 @@
  * - Exposes counters for lightweight operational monitoring
  */
 
+const winston = require('winston');
 const isProd = process.env.NODE_ENV === 'production';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -54,25 +55,29 @@ const scrub = (obj) => {
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Core log functions
+// Winston Logger Setup
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const log = (level, context, message, meta = {}) => {
-    if (isProd && level === 'debug') return; // Suppress debug in prod
+const winstonLogger = winston.createLogger({
+    level: isProd ? 'info' : 'debug',
+    format: winston.format.combine(
+        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS Z' }),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.Console()
+    ]
+});
 
-    const entry = {
-        ts: new Date().toISOString(),
+// Wrapper to maintain backward compatibility with old API
+const log = (level, context, message, meta = {}) => {
+    const scrubbedMeta = Object.keys(meta).length > 0 ? scrub(meta) : undefined;
+
+    winstonLogger.log({
         level,
         context,
         message,
-        ...(Object.keys(meta).length > 0 ? { meta: scrub(meta) } : {})
-    };
-    const output = JSON.stringify(entry);
-
-    if (level === 'error' || level === 'warn') {
-        process.stderr.write(output + '\n');
-    } else {
-        process.stdout.write(output + '\n');
-    }
+        ...scrubbedMeta
+    });
 };
 
 module.exports = {
@@ -81,5 +86,6 @@ module.exports = {
     warn: (ctx, msg, meta) => log('warn', ctx, msg, meta),
     error: (ctx, msg, meta) => log('error', ctx, msg, meta),
     increment,
-    getCounters
+    getCounters,
+    winstonLogger // export internal instance if needed
 };

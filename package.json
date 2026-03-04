@@ -5,6 +5,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:api": "node src/server.js",
+    "start:worker": "node src/worker.js",
     "dev": "nodemon src/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -14,6 +16,7 @@
     "@prisma/client": "^4.15.0",
     "axios": "^1.4.0",
     "bcrypt": "^5.1.0",
+    "bullmq": "^5.70.1",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
@@ -21,11 +24,13 @@
     "express-validator": "^7.3.1",
     "googleapis": "^171.4.0",
     "helmet": "^8.1.0",
+    "ioredis": "^5.10.0",
     "jsonwebtoken": "^9.0.0",
     "node-cron": "^3.0.2",
     "nodemailer": "^8.0.1",
     "openai": "^3.3.0",
     "razorpay": "^2.9.1",
+    "winston": "^3.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

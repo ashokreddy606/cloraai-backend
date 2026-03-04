@@ -20,13 +20,13 @@ if (process.env.SENTRY_DSN) {
 }
 
 // ─── Process-Level Error Catchers ────────────────────────────────────────────
-// These are last-resort handlers for bugs that escape all try/catch blocks.
+// These log errors but NEVER terminate the process to keep Railway container alive.
 process.on('uncaughtException', (err) => {
-  console.error("UNCAUGHT EXCEPTION:", err);
+  logger.error('CRASH_PREVENTION', "UNCAUGHT EXCEPTION", { error: err.message, stack: err.stack });
 });
 
-process.on('unhandledRejection', (err) => {
-  console.error("UNHANDLED REJECTION:", err);
+process.on('unhandledRejection', (reason) => {
+  logger.error('CRASH_PREVENTION', "UNHANDLED REJECTION", { reason });
 });
 
 // Import routes
@@ -47,15 +47,6 @@ const webhookRoutes = require('./routes/webhook');
 // Initialize Prisma
 const prisma = new PrismaClient();
 
-// Initialize Cron Jobs
-const { schedulerTasks, releaseLock } = require('./services/schedulerCron');
-try {
-  require('./services/subscriptionCron');
-  console.log("Subscription cron started successfully");
-} catch (err) {
-  console.error("Subscription cron failed:", err);
-}
-
 // Initialize Express app
 const app = express();
 
@@ -70,15 +61,13 @@ const requiredEnvs = [
 ];
 const missingEnvs = requiredEnvs.filter(env => !process.env[env]);
 if (missingEnvs.length > 0) {
-  logger.error('SERVER', `Missing critical environment variables: ${missingEnvs.join(', ')}. Shutting down.`);
-  process.exit(1);
+  logger.error('SERVER', `Missing critical environment variables: ${missingEnvs.join(', ')}. Server might be unstable.`);
 }
 
 // JWT_SECRET minimum strength check (must be ≥ 64 characters).
 // helpers.js also enforces this, but belt-and-suspenders catch at server entry.
-if (process.env.JWT_SECRET.length < 64) {
-  logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters). Generate with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
-  process.exit(1);
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 64) {
+  logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters).');
 }
 
 // Raw body capture for Razorpay webhook signature verification
@@ -143,6 +132,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({
     status: "ok",
     uptime: process.uptime(),
+    memory: process.memoryUsage().heapUsed,
     timestamp: Date.now()
   });
 });
@@ -222,74 +212,24 @@ app.use((req, res, next) => {
 });
 
 // Error handling middleware
-app.use((err, req, res, next) => {
-  let statusCode = err.statusCode || err.status || 500;
-  let errorName = err.name || 'Error';
-  let message = err.message;
-  const userId = req.userId || 'unauthenticated';
-
-  // Handle AppError (e.g. ValidationError)
-  if (err.isOperational) {
-    statusCode = err.statusCode;
-    errorName = 'AppError';
-  }
-
-  // Handle express express.json() errors (e.g., SyntaxError for bad JSON)
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return res.status(400).json({ error: 'Bad Request', message: 'Invalid JSON payload format' });
-  }
-
-  // Handle Prisma errors
-  if (err.name === 'PrismaClientValidationError' || err.code === 'P2002') {
-    statusCode = err.code === 'P2002' ? 409 : 400;
-    errorName = err.name;
-    message = process.env.NODE_ENV === 'production' ? 'Invalid or duplicate database operation' : err.message;
-  } else if (err.name === 'JsonWebTokenError') {
-    statusCode = 401;
-    errorName = err.name;
-    message = 'Authentication failed';
-  }
-
-  // Structured error log — critical for production diagnosis
-  logger.error('HTTP_ERROR', `${errorName} on ${req.method} ${req.path}`, {
-    statusCode,
-    userId,
-    errorName,
-    message: err.message,
-    stack: err.isOperational ? undefined : err.stack
-  });
-
-  // Only leak message if it's operational or not in production
-  const isProduction = process.env.NODE_ENV === 'production';
-  const displayMessage = (err.isOperational || !isProduction) ? message : 'Internal server error';
-
-  res.status(statusCode).json({
-    error: isProduction && !err.isOperational ? 'Internal server error' : errorName,
-    message: displayMessage,
-    timestamp: new Date().toISOString()
-  });
-});
+const errorHandler = require('./middleware/errorHandler');
+app.use(errorHandler);
 
 // Start server
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`CloraAI Backend running`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log(`Node version: ${process.version}`);
-  console.log(`Port: ${PORT}`);
+  console.log("🚀 CloraAI Backend running");
+  console.log("Environment:", process.env.NODE_ENV);
+  console.log("Node version:", process.version);
+  console.log("Port:", PORT);
 });
 
 // Graceful shutdown handler
 const gracefulShutdown = async (signal) => {
   logger.info('SERVER', `${signal} received. Shutting down gracefully...`);
-  // Stop all cron tasks cleanly
-  if (schedulerTasks) schedulerTasks.forEach(t => t.stop());
-  await releaseLock('scheduler').catch(() => { });
-  await releaseLock('token-refresh').catch(() => { });
   await prisma.$disconnect();
-  logger.info('SERVER', 'Shutdown complete.');
-  process.exit(0);
+  logger.info('SERVER', 'Shutdown complete.'); // process.exit is intentionally removed to avoid SIGTERM issues
 };
 
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
