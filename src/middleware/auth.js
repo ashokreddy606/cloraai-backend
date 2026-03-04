@@ -44,53 +44,10 @@ const authenticate = async (req, res, next) => {
     req.user = decoded;
     req.userId = decoded.userId;
 
-    // ── DB lookup: tokenVersion check + role gate ─────────────────────────
-    // One indexed read per request — acceptable cost for security guarantee.
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId },
-      select: { id: true, role: true, tokenVersion: true },
-    });
-
-    if (!user) {
-      return res.status(401).json({ error: 'User not found' });
-    }
-
-    // ── Role gate: deny suspended and banned accounts ─────────────────────
-    if (user.role === 'SUSPENDED' || user.role === 'BANNED') {
-      logger.warn('AUTH', `Blocked request from ${user.role} account`, { userId: user.id });
-      return res.status(403).json({
-        error: 'Account restricted',
-        message: user.role === 'SUSPENDED'
-          ? 'Your account is temporarily suspended. Please contact support.'
-          : 'Your account has been permanently banned.',
-        code: user.role,
-      });
-    }
-
-    // ── tokenVersion check: forced logout detection ───────────────────────
-    // When an admin increments User.tokenVersion in DB, all existing tokens
-    // (which carry the old version) are immediately invalidated. This is the
-    // only reliable server-side logout mechanism with stateless JWTs.
-    //
-    // tokenVersion is 0 by default. Tokens issued before this feature was
-    // added carry no tokenVersion (undefined). We treat undefined as 0 to
-    // avoid breaking existing sessions on first deploy (safe migration).
-    const tokenVersion = decoded.tokenVersion ?? 0;
-    const dbTokenVersion = user.tokenVersion ?? 0;
-
-    if (tokenVersion !== dbTokenVersion) {
-      logger.warn('AUTH', `Token version mismatch — forced logout`, { userId: user.id });
-      return res.status(401).json({
-        error: 'Session invalidated',
-        message: 'Your session has been revoked. Please log in again.',
-        code: 'TOKEN_VERSION_MISMATCH',
-      });
-    }
-
     next();
-  } catch (error) {
-    logger.error('AUTH', 'Unexpected authentication error', { error: error.message });
-    res.status(500).json({ error: 'Authentication error' });
+  } catch (err) {
+    console.error("Authentication middleware error:", err);
+    res.status(500).json({ error: "Authentication error" });
   }
 };
 

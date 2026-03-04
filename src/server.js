@@ -22,13 +22,11 @@ if (process.env.SENTRY_DSN) {
 // ─── Process-Level Error Catchers ────────────────────────────────────────────
 // These are last-resort handlers for bugs that escape all try/catch blocks.
 process.on('uncaughtException', (err) => {
-  logger.error('PROCESS', 'UNCAUGHT_EXCEPTION — server will restart', { error: err.message, stack: err.stack });
-  process.exit(1); // Let PM2/supervisor restart
+  console.error("UNCAUGHT EXCEPTION:", err);
 });
 
-process.on('unhandledRejection', (reason) => {
-  logger.error('PROCESS', 'UNHANDLED_REJECTION', { reason: String(reason) });
-  // Do NOT exit — this is often a non-fatal async operation
+process.on('unhandledRejection', (err) => {
+  console.error("UNHANDLED REJECTION:", err);
 });
 
 // Import routes
@@ -51,7 +49,12 @@ const prisma = new PrismaClient();
 
 // Initialize Cron Jobs
 const { schedulerTasks, releaseLock } = require('./services/schedulerCron');
-require('./services/subscriptionCron');
+try {
+  require('./services/subscriptionCron');
+  console.log("Subscription cron started successfully");
+} catch (err) {
+  console.error("Subscription cron failed:", err);
+}
 
 // Initialize Express app
 const app = express();
@@ -136,8 +139,12 @@ app.use((req, res, next) => {
 });
 
 // Health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', message: 'CloraAI Backend is running', timestamp: new Date().toISOString() });
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: Date.now()
+  });
 });
 
 // Internal monitoring metrics endpoint
@@ -267,7 +274,10 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`CloraAI Backend running on port ${PORT}`);
+  console.log(`CloraAI Backend running`);
+  console.log(`Environment: ${process.env.NODE_ENV}`);
+  console.log(`Node version: ${process.version}`);
+  console.log(`Port: ${PORT}`);
 });
 
 // Graceful shutdown handler
