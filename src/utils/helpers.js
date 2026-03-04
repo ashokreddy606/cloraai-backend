@@ -28,20 +28,17 @@ const BCRYPT_ROUNDS = 12;
  * @param {string} userId
  * @param {number} tokenVersion - incremented on forced logout; embed in token
  */
-const generateToken = (userId, tokenVersion = 0) => {
+function generateToken(userId, tokenVersion = 0) {
   return jwt.sign(
     { userId, tokenVersion },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRY }
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRY || "7d" }
   );
-};
+}
 
-/**
- * Verify and decode a JWT. Throws if invalid or expired.
- */
-const verifyToken = (token) => {
-  return jwt.verify(token, JWT_SECRET);
-};
+function verifyToken(token) {
+  return jwt.verify(token, process.env.JWT_SECRET);
+}
 
 /**
  * Hash a password with bcrypt (cost factor 12).
