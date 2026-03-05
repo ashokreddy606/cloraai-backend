@@ -58,6 +58,8 @@ router.delete('/brand-deals/:id', admin.deleteBrandDeal);
 router.patch('/brand-deals/:id/mark-scam', admin.markDealAsScam);
 router.get('/brand-deals/:id/replies', admin.getDealReplies);
 router.post('/brand-deals/:id/shortlist', admin.aiShortlistReplies);
+router.post('/brand-deals/:id/replies/:replyId/shortlist', admin.manualShortlist);
+router.post('/brand-deals/:id/send-notifications', admin.sendDealNotifications);
 
 // ── Notifications ─────────────────────────────────────────────────────
 router.post('/broadcast', admin.broadcastNotification);

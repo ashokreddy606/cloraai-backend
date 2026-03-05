@@ -869,13 +869,30 @@ const getDealReplies = async (req, res) => {
         });
 
         // Let's also grab their instagram followers if connected
+        // Let's also grab their instagram followers if connected, AND 30day reach
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
         const repliesWithFollowers = await Promise.all(replies.map(async (reply) => {
             const igAccount = await prisma.instagramAccount.findUnique({
                 where: { userId: reply.userId }
             });
+
+            // Get highest reach or average reach in last 30days
+            const snapshots = await prisma.analyticsSnapshot.findMany({
+                where: {
+                    userId: reply.userId,
+                    snapshotDate: { gte: thirtyDaysAgo }
+                },
+                select: { reach: true }
+            });
+
+            const maxReach = snapshots.length > 0 ? Math.max(...snapshots.map(s => s.reach)) : 'N/A';
+
             return {
                 ...reply,
-                followers: igAccount ? igAccount.followers : 'N/A'
+                followers: igAccount ? igAccount.followers : 'N/A',
+                reach: maxReach
             };
         }));
 
@@ -954,6 +971,63 @@ ${replies.map(r => `ID: ${r.id} | Username: ${r.user.username} | Pitch: "${r.pit
     } catch (error) {
         console.error('AI Shortlist error:', error);
         res.status(500).json({ error: 'Failed to run AI shortlisting', message: error.message });
+    }
+};
+
+const manualShortlist = async (req, res) => {
+    try {
+        const { id, replyId } = req.params;
+        const { isShortlisted } = req.body;
+
+        await prisma.brandDealReply.update({
+            where: { id: replyId },
+            data: { isShortlisted }
+        });
+
+        res.json({ success: true, message: isShortlisted ? 'User manually shortlisted' : 'User removed from shortlist' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to update shortlist status', message: error.message });
+    }
+};
+
+const sendDealNotifications = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const deal = await prisma.brandDeal.findUnique({ where: { id } });
+        if (!deal) return res.status(404).json({ error: 'Deal not found' });
+
+        const replies = await prisma.brandDealReply.findMany({
+            where: { brandDealId: id }
+        });
+
+        if (replies.length === 0) return res.status(400).json({ error: 'No replies to notify' });
+
+        // Prepare notifications
+        const notifications = replies.map(reply => {
+            const isSelected = reply.isShortlisted;
+            return {
+                userId: reply.userId,
+                type: 'brand_deal',
+                icon: isSelected ? 'star' : 'close-circle',
+                color: isSelected ? '#10B981' : '#F59E0B',
+                title: isSelected ? 'Brand Deal Pitch: Shortlisted! 🎉' : 'Brand Deal Pitch Update',
+                body: isSelected
+                    ? `Congratulations! You have been shortlisted for the Brand Deal @${deal.senderUsername}. Watch your DMs for further steps!`
+                    : `Thank you for pitching to @${deal.senderUsername}. Unfortunately, your profile wasn't selected this time. Better luck next time!`,
+                read: false,
+                createdAt: new Date()
+            }
+        });
+
+        await prisma.notification.createMany({
+            data: notifications
+        });
+
+        res.json({ success: true, message: `Sent notifications to ${notifications.length} users` });
+    } catch (error) {
+        console.error('Send Notifications error:', error);
+        res.status(500).json({ error: 'Failed to send notifications', message: error.message });
     }
 };
 
@@ -1302,4 +1376,6 @@ module.exports = {
     getAllPayments,
     getDealReplies,
     aiShortlistReplies,
+    manualShortlist,
+    sendDealNotifications,
 };
