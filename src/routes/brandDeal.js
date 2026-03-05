@@ -8,5 +8,9 @@ const { requirePro } = require('../middleware/planGuard');
 router.get('/', authenticate, requirePro, brandDealController.getBrandDeals);
 router.post('/simulate', authenticate, requirePro, brandDealController.simulateIncomingDM);
 
+// User Interactions
+router.post('/:id/ignore', authenticate, requirePro, brandDealController.ignoreDeal);
+router.post('/:id/reply', authenticate, requirePro, brandDealController.replyToDeal);
+
 module.exports = router;
 

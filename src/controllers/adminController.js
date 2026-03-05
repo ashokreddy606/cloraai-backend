@@ -3,7 +3,13 @@ const { hashPassword } = require('../utils/helpers');
 const { appConfig, saveConfig } = require('../config');
 const { cancelSubscription: rzpCancelSub, createRefund } = require('../services/razorpayService');
 const logger = require('../utils/logger');
+const { OpenAIApi, Configuration } = require('openai');
+const { logAIUsage } = require('../middleware/aiLimiter');
 const prisma = new PrismaClient();
+
+const openai = new OpenAIApi(new Configuration({
+    apiKey: process.env.OPENAI_API_KEY
+}));
 
 // Store for IP blacklist (in-memory — not plan-change-critical)
 let ipBlacklist = [];
@@ -849,6 +855,108 @@ const markDealAsScam = async (req, res) => {
     }
 };
 
+const getDealReplies = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const replies = await prisma.brandDealReply.findMany({
+            where: { brandDealId: id },
+            include: {
+                user: {
+                    select: { email: true, username: true, id: true },
+                },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        // Let's also grab their instagram followers if connected
+        const repliesWithFollowers = await Promise.all(replies.map(async (reply) => {
+            const igAccount = await prisma.instagramAccount.findUnique({
+                where: { userId: reply.userId }
+            });
+            return {
+                ...reply,
+                followers: igAccount ? igAccount.followers : 'N/A'
+            };
+        }));
+
+        res.json({ success: true, data: { replies: repliesWithFollowers } });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch replies', message: error.message });
+    }
+};
+
+const aiShortlistReplies = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const deal = await prisma.brandDeal.findUnique({ where: { id } });
+        if (!deal) return res.status(404).json({ error: 'Deal not found' });
+
+        const replies = await prisma.brandDealReply.findMany({
+            where: { brandDealId: id },
+            include: {
+                user: { select: { username: true } }
+            }
+        });
+
+        if (replies.length === 0) {
+            return res.json({ success: true, message: 'No replies to shortlist' });
+        }
+
+        const prompt = `You are an AI talent scout for a brand deal.
+Brand Deal Content: "${deal.dmContent}"
+
+I have a list of profiles that pitched for this deal. Please analyze their pitches and select the BEST candidates (up to 30% of them) based on how well their pitch aligns with the brand.
+Respond strictly in JSON format with an array of their IDs that you have SHORTLISTED. Look for professionalism, relevance, and enthusiasm.
+JSON format: { "shortlistedIds": ["id1", "id2"] }
+
+Candidates: 
+${replies.map(r => `ID: ${r.id} | Username: ${r.user.username} | Pitch: "${r.pitch}"`).join('\n')}
+`;
+
+        let selectedIds = [];
+        let tokensUsed = 0;
+
+        if (process.env.OPENAI_API_KEY === 'dummy') {
+            selectedIds = replies.slice(0, Math.max(1, Math.floor(replies.length / 2))).map(r => r.id);
+        } else {
+            const response = await openai.createChatCompletion({
+                model: 'gpt-3.5-turbo',
+                messages: [
+                    { role: 'system', content: 'You output only valid JSON.' },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.2,
+            });
+            const content = response.data.choices[0].message.content.trim();
+            tokensUsed = response.data.usage?.total_tokens || 0;
+            const analysis = JSON.parse(content);
+            selectedIds = analysis.shortlistedIds || [];
+        }
+
+        if (selectedIds.length > 0) {
+            // Reset all to not shortlisted
+            await prisma.brandDealReply.updateMany({
+                where: { brandDealId: id },
+                data: { isShortlisted: false }
+            });
+
+            // Set shortlisted ones
+            await prisma.brandDealReply.updateMany({
+                where: { id: { in: selectedIds } },
+                data: { isShortlisted: true }
+            });
+        }
+
+        await logAIUsage(req.userId, 'brand_deal', tokensUsed);
+
+        res.json({ success: true, message: 'AI shortlisting complete', data: { shortlistedIds: selectedIds } });
+    } catch (error) {
+        console.error('AI Shortlist error:', error);
+        res.status(500).json({ error: 'Failed to run AI shortlisting', message: error.message });
+    }
+};
+
 // ─── 9. NOTIFICATIONS ──────────────────────────────────────────────────
 const broadcastNotification = async (req, res) => {
     try {
@@ -1192,4 +1300,6 @@ module.exports = {
     removeIPFromBlacklist,
     getAuditLogs,
     getAllPayments,
+    getDealReplies,
+    aiShortlistReplies,
 };

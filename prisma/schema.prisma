@@ -76,16 +76,18 @@ model User {
   referralTransactionsGot   ReferralTransaction[] @relation("ReceivedRewards")
 
   // ── Relations ───────────────────────────────────────────────────────────
-  instagramAccounts InstagramAccount[]
-  paymentHistory    PaymentHistory[]
-  captions          Caption[]
-  scheduledPosts    ScheduledPost[]
-  dmAutomations     DMAutomation[]
-  dmInteractions    DmInteraction[]
-  analyticsSnapshot AnalyticsSnapshot[]
-  calendarTasks     CalendarTask[]
-  notifications     Notification[]
-  aiUsage           AIUsage[]
+  instagramAccounts     InstagramAccount[]
+  paymentHistory        PaymentHistory[]
+  captions              Caption[]
+  scheduledPosts        ScheduledPost[]
+  dmAutomations         DMAutomation[]
+  dmInteractions        DmInteraction[]
+  analyticsSnapshot     AnalyticsSnapshot[]
+  calendarTasks         CalendarTask[]
+  notifications         Notification[]
+  aiUsage               AIUsage[]
+  brandDealInteractions BrandDealInteraction[]
+  brandDealReplies      BrandDealReply[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -303,6 +305,40 @@ model BrandDeal {
 
   flaggedAt DateTime @default(now())
   createdAt DateTime @default(now())
+
+  interactions BrandDealInteraction[]
+  replies      BrandDealReply[]
+}
+
+// Track when a user ignores a brand deal
+model BrandDealInteraction {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String    @db.ObjectId
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandDealId String    @db.ObjectId
+  brandDeal   BrandDeal @relation(fields: [brandDealId], references: [id], onDelete: Cascade)
+  action      String    @default("ignored") // "ignored"
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, brandDealId, action])
+  @@index([userId])
+  @@index([brandDealId])
+}
+
+// Track when a user replies to a brand deal with a pitch
+model BrandDealReply {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String    @db.ObjectId
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandDealId   String    @db.ObjectId
+  brandDeal     BrandDeal @relation(fields: [brandDealId], references: [id], onDelete: Cascade)
+  pitch         String
+  isShortlisted Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+
+  @@unique([userId, brandDealId])
+  @@index([userId])
+  @@index([brandDealId])
 }
 
 // Password Reset Tokens

@@ -8,10 +8,27 @@ const openai = new OpenAIApi(new Configuration({
     apiKey: process.env.OPENAI_API_KEY
 }));
 
-// Fetch stored brand deals for the user 
+// Fetch stored brand deals for the user, filtering out ones they've already interacted with
 const getBrandDeals = async (req, res) => {
     try {
+        const userId = req.userId; // Provided by auth middleware
+
+        // Get IDs of deals the user has already interacted with (ignored or replied)
+        const ignored = await prisma.brandDealInteraction.findMany({
+            where: { userId },
+            select: { brandDealId: true }
+        });
+        const replied = await prisma.brandDealReply.findMany({
+            where: { userId },
+            select: { brandDealId: true }
+        });
+
+        const interactedIds = [...ignored, ...replied].map(i => i.brandDealId);
+
         const deals = await prisma.brandDeal.findMany({
+            where: {
+                id: { notIn: interactedIds }
+            },
             orderBy: { createdAt: 'desc' },
             take: 50 // Limit to recent 50
         });
@@ -133,8 +150,80 @@ const simulateIncomingDM = async (req, res) => {
     }
 };
 
+// Handle user ignoring a brand deal
+const ignoreDeal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.userId;
+
+        // Create an interaction record
+        await prisma.brandDealInteraction.upsert({
+            where: {
+                userId_brandDealId_action: {
+                    userId,
+                    brandDealId: id,
+                    action: 'ignored'
+                }
+            },
+            update: {},
+            create: {
+                userId,
+                brandDealId: id,
+                action: 'ignored'
+            }
+        });
+
+        res.status(200).json({ success: true, message: 'Deal ignored successfully' });
+    } catch (error) {
+        console.error('Ignore deal error:', error);
+        res.status(500).json({ error: 'Failed to ignore deal', message: error.message });
+    }
+};
+
+// Handle user replying to a brand deal with a pitch
+const replyToDeal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { pitch } = req.body;
+        const userId = req.userId;
+
+        if (!pitch) {
+            return res.status(400).json({ error: 'Pitch is required' });
+        }
+
+        // Check if already replied
+        const existingInfo = await prisma.brandDealReply.findUnique({
+            where: {
+                userId_brandDealId: {
+                    userId,
+                    brandDealId: id
+                }
+            }
+        });
+
+        if (existingInfo) {
+            return res.status(400).json({ error: 'You have already sent a pitch for this deal.' });
+        }
+
+        const reply = await prisma.brandDealReply.create({
+            data: {
+                userId,
+                brandDealId: id,
+                pitch
+            }
+        });
+
+        res.status(201).json({ success: true, data: { reply } });
+    } catch (error) {
+        console.error('Reply to deal error:', error);
+        res.status(500).json({ error: 'Failed to reply to deal', message: error.message });
+    }
+};
+
 module.exports = {
     getBrandDeals,
     simulateIncomingDM,
-    analyzeAndSaveBrandDeal
+    analyzeAndSaveBrandDeal,
+    ignoreDeal,
+    replyToDeal
 };
