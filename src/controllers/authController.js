@@ -392,204 +392,205 @@ const forgotPassword = async (req, res) => {
         console.error('⚠️  Email send failed:', emailErr.message);
         console.log(`📧 RESET LINK (copy from Railway logs): ${resetLink}`);
       }
+    } // End of if (user)
 
-      res.status(200).json({
-        success: true,
-        message: 'If an account with that email exists, a reset link has been sent.'
+    res.status(200).json({
+      success: true,
+      message: 'If an account with that email exists, a reset link has been sent.'
+    });
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+};
+
+// Reset Password (verify token + set new password)
+const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        error: 'Invalid input',
+        message: 'Token and new password (min 6 chars) are required'
       });
-
-    } catch (error) {
-      console.error('Forgot password error:', error);
-      res.status(500).json({ error: 'Failed to process request' });
     }
-  };
 
-  // Reset Password (verify token + set new password)
-  const resetPassword = async (req, res) => {
-    try {
-      const { token, newPassword } = req.body;
+    // Find valid, unused token
+    const resetRecord = await prisma.passwordReset.findUnique({
+      where: { token }
+    });
 
-      if (!token || !newPassword || newPassword.length < 6) {
-        return res.status(400).json({
-          error: 'Invalid input',
-          message: 'Token and new password (min 6 chars) are required'
-        });
-      }
-
-      // Find valid, unused token
-      const resetRecord = await prisma.passwordReset.findUnique({
-        where: { token }
+    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
+      return res.status(400).json({
+        error: 'Invalid or expired token',
+        message: 'This reset link is invalid or has expired. Please request a new one.'
       });
-
-      if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
-        return res.status(400).json({
-          error: 'Invalid or expired token',
-          message: 'This reset link is invalid or has expired. Please request a new one.'
-        });
-      }
-
-      // Hash new password and update user
-      const hashedPassword = await hashPassword(newPassword);
-      await prisma.user.update({
-        where: { id: resetRecord.userId },
-        data: { password: hashedPassword }
-      });
-
-      // Mark token as used
-      await prisma.passwordReset.update({
-        where: { id: resetRecord.id },
-        data: { used: true }
-      });
-
-      res.status(200).json({
-        success: true,
-        message: 'Password has been reset successfully. You can now sign in with your new password.'
-      });
-    } catch (error) {
-      console.error('Reset password error:', error);
-      res.status(500).json({ error: 'Failed to reset password' });
     }
-  };
 
-  // Delete Account (mandatory for Play Store 2024+)
-  const deleteAccount = async (req, res) => {
-    try {
-      const userId = req.userId;
+    // Hash new password and update user
+    const hashedPassword = await hashPassword(newPassword);
+    await prisma.user.update({
+      where: { id: resetRecord.userId },
+      data: { password: hashedPassword }
+    });
 
-      // Prisma cascade deletes will handle related records
-      // (CalendarTask, Notification, Caption, ScheduledPost, etc. all have onDelete: Cascade)
-      await prisma.user.delete({
-        where: { id: userId }
-      });
+    // Mark token as used
+    await prisma.passwordReset.update({
+      where: { id: resetRecord.id },
+      data: { used: true }
+    });
 
-      res.status(200).json({
-        success: true,
-        message: 'Your account and all associated data have been permanently deleted.'
-      });
-    } catch (error) {
-      console.error('Delete account error:', error);
-      res.status(500).json({ error: 'Failed to delete account' });
+    res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully. You can now sign in with your new password.'
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+};
+
+// Delete Account (mandatory for Play Store 2024+)
+const deleteAccount = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    // Prisma cascade deletes will handle related records
+    // (CalendarTask, Notification, Caption, ScheduledPost, etc. all have onDelete: Cascade)
+    await prisma.user.delete({
+      where: { id: userId }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Your account and all associated data have been permanently deleted.'
+    });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+};
+
+// Make Admin (protected by secret key from environment)
+const makeAdmin = async (req, res) => {
+  try {
+    const { email, secretKey } = req.body;
+    const expectedKey = process.env.ADMIN_SECRET_KEY || 'clora-admin-2026';
+
+    if (secretKey !== expectedKey) {
+      return res.status(403).json({ error: 'Invalid secret key' });
     }
-  };
 
-  // Make Admin (protected by secret key from environment)
-  const makeAdmin = async (req, res) => {
-    try {
-      const { email, secretKey } = req.body;
-      const expectedKey = process.env.ADMIN_SECRET_KEY || 'clora-admin-2026';
-
-      if (secretKey !== expectedKey) {
-        return res.status(403).json({ error: 'Invalid secret key' });
-      }
-
-      const user = await prisma.user.findUnique({ where: { email } });
-      if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-
-      await prisma.user.update({
-        where: { email },
-        data: { role: 'ADMIN' }
-      });
-
-      res.status(200).json({
-        success: true,
-        message: `User ${email} has been promoted to ADMIN. Please log out and log back in.`
-      });
-    } catch (error) {
-      console.error('Make admin error:', error);
-      res.status(500).json({ error: 'Failed to update role', message: error.message });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
-  };
 
-  // Google OAuth Sign-In
-  const googleAuth = async (req, res) => {
-    try {
-      const { idToken, deviceFingerprint } = req.body;
-      const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    await prisma.user.update({
+      where: { email },
+      data: { role: 'ADMIN' }
+    });
 
-      if (!idToken) {
-        return res.status(400).json({ error: 'idToken is required' });
-      }
+    res.status(200).json({
+      success: true,
+      message: `User ${email} has been promoted to ADMIN. Please log out and log back in.`
+    });
+  } catch (error) {
+    console.error('Make admin error:', error);
+    res.status(500).json({ error: 'Failed to update role', message: error.message });
+  }
+};
 
-      // Verify token with Google
-      const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
-      const payload = await response.json();
+// Google OAuth Sign-In
+const googleAuth = async (req, res) => {
+  try {
+    const { idToken, deviceFingerprint } = req.body;
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-      if (payload.error) {
-        return res.status(401).json({ error: 'Invalid Google token' });
-      }
+    if (!idToken) {
+      return res.status(400).json({ error: 'idToken is required' });
+    }
 
-      // We can also verify the audience matches our CLIENT_ID here if needed
-      // if (payload.aud !== process.env.GOOGLE_CLIENT_ID) { ... }
+    // Verify token with Google
+    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+    const payload = await response.json();
 
-      const email = payload.email.toLowerCase().trim();
-      const username = payload.name || email.split('@')[0];
-      const profileImage = payload.picture;
+    if (payload.error) {
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
 
-      // Check if user exists, otherwise create
-      let user = await prisma.user.findUnique({ where: { email } });
+    // We can also verify the audience matches our CLIENT_ID here if needed
+    // if (payload.aud !== process.env.GOOGLE_CLIENT_ID) { ... }
 
-      if (!user) {
-        // Create new user (generate random password since they use Google)
-        const randomPassword = Math.random().toString(36).slice(-10) + 'A1!'; // satisfying constraints
-        const hashedPassword = await hashPassword(randomPassword);
-        const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
+    const email = payload.email.toLowerCase().trim();
+    const username = payload.name || email.split('@')[0];
+    const profileImage = payload.picture;
 
-        user = await prisma.user.create({
-          data: {
-            email,
-            password: hashedPassword,
-            username,
-            profileImage,
-            referralCode,
-            ipAddress,
-            deviceFingerprint: deviceFingerprint || null
-          }
-        });
-      } else {
-        // Update login info for existing user
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            ipAddress,
-            ...(deviceFingerprint && { deviceFingerprint })
-          }
-        });
-      }
+    // Check if user exists, otherwise create
+    let user = await prisma.user.findUnique({ where: { email } });
 
-      // Generate our JWT
-      const token = generateToken(user.id);
+    if (!user) {
+      // Create new user (generate random password since they use Google)
+      const randomPassword = Math.random().toString(36).slice(-10) + 'A1!'; // satisfying constraints
+      const hashedPassword = await hashPassword(randomPassword);
+      const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
 
-      res.status(200).json({
-        success: true,
+      user = await prisma.user.create({
         data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            profileImage: user.profileImage,
-            role: user.role
-          },
-          token
+          email,
+          password: hashedPassword,
+          username,
+          profileImage,
+          referralCode,
+          ipAddress,
+          deviceFingerprint: deviceFingerprint || null
         }
       });
-
-    } catch (error) {
-      console.error('Google Auth error:', error);
-      res.status(500).json({ error: 'Google authentication failed', message: error.message });
+    } else {
+      // Update login info for existing user
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          ipAddress,
+          ...(deviceFingerprint && { deviceFingerprint })
+        }
+      });
     }
-  };
 
-  module.exports = {
-    register,
-    login,
-    getCurrentUser,
-    updateProfile,
-    forgotPassword,
-    resetPassword,
-    deleteAccount,
-    logout,
-    makeAdmin,
-    googleAuth
-  };
+    // Generate our JWT
+    const token = generateToken(user.id);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          profileImage: user.profileImage,
+          role: user.role
+        },
+        token
+      }
+    });
+
+  } catch (error) {
+    console.error('Google Auth error:', error);
+    res.status(500).json({ error: 'Google authentication failed', message: error.message });
+  }
+};
+
+module.exports = {
+  register,
+  login,
+  getCurrentUser,
+  updateProfile,
+  forgotPassword,
+  resetPassword,
+  deleteAccount,
+  logout,
+  makeAdmin,
+  googleAuth
+};
