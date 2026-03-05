@@ -525,6 +525,41 @@ const getSubscriptionHistory = async (req, res) => {
 };
 
 /**
+ * Get global transaction history (All users).
+ */
+const getAllPayments = async (req, res) => {
+    try {
+        const { status, page = 1, limit = 20 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const where = {};
+        if (status) where.status = status.toUpperCase();
+
+        const [payments, total] = await Promise.all([
+            prisma.paymentHistory.findMany({
+                where,
+                include: { user: { select: { email: true, username: true } } },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: parseInt(limit),
+            }),
+            prisma.paymentHistory.count({ where }),
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                payments,
+                total,
+                page: parseInt(page),
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch global payments', message: error.message });
+    }
+};
+
+/**
  * Get all subscriptions (using User plan fields as source of truth).
  */
 const getSubscriptions = async (req, res) => {
@@ -1156,4 +1191,5 @@ module.exports = {
     blacklistIP,
     removeIPFromBlacklist,
     getAuditLogs,
+    getAllPayments,
 };

@@ -6,14 +6,52 @@ const crypto = require('crypto');
 
 const prisma = new PrismaClient();
 
-// Email transporter (Gmail SMTP)
-const createTransporter = () => nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// ─────────────────────────────────────────────
+// Email: supports Resend API (recommended) OR Gmail SMTP (fallback)
+// Set on Railway:
+//   RESEND_API_KEY=re_xxxxxxxxxxxx         ← preferred (free at resend.com)
+//   OR
+//   SMTP_USER=yourgmail@gmail.com           ← Gmail App Password
+//   SMTP_PASS=your-16-char-app-password
+// ─────────────────────────────────────────────
+const sendEmail = async ({ to, subject, html }) => {
+  // Option 1: Resend API (recommended — free 3000/month, no app password needed)
+  if (process.env.RESEND_API_KEY) {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || 'CloraAI <noreply@cloraai.com>',
+        to,
+        subject,
+        html,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(`Resend error: ${JSON.stringify(data)}`);
+    return data;
+  }
+
+  // Option 2: Gmail SMTP (needs Google App Password — NOT your regular password)
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+    return transporter.sendMail({
+      from: process.env.EMAIL_FROM || `CloraAI <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+  }
+
+  // No email provider configured
+  throw new Error('No email provider configured. Set RESEND_API_KEY or SMTP_USER+SMTP_PASS on Railway.');
+};
 
 
 // User Registration
@@ -315,254 +353,243 @@ const forgotPassword = async (req, res) => {
         }
       });
 
-      const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:8081'}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+      const resetLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
-      // Send email via Gmail SMTP
-      if (process.env.SMTP_USER && process.env.SMTP_PASS && !process.env.SMTP_USER.includes('your-gmail')) {
-        try {
-          const transporter = createTransporter();
-          await transporter.sendMail({
-            from: process.env.SMTP_FROM || `CloraAI <${process.env.SMTP_USER}>`,
-            to: email,
-            subject: 'Reset Your CloraAI Password',
-            html: `
-              <!DOCTYPE html>
-              <html>
-              <head><meta charset="UTF-8"></head>
-              <body style="margin:0;padding:0;background:#0B1020;font-family:Arial,sans-serif;">
-                <div style="max-width:560px;margin:40px auto;background:#111827;border-radius:20px;overflow:hidden;border:1px solid #1F2937;">
-                  <div style="background:linear-gradient(135deg,#6D28D9,#4F46E5);padding:32px;text-align:center;">
-                    <h1 style="color:#fff;font-size:28px;margin:0;font-weight:900;">CloraAI ✦</h1>
-                  </div>
-                  <div style="padding:32px;">
-                    <h2 style="color:#FFFFFF;font-size:22px;margin-bottom:12px;">Reset Your Password</h2>
-                    <p style="color:#9CA3AF;font-size:15px;line-height:24px;">
-                      Hi <strong style="color:#FFFFFF;">${user.username || 'there'}</strong>,<br><br>
-                      We received a request to reset the password for your CloraAI account (<strong style="color:#A78BFA;">${email}</strong>).
-                    </p>
-                    <div style="text-align:center;margin:28px 0;">
-                      <a href="${resetLink}" 
-                         style="background:linear-gradient(135deg,#6D28D9,#4F46E5);color:#FFFFFF;text-decoration:none;padding:14px 32px;border-radius:12px;font-size:15px;font-weight:700;display:inline-block;">
-                        Reset Password →
-                      </a>
-                    </div>
-                    <p style="color:#6B7280;font-size:13px;text-align:center;">
-                      This link expires in 1 hour. If you didn't request a reset, you can safely ignore this email.
-                    </p>
-                  </div>
-                  <div style="padding:20px;text-align:center;border-top:1px solid #1F2937;">
-                    <p style="color:#4B5563;font-size:12px;margin:0;">© 2026 CloraAI. All rights reserved.</p>
-                  </div>
-                </div>
-              </body>
-              </html>
-            `,
-          });
-          console.log(`✅ Password reset email sent to ${email}`);
-        } catch (emailErr) {
-          console.error('Email send error:', emailErr.message);
-        }
-      } else {
-        console.log(`⚠️  SMTP not configured. Reset link for ${email}:\n${resetLink}`);
+      const emailHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+      <body style="margin:0;padding:0;background:#0B1020;font-family:Arial,sans-serif;">
+        <div style="max-width:560px;margin:40px auto;background:#111827;border-radius:20px;overflow:hidden;border:1px solid #1F2937;">
+          <div style="background:linear-gradient(135deg,#6D28D9,#4F46E5);padding:32px;text-align:center;">
+            <h1 style="color:#fff;font-size:28px;margin:0;font-weight:900;">CloraAI ✦</h1>
+          </div>
+          <div style="padding:32px;">
+            <h2 style="color:#FFFFFF;font-size:22px;margin-bottom:12px;">Reset Your Password</h2>
+            <p style="color:#9CA3AF;font-size:15px;line-height:24px;">
+              Hi <strong style="color:#FFFFFF;">${user.username || 'there'}</strong>,<br><br>
+              We received a request to reset the password for your CloraAI account
+              (<strong style="color:#A78BFA;">${email}</strong>).
+            </p>
+            <div style="text-align:center;margin:28px 0;">
+              <a href="${resetLink}"
+                 style="background:linear-gradient(135deg,#6D28D9,#4F46E5);color:#FFFFFF;text-decoration:none;padding:14px 32px;border-radius:12px;font-size:15px;font-weight:700;display:inline-block;">
+                Reset Password &rarr;
+              </a>
+            </div>
+            <p style="color:#6B7280;font-size:13px;text-align:center;">
+              This link expires in 1 hour. If you didn't request a reset, ignore this email.
+            </p>
+          </div>
+          <div style="padding:20px;text-align:center;border-top:1px solid #1F2937;">
+            <p style="color:#4B5563;font-size:12px;margin:0;">&copy; 2026 CloraAI. All rights reserved.</p>
+          </div>
+        </div>
+      </body></html>`;
+
+      try {
+        await sendEmail({ to: email, subject: 'Reset Your CloraAI Password', html: emailHtml });
+        console.log(`✅ Password reset email sent to ${email}`);
+      } catch (emailErr) {
+        // Log reset link to Railway logs so dev can copy it during testing
+        console.error('⚠️  Email send failed:', emailErr.message);
+        console.log(`📧 RESET LINK (copy from Railway logs): ${resetLink}`);
       }
-    }
 
-    res.status(200).json({
-      success: true,
-      message: 'If an account with that email exists, a reset link has been sent.'
-    });
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(500).json({ error: 'Failed to process request' });
-  }
-};
-
-// Reset Password (verify token + set new password)
-const resetPassword = async (req, res) => {
-  try {
-    const { token, newPassword } = req.body;
-
-    if (!token || !newPassword || newPassword.length < 6) {
-      return res.status(400).json({
-        error: 'Invalid input',
-        message: 'Token and new password (min 6 chars) are required'
+      res.status(200).json({
+        success: true,
+        message: 'If an account with that email exists, a reset link has been sent.'
       });
+
+    } catch (error) {
+      console.error('Forgot password error:', error);
+      res.status(500).json({ error: 'Failed to process request' });
     }
+  };
 
-    // Find valid, unused token
-    const resetRecord = await prisma.passwordReset.findUnique({
-      where: { token }
-    });
+  // Reset Password (verify token + set new password)
+  const resetPassword = async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
 
-    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
-      return res.status(400).json({
-        error: 'Invalid or expired token',
-        message: 'This reset link is invalid or has expired. Please request a new one.'
+      if (!token || !newPassword || newPassword.length < 6) {
+        return res.status(400).json({
+          error: 'Invalid input',
+          message: 'Token and new password (min 6 chars) are required'
+        });
+      }
+
+      // Find valid, unused token
+      const resetRecord = await prisma.passwordReset.findUnique({
+        where: { token }
       });
-    }
 
-    // Hash new password and update user
-    const hashedPassword = await hashPassword(newPassword);
-    await prisma.user.update({
-      where: { id: resetRecord.userId },
-      data: { password: hashedPassword }
-    });
+      if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
+        return res.status(400).json({
+          error: 'Invalid or expired token',
+          message: 'This reset link is invalid or has expired. Please request a new one.'
+        });
+      }
 
-    // Mark token as used
-    await prisma.passwordReset.update({
-      where: { id: resetRecord.id },
-      data: { used: true }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Password has been reset successfully. You can now sign in with your new password.'
-    });
-  } catch (error) {
-    console.error('Reset password error:', error);
-    res.status(500).json({ error: 'Failed to reset password' });
-  }
-};
-
-// Delete Account (mandatory for Play Store 2024+)
-const deleteAccount = async (req, res) => {
-  try {
-    const userId = req.userId;
-
-    // Prisma cascade deletes will handle related records
-    // (CalendarTask, Notification, Caption, ScheduledPost, etc. all have onDelete: Cascade)
-    await prisma.user.delete({
-      where: { id: userId }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Your account and all associated data have been permanently deleted.'
-    });
-  } catch (error) {
-    console.error('Delete account error:', error);
-    res.status(500).json({ error: 'Failed to delete account' });
-  }
-};
-
-// Make Admin (protected by secret key from environment)
-const makeAdmin = async (req, res) => {
-  try {
-    const { email, secretKey } = req.body;
-    const expectedKey = process.env.ADMIN_SECRET_KEY || 'clora-admin-2026';
-
-    if (secretKey !== expectedKey) {
-      return res.status(403).json({ error: 'Invalid secret key' });
-    }
-
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    await prisma.user.update({
-      where: { email },
-      data: { role: 'ADMIN' }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: `User ${email} has been promoted to ADMIN. Please log out and log back in.`
-    });
-  } catch (error) {
-    console.error('Make admin error:', error);
-    res.status(500).json({ error: 'Failed to update role', message: error.message });
-  }
-};
-
-// Google OAuth Sign-In
-const googleAuth = async (req, res) => {
-  try {
-    const { idToken, deviceFingerprint } = req.body;
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-
-    if (!idToken) {
-      return res.status(400).json({ error: 'idToken is required' });
-    }
-
-    // Verify token with Google
-    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
-    const payload = await response.json();
-
-    if (payload.error) {
-      return res.status(401).json({ error: 'Invalid Google token' });
-    }
-
-    // We can also verify the audience matches our CLIENT_ID here if needed
-    // if (payload.aud !== process.env.GOOGLE_CLIENT_ID) { ... }
-
-    const email = payload.email.toLowerCase().trim();
-    const username = payload.name || email.split('@')[0];
-    const profileImage = payload.picture;
-
-    // Check if user exists, otherwise create
-    let user = await prisma.user.findUnique({ where: { email } });
-
-    if (!user) {
-      // Create new user (generate random password since they use Google)
-      const randomPassword = Math.random().toString(36).slice(-10) + 'A1!'; // satisfying constraints
-      const hashedPassword = await hashPassword(randomPassword);
-      const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
-
-      user = await prisma.user.create({
-        data: {
-          email,
-          password: hashedPassword,
-          username,
-          profileImage,
-          referralCode,
-          ipAddress,
-          deviceFingerprint: deviceFingerprint || null
-        }
-      });
-    } else {
-      // Update login info for existing user
+      // Hash new password and update user
+      const hashedPassword = await hashPassword(newPassword);
       await prisma.user.update({
-        where: { id: user.id },
+        where: { id: resetRecord.userId },
+        data: { password: hashedPassword }
+      });
+
+      // Mark token as used
+      await prisma.passwordReset.update({
+        where: { id: resetRecord.id },
+        data: { used: true }
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Password has been reset successfully. You can now sign in with your new password.'
+      });
+    } catch (error) {
+      console.error('Reset password error:', error);
+      res.status(500).json({ error: 'Failed to reset password' });
+    }
+  };
+
+  // Delete Account (mandatory for Play Store 2024+)
+  const deleteAccount = async (req, res) => {
+    try {
+      const userId = req.userId;
+
+      // Prisma cascade deletes will handle related records
+      // (CalendarTask, Notification, Caption, ScheduledPost, etc. all have onDelete: Cascade)
+      await prisma.user.delete({
+        where: { id: userId }
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Your account and all associated data have been permanently deleted.'
+      });
+    } catch (error) {
+      console.error('Delete account error:', error);
+      res.status(500).json({ error: 'Failed to delete account' });
+    }
+  };
+
+  // Make Admin (protected by secret key from environment)
+  const makeAdmin = async (req, res) => {
+    try {
+      const { email, secretKey } = req.body;
+      const expectedKey = process.env.ADMIN_SECRET_KEY || 'clora-admin-2026';
+
+      if (secretKey !== expectedKey) {
+        return res.status(403).json({ error: 'Invalid secret key' });
+      }
+
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      await prisma.user.update({
+        where: { email },
+        data: { role: 'ADMIN' }
+      });
+
+      res.status(200).json({
+        success: true,
+        message: `User ${email} has been promoted to ADMIN. Please log out and log back in.`
+      });
+    } catch (error) {
+      console.error('Make admin error:', error);
+      res.status(500).json({ error: 'Failed to update role', message: error.message });
+    }
+  };
+
+  // Google OAuth Sign-In
+  const googleAuth = async (req, res) => {
+    try {
+      const { idToken, deviceFingerprint } = req.body;
+      const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+      if (!idToken) {
+        return res.status(400).json({ error: 'idToken is required' });
+      }
+
+      // Verify token with Google
+      const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+      const payload = await response.json();
+
+      if (payload.error) {
+        return res.status(401).json({ error: 'Invalid Google token' });
+      }
+
+      // We can also verify the audience matches our CLIENT_ID here if needed
+      // if (payload.aud !== process.env.GOOGLE_CLIENT_ID) { ... }
+
+      const email = payload.email.toLowerCase().trim();
+      const username = payload.name || email.split('@')[0];
+      const profileImage = payload.picture;
+
+      // Check if user exists, otherwise create
+      let user = await prisma.user.findUnique({ where: { email } });
+
+      if (!user) {
+        // Create new user (generate random password since they use Google)
+        const randomPassword = Math.random().toString(36).slice(-10) + 'A1!'; // satisfying constraints
+        const hashedPassword = await hashPassword(randomPassword);
+        const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
+
+        user = await prisma.user.create({
+          data: {
+            email,
+            password: hashedPassword,
+            username,
+            profileImage,
+            referralCode,
+            ipAddress,
+            deviceFingerprint: deviceFingerprint || null
+          }
+        });
+      } else {
+        // Update login info for existing user
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            ipAddress,
+            ...(deviceFingerprint && { deviceFingerprint })
+          }
+        });
+      }
+
+      // Generate our JWT
+      const token = generateToken(user.id);
+
+      res.status(200).json({
+        success: true,
         data: {
-          ipAddress,
-          ...(deviceFingerprint && { deviceFingerprint })
+          user: {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            profileImage: user.profileImage,
+            role: user.role
+          },
+          token
         }
       });
+
+    } catch (error) {
+      console.error('Google Auth error:', error);
+      res.status(500).json({ error: 'Google authentication failed', message: error.message });
     }
+  };
 
-    // Generate our JWT
-    const token = generateToken(user.id);
-
-    res.status(200).json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          profileImage: user.profileImage,
-          role: user.role
-        },
-        token
-      }
-    });
-
-  } catch (error) {
-    console.error('Google Auth error:', error);
-    res.status(500).json({ error: 'Google authentication failed', message: error.message });
-  }
-};
-
-module.exports = {
-  register,
-  login,
-  getCurrentUser,
-  updateProfile,
-  forgotPassword,
-  resetPassword,
-  deleteAccount,
-  logout,
-  makeAdmin,
-  googleAuth
-};
+  module.exports = {
+    register,
+    login,
+    getCurrentUser,
+    updateProfile,
+    forgotPassword,
+    resetPassword,
+    deleteAccount,
+    logout,
+    makeAdmin,
+    googleAuth
+  };

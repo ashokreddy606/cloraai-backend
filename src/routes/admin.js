@@ -32,6 +32,7 @@ router.post('/payments/:paymentId/refund', admin.adminRefundPayment);      // Re
 
 // ── Subscriptions Overview ────────────────────────────────────────────
 router.get('/subscriptions', admin.getSubscriptions);
+router.get('/payments', admin.getAllPayments);
 
 
 // ── Scheduled Posts ───────────────────────────────────────────────────

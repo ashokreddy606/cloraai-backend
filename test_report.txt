@@ -1,0 +1,49 @@
+TEST RESULTS SUMMARY
+Total: 43
+Passed: 36
+Failed: 7
+Pass Rate: 83.7%
+
+✅ TC-MW-01: Health Check [200] {"status":"ok","uptime":134.5523645,"memory":21036904,"timestamp":1772703468245}
+✅ TC-MW-02: 404 Handler [404] {"error":"Not found","path":"/api/nonexistent-route-xyz"}
+✅ TC-CFG-01: Public Config Endpoint [200] keys: subscriptionPrice, yearlyPrice, offerPriceMonthly, offerPriceYearly, freeFeature
+✅ TC-AUTH-01: Register — Happy Path [201] token=true, userId=69a94eede6dce2f345b9dffa
+✅ TC-AUTH-02: Register — Duplicate Email [409] {"error":"Email is already registered","code":"AppError"}
+✅ TC-AUTH-03a: Register — Missing email [400] 
+✅ TC-AUTH-03b: Register — Empty body [400] 
+✅ TC-AUTH-04: Login — Happy Path [200] token=true
+✅ TC-AUTH-05: Login — Wrong Password [401] 
+✅ TC-AUTH-06: Login — Non-existent Email [401] 
+✅ TC-AUTH-07: Get Current User (/me) [200] email=?
+✅ TC-AUTH-08: Get Me — No Token [401] 
+✅ TC-AUTH-09: Get Me — Invalid Token [401] 
+✅ TC-AUTH-10: Update Profile [200] 
+✅ TC-AUTH-11: Forgot Password [200] {"success":true,"message":"If an account with that email exists, a reset link has been sent."}
+✅ TC-AUTH-15: Logout [200] 
+✅ TC-SUB-02: Get Subscription Status [200] plan=FREE
+✅ TC-SUB-05: Get Payment History [200] count=?
+❌ TC-SUB-01: Create Subscription Order [500] {"error":"Failed to create subscription order"}
+✅ TC-IG-01: Get Instagram OAuth URL [200] hasUrl=false
+✅ TC-IG-03: Get Instagram Account [200] 
+✅ TC-CAP-01: Generate Caption [201] Generated!
+✅ TC-CAP-03: Get Caption History [200] count=?
+✅ TC-SCH-02: Get Scheduled Posts [200] count=?
+❌ TC-DM-01: Create DM Automation Rule [403] {"error":"Pro plan required","message":"Upgrade to Pro to access this feature","code":"UPGRADE_REQUI
+❌ TC-DM-02: Get DM Rules [403] count=?
+❌ TC-DM-03: Update DM Rule [SKIP] No ruleId available
+❌ TC-DM-04: Delete DM Rule [SKIP] No ruleId available
+✅ TC-AN-01: Get Dashboard Analytics [200] 
+❌ TC-AN-02: Record Analytics Snapshot [400] 
+✅ TC-CAL-01: Create Calendar Task [201] taskId=69a94ef7e6dce2f345b9e00a
+✅ TC-CAL-02: Get Calendar Tasks [200] count=?
+✅ TC-CAL-03: Toggle Calendar Task [200] 
+✅ TC-CAL-04: Delete Calendar Task [200] 
+✅ TC-NOT-01: Get Notifications [200] 
+✅ TC-NOT-02: Register Push Token [200] 
+✅ TC-REF-03: Get Referral Stats [200] 
+❌ TC-BD-01: Get Brand Deals [403] 
+✅ TC-ADM-08: Non-Admin → Forbidden [403] {"error":"Forbidden: Admin access only"}
+✅ TC-ADM-01: Get Admin Metrics [200] {"success":true,"data":{"totalUsers":9,"activeUsers":6,"paidUsers":1,"freeUsers":8,"connectedAccount
+✅ TC-MW-05: Helmet Security Headers [200] x-content-type-options=nosniff
+✅ SEC-03: No password in /me response [200] 
+✅ TC-AUTH-14: Delete Account (cleanup) [200] 
