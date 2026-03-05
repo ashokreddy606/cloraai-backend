@@ -879,15 +879,25 @@ const getDealReplies = async (req, res) => {
             });
 
             // Get highest reach or average reach in last 30days
-            const snapshots = await prisma.analyticsSnapshot.findMany({
-                where: {
-                    userId: reply.userId,
-                    snapshotDate: { gte: thirtyDaysAgo }
-                },
-                select: { reach: true }
-            });
+            let maxReach = 'N/A';
+            try {
+                const snapshots = await prisma.analyticsSnapshot.findMany({
+                    where: {
+                        userId: reply.userId,
+                        snapshotDate: { gte: thirtyDaysAgo }
+                    },
+                    select: { reach: true }
+                });
 
-            const maxReach = snapshots.length > 0 ? Math.max(...snapshots.map(s => s.reach)) : 'N/A';
+                if (snapshots && snapshots.length > 0) {
+                    const mappedReach = snapshots.map(s => s.reach).filter(r => typeof r === 'number');
+                    if (mappedReach.length > 0) {
+                        maxReach = Math.max(...mappedReach);
+                    }
+                }
+            } catch (snapErr) {
+                console.warn('Error fetching snapshots for reply reach:', snapErr);
+            }
 
             return {
                 ...reply,
