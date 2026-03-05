@@ -24,7 +24,8 @@ const sendEmail = async ({ to, subject, html }) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM || 'CloraAI <noreply@cloraai.com>',
+        // Resend requires a verified domain OR their testing sandbox address
+        from: process.env.EMAIL_FROM || 'CloraAI <onboarding@resend.dev>',
         to,
         subject,
         html,
