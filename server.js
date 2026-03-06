@@ -250,25 +250,16 @@ app.use(errorHandler);
 require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
-const startServer = async () => {
-    try {
-        await prisma.$connect();
-        console.log("Database connected");
-    } catch (error) {
-        console.error("Database connection failed, server will still start:", error);
-    }
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
 
-    // Bind to 0.0.0.0 and port unconditionally for Railway health checks
-    app.listen(PORT, "0.0.0.0", () => {
-        console.log("CloraAI backend running on port " + PORT);
-        console.log("Environment:", process.env.NODE_ENV);
-        console.log("Node version:", process.version);
-    });
-};
-
-startServer();
+    // Connect to database asynchronously so it doesn't block the port binding
+    prisma.$connect()
+        .then(() => console.log("Database connected"))
+        .catch(error => console.error("Database connection failed:", error));
+});
 
 // Graceful shutdown handler
 const gracefulShutdown = async (signal) => {
