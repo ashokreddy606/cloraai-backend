@@ -43,6 +43,7 @@ const adminRoutes = require('./routes/admin');
 const calendarRoutes = require('./routes/calendar');
 const notificationRoutes = require('./routes/notification');
 const webhookRoutes = require('./routes/webhook');
+const youtubeRoutes = require('./routes/youtube');
 
 // Initialize Prisma
 const prisma = new PrismaClient();
@@ -221,6 +222,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhook', webhookRoutes);
+app.use('/api/youtube', youtubeRoutes);
 
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {
@@ -233,6 +235,9 @@ app.use((req, res, next) => {
 // Error handling middleware
 const errorHandler = require('./middleware/errorHandler');
 app.use(errorHandler);
+
+// Background Workers
+require('./workers/youtubeWorker'); // Initialize YouTube cron job
 
 // Start server
 const PORT = process.env.PORT || 5000;

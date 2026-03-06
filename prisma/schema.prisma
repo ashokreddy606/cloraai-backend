@@ -75,6 +75,11 @@ model User {
   referralTransactionsGiven ReferralTransaction[] @relation("GivenRewards")
   referralTransactionsGot   ReferralTransaction[] @relation("ReceivedRewards")
 
+  // ── YouTube Integration ───────────────────────────────────────────────
+  youtubeChannelId    String?   @unique
+  youtubeAccessToken  String?
+  youtubeRefreshToken String?
+
   // ── Relations ───────────────────────────────────────────────────────────
   instagramAccounts     InstagramAccount[]
   paymentHistory        PaymentHistory[]
@@ -88,6 +93,9 @@ model User {
   aiUsage               AIUsage[]
   brandDealInteractions BrandDealInteraction[]
   brandDealReplies      BrandDealReply[]
+  youtubeComments       YoutubeComment[]
+  youtubeRules          YoutubeAutomationRule[]
+  youtubeLeads          YoutubeLead[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -410,4 +418,56 @@ model AuditLog {
   @@index([targetId])
   @@index([adminId])
   @@index([createdAt])
+}
+
+// ─── YouTube Automation Models ──────────────────────────────────────────
+
+model YoutubeComment {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  videoId     String
+  commentId   String   @unique // YouTube comment ID (for deduplication)
+  username    String   // Author of the comment
+  commentText String
+  replied     Boolean  @default(false)
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId, videoId])
+  @@index([replied])
+}
+
+model YoutubeAutomationRule {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  keyword      String
+  replyMessage String
+  isActive     Boolean  @default(true)
+  replyDelay   Int      @default(0)   // Delay in seconds before replying
+  limitPerHour Int      @default(20)  // Max replies per hour for this rule
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@unique([userId, keyword])
+  @@index([userId])
+}
+
+model YoutubeLead {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name      String
+  email     String
+  phone     String?
+  source    String   @default("youtube")
+  
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
 }

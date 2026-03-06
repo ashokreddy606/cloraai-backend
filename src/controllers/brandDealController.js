@@ -27,7 +27,8 @@ const getBrandDeals = async (req, res) => {
 
         const deals = await prisma.brandDeal.findMany({
             where: {
-                id: { notIn: interactedIds }
+                id: { notIn: interactedIds },
+                isBrandDeal: true
             },
             orderBy: { createdAt: 'desc' },
             take: 50 // Limit to recent 50
@@ -150,11 +151,14 @@ const simulateIncomingDM = async (req, res) => {
     }
 };
 
-// Handle user ignoring a brand deal
 const ignoreDeal = async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.userId;
+
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
 
         // Create an interaction record
         await prisma.brandDealInteraction.upsert({
@@ -186,6 +190,10 @@ const replyToDeal = async (req, res) => {
         const { id } = req.params;
         const { pitch } = req.body;
         const userId = req.userId;
+
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
 
         if (!pitch) {
             return res.status(400).json({ error: 'Pitch is required' });

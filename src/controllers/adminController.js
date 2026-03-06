@@ -237,6 +237,9 @@ const banUser = async (req, res) => {
 const adminUpgradeToPro = async (req, res) => {
     try {
         const { userId } = req.params;
+        if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
         const { days = 30 } = req.body;
         const now = new Date();
         const planEndDate = new Date(now.getTime() + days * 86400000);
@@ -276,7 +279,7 @@ const adminUpgradeToPro = async (req, res) => {
                     paymentMethod: 'ADMIN_GRANT',
                     startDate: now,
                     endDate: planEndDate,
-                    // razorpaySubscriptionId / razorpayPaymentId left null (optional fields)
+                    razorpayPaymentId: `admin_grant_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                 },
             }),
         ]);
@@ -297,6 +300,9 @@ const adminUpgradeToPro = async (req, res) => {
 const adminDowngradeToFree = async (req, res) => {
     try {
         const { userId } = req.params;
+        if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
         // FIX: Read the active sub ID directly from User, NOT from PaymentHistory.
         // PaymentHistory-based lookup fails when the last SUCCESS record is an admin
@@ -346,6 +352,9 @@ const adminDowngradeToFree = async (req, res) => {
 const adminGrantLifetime = async (req, res) => {
     try {
         const { userId } = req.params;
+        if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
         const user = await prisma.user.update({
             where: { id: userId },
             data: {
@@ -373,6 +382,9 @@ const adminGrantLifetime = async (req, res) => {
 const adminExtendSubscription = async (req, res) => {
     try {
         const { userId } = req.params;
+        if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
         const { days = 30 } = req.body;
 
         const user = await prisma.user.findUnique({
@@ -419,6 +431,9 @@ const adminExtendSubscription = async (req, res) => {
 const adminCancelSubscription = async (req, res) => {
     try {
         const { userId } = req.params;
+        if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
         const { immediate = false } = req.body;
 
         // Find their Razorpay subscription ID from PaymentHistory
@@ -820,12 +835,16 @@ const createBrandDeal = async (req, res) => {
 
 const updateBrandDeal = async (req, res) => {
     try {
+        const { id } = req.params;
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
         const { senderUsername, dmContent, confidence, dealCategory, isBrandDeal } = req.body;
         const deal = await prisma.brandDeal.update({
-            where: { id: req.params.id },
+            where: { id },
             data: { ...(senderUsername && { senderUsername }), ...(dmContent && { dmContent }), ...(confidence !== undefined && { confidence }), ...(dealCategory && { dealCategory }), ...(isBrandDeal !== undefined && { isBrandDeal }) },
         });
-        logAdminAction(req.userId, 'UPDATE_BRAND_DEAL', req.params.id);
+        logAdminAction(req.userId, 'UPDATE_BRAND_DEAL', id);
         res.json({ success: true, data: { deal } });
     } catch (error) {
         res.status(500).json({ error: 'Failed to update brand deal', message: error.message });
@@ -834,8 +853,12 @@ const updateBrandDeal = async (req, res) => {
 
 const deleteBrandDeal = async (req, res) => {
     try {
-        await prisma.brandDeal.delete({ where: { id: req.params.id } });
-        logAdminAction(req.userId, 'DELETE_BRAND_DEAL', req.params.id);
+        const { id } = req.params;
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
+        await prisma.brandDeal.delete({ where: { id } });
+        logAdminAction(req.userId, 'DELETE_BRAND_DEAL', id);
         res.json({ success: true, message: 'Brand deal deleted' });
     } catch (error) {
         res.status(500).json({ error: 'Failed to delete brand deal', message: error.message });
@@ -844,11 +867,15 @@ const deleteBrandDeal = async (req, res) => {
 
 const markDealAsScam = async (req, res) => {
     try {
+        const { id } = req.params;
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
         const deal = await prisma.brandDeal.update({
-            where: { id: req.params.id },
+            where: { id },
             data: { isBrandDeal: false, confidence: 0 },
         });
-        logAdminAction(req.userId, 'MARK_SCAM', req.params.id);
+        logAdminAction(req.userId, 'MARK_SCAM', id);
         res.json({ success: true, message: 'Deal marked as scam', data: { deal } });
     } catch (error) {
         res.status(500).json({ error: 'Failed to mark deal', message: error.message });
@@ -858,6 +885,9 @@ const markDealAsScam = async (req, res) => {
 const getDealReplies = async (req, res) => {
     try {
         const { id } = req.params;
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
         const replies = await prisma.brandDealReply.findMany({
             where: { brandDealId: id },
             include: {
@@ -916,6 +946,10 @@ const getDealReplies = async (req, res) => {
 const aiShortlistReplies = async (req, res) => {
     try {
         const { id } = req.params;
+
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
 
         const deal = await prisma.brandDeal.findUnique({ where: { id } });
         if (!deal) return res.status(404).json({ error: 'Deal not found' });
@@ -990,6 +1024,10 @@ const manualShortlist = async (req, res) => {
         const { id, replyId } = req.params;
         const { isShortlisted } = req.body;
 
+        if (!replyId || !replyId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid reply ID' });
+        }
+
         await prisma.brandDealReply.update({
             where: { id: replyId },
             data: { isShortlisted }
@@ -1004,6 +1042,10 @@ const manualShortlist = async (req, res) => {
 const sendDealNotifications = async (req, res) => {
     try {
         const { id } = req.params;
+
+        if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: 'Invalid brand deal ID' });
+        }
 
         const deal = await prisma.brandDeal.findUnique({ where: { id } });
         if (!deal) return res.status(404).json({ error: 'Deal not found' });
