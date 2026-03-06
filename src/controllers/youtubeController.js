@@ -34,8 +34,8 @@ exports.getAuthUrl = async (req, res) => {
             state: userId // pass user ID so callback knows who it is
         });
 
-        // Redirect to Google instead of returning JSON
-        res.redirect(url);
+        // Return URL to frontend
+        res.status(200).json({ url });
     } catch (error) {
         logger.error('YOUTUBE', 'Generate Auth URL failed', error);
         res.status(500).json({ error: 'Failed to generate auth url' });

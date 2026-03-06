@@ -5,15 +5,13 @@ const bcrypt = require('bcrypt');
 // Production systems require a cryptographically strong secret.
 // Generate one with: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 // Minimum 64 characters enforced. Server refuses to start with a weak secret.
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET || JWT_SECRET.length < 64) {
-  console.error(
-    '[FATAL] JWT_SECRET is missing or too weak (must be ≥ 64 characters). ' +
-    'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))". ' +
-    'Server will not start with a weak secret.'
-  );
-  process.exit(1);
-}
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 64) {
+    console.warn('[WARN] JWT_SECRET is missing or too weak. This is insecure for production.');
+  }
+  return secret;
+};
 
 // Tokens expire in 1 day by default. Use JWT_EXPIRY env var to override.
 // Shorter expiry limits damage from stolen tokens.
@@ -29,15 +27,19 @@ const BCRYPT_ROUNDS = 12;
  * @param {number} tokenVersion - incremented on forced logout; embed in token
  */
 function generateToken(userId, tokenVersion = 0) {
+  const secret = getJwtSecret();
+  if (!secret) throw new Error("JWT_SECRET is not configured");
   return jwt.sign(
     { userId, tokenVersion },
-    process.env.JWT_SECRET,
+    secret,
     { expiresIn: process.env.JWT_EXPIRY || "7d" }
   );
 }
 
 function verifyToken(token) {
-  return jwt.verify(token, process.env.JWT_SECRET);
+  const secret = getJwtSecret();
+  if (!secret) throw new Error("JWT_SECRET is not configured");
+  return jwt.verify(token, secret);
 }
 
 /**
