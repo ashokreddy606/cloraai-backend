@@ -232,6 +232,7 @@ app.use('/api/calendar', calendarRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/youtube', youtubeRoutes);
+console.log('YouTube routes mounted');
 
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {
@@ -259,8 +260,8 @@ const startServer = async () => {
         console.error("Database connection failed, server will still start:", error);
     }
 
-    // Bind to port unconditionally for Railway health checks
-    app.listen(PORT, () => {
+    // Bind to 0.0.0.0 and port unconditionally for Railway health checks
+    app.listen(PORT, "0.0.0.0", () => {
         console.log("CloraAI backend running on port " + PORT);
         console.log("Environment:", process.env.NODE_ENV);
         console.log("Node version:", process.version);

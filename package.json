@@ -2,7 +2,7 @@
   "name": "cloraai-backend",
   "version": "1.0.0",
   "description": "CloraAI Backend - AI-powered Instagram Growth SaaS",
-  "main": "src/server.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "start:api": "node server.js",
