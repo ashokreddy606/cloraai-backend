@@ -6,7 +6,7 @@ const youtubeController = require('../controllers/youtubeController');
 // ── OAuth Flow ─────────────────────────────────────────────────────────────
 // GET /api/youtube/auth
 // Start the OAuth flow. Redirects user to Google.
-router.get('/auth', authenticate, youtubeController.getAuthUrl);
+router.get('/auth', youtubeController.getAuthUrl);
 
 // GET /api/youtube/callback
 // Handle Google OAuth callback and save tokens

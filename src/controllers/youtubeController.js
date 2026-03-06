@@ -3,12 +3,14 @@ const prisma = new PrismaClient();
 const { google } = require('googleapis');
 const logger = require('../utils/logger');
 
-// Retrieve credentials from .env
-const oauth2Client = new google.auth.OAuth2(
-    process.env.YOUTUBE_CLIENT_ID,
-    process.env.YOUTUBE_CLIENT_SECRET,
-    process.env.YOUTUBE_REDIRECT_URI || 'http://localhost:5000/api/youtube/callback'
-);
+// Helper to get a new OAuth2Client instance
+const getOAuth2Client = () => {
+    return new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
+        process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/api/youtube/callback`
+    );
+};
 
 const SCOPES = [
     'https://www.googleapis.com/auth/youtube.readonly',
@@ -18,13 +20,22 @@ const SCOPES = [
 
 exports.getAuthUrl = async (req, res) => {
     try {
-        const url = oauth2Client.generateAuthUrl({
+        const userId = req.query.userId || (req.user && req.user.id);
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User ID is required for authentication' });
+        }
+
+        const client = getOAuth2Client();
+        const url = client.generateAuthUrl({
             access_type: 'offline', // ensures we get a refresh token
             prompt: 'consent',
             scope: SCOPES,
-            state: req.user.id // pass user ID so callback knows who it is
+            state: userId // pass user ID so callback knows who it is
         });
-        res.json({ url });
+
+        // Redirect to Google instead of returning JSON
+        res.redirect(url);
     } catch (error) {
         logger.error('YOUTUBE', 'Generate Auth URL failed', error);
         res.status(500).json({ error: 'Failed to generate auth url' });
@@ -40,11 +51,12 @@ exports.handleCallback = async (req, res) => {
             return res.status(400).json({ error: 'Invalid callback parameters' });
         }
 
-        const { tokens } = await oauth2Client.getToken(code);
-        oauth2Client.setCredentials(tokens);
+        const client = getOAuth2Client();
+        const { tokens } = await client.getToken(code);
+        client.setCredentials(tokens);
 
         // Fetch channel details to store channel ID
-        const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+        const youtube = google.youtube({ version: 'v3', auth: client });
         const channelRes = await youtube.channels.list({
             part: 'id,snippet',
             mine: true

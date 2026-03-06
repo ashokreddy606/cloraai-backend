@@ -4,11 +4,13 @@ const { google } = require('googleapis');
 const logger = require('../utils/logger');
 const cron = require('node-cron');
 
-const oauth2Client = new google.auth.OAuth2(
-    process.env.YOUTUBE_CLIENT_ID,
-    process.env.YOUTUBE_CLIENT_SECRET,
-    process.env.YOUTUBE_REDIRECT_URI || 'http://localhost:5000/api/youtube/callback'
-);
+const getOAuth2Client = () => {
+    return new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET,
+        process.env.YOUTUBE_REDIRECT_URI || 'http://localhost:5000/api/youtube/callback'
+    );
+};
 
 // Worker runs every 2 minutes
 cron.schedule('*/2 * * * *', async () => {
@@ -43,12 +45,13 @@ cron.schedule('*/2 * * * *', async () => {
 async function processUser(user) {
     try {
         // Set credentials for this user
-        oauth2Client.setCredentials({
+        const client = getOAuth2Client();
+        client.setCredentials({
             access_token: user.youtubeAccessToken,
             refresh_token: user.youtubeRefreshToken
         });
 
-        const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+        const youtube = google.youtube({ version: 'v3', auth: client });
 
         // 2. Fetch recent comment threads for the user's channel
         // We fetch a small number (e.g., 20) per cycle to handle real-time without overwhelming rate limits
