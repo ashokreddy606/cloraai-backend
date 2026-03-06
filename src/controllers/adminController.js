@@ -908,7 +908,8 @@ const getDealReplies = async (req, res) => {
 
         res.json({ success: true, data: { replies: repliesWithFollowers } });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch replies', message: error.message });
+        console.error('Error in getDealReplies:', error);
+        res.status(500).json({ error: 'Failed to fetch replies', message: error.message, stack: error.stack });
     }
 };
 

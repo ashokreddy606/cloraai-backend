@@ -8,6 +8,7 @@
     "start:api": "node src/server.js",
     "start:worker": "node src/worker.js",
     "dev": "nodemon src/server.js",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
