@@ -147,6 +147,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// Debug route
+app.get("/test", (req, res) => {
+  res.send("Backend API is working");
+});
+
 // Health check
 app.get("/health", (req, res) => {
   res.status(200).json({

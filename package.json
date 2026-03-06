@@ -4,10 +4,10 @@
   "description": "CloraAI Backend - AI-powered Instagram Growth SaaS",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "start:api": "node src/server.js",
+    "start": "node server.js",
+    "start:api": "node server.js",
     "start:worker": "node src/worker.js",
-    "dev": "nodemon src/server.js",
+    "dev": "nodemon server.js",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
