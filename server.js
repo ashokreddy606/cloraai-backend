@@ -254,11 +254,6 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
-
-    // Connect to database asynchronously so it doesn't block the port binding
-    prisma.$connect()
-        .then(() => console.log("Database connected"))
-        .catch(error => console.error("Database connection failed:", error));
 });
 
 // Graceful shutdown handler
