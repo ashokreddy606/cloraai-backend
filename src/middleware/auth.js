@@ -29,6 +29,7 @@ const authenticate = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.error("[AUTH] 401 - No token provided or wrong format:", authHeader);
       return res.status(401).json({ error: "No token provided" });
     }
 
@@ -38,6 +39,7 @@ const authenticate = async (req, res, next) => {
     try {
       decoded = verifyToken(token);
     } catch (err) {
+      console.error("[AUTH] 401 - Invalid token:", err.message);
       return res.status(401).json({ error: "Invalid or expired token" });
     }
 

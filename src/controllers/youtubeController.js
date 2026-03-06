@@ -20,7 +20,7 @@ const SCOPES = [
 
 exports.getAuthUrl = async (req, res) => {
     try {
-        const userId = req.query.userId || (req.user && req.user.id);
+        const userId = req.query.userId || req.userId || (req.user && (req.user.userId || req.user.id));
 
         if (!userId) {
             return res.status(401).json({ error: 'User ID is required for authentication' });
@@ -94,7 +94,7 @@ exports.handleCallback = async (req, res) => {
 exports.getStatus = async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
-            where: { id: req.user.id }
+            where: { id: req.userId }
         });
 
         if (!user || !user.youtubeChannelId || !user.youtubeAccessToken) {
@@ -113,7 +113,7 @@ exports.getStatus = async (req, res) => {
 exports.disconnect = async (req, res) => {
     try {
         await prisma.user.update({
-            where: { id: req.user.id },
+            where: { id: req.userId },
             data: {
                 youtubeChannelId: null,
                 youtubeAccessToken: null,
@@ -131,7 +131,7 @@ exports.disconnect = async (req, res) => {
 exports.getRules = async (req, res) => {
     try {
         const rules = await prisma.youtubeAutomationRule.findMany({
-            where: { userId: req.user.id },
+            where: { userId: req.userId },
             orderBy: { createdAt: 'desc' }
         });
         res.json(rules);
@@ -150,7 +150,7 @@ exports.createRule = async (req, res) => {
 
         const rule = await prisma.youtubeAutomationRule.create({
             data: {
-                userId: req.user.id,
+                userId: req.userId,
                 keyword: keyword.toLowerCase(),
                 replyMessage,
                 isActive: isActive !== undefined ? isActive : true,
@@ -175,7 +175,7 @@ exports.updateRule = async (req, res) => {
 
         // Check ownership
         const existing = await prisma.youtubeAutomationRule.findFirst({
-            where: { id, userId: req.user.id }
+            where: { id, userId: req.userId }
         });
 
         if (!existing) return res.status(404).json({ error: 'Rule not found' });
@@ -202,7 +202,7 @@ exports.deleteRule = async (req, res) => {
     try {
         const { id } = req.params;
         await prisma.youtubeAutomationRule.deleteMany({
-            where: { id, userId: req.user.id }
+            where: { id, userId: req.userId }
         });
         res.json({ success: true });
     } catch (error) {
@@ -215,7 +215,7 @@ exports.deleteRule = async (req, res) => {
 exports.getLeads = async (req, res) => {
     try {
         const leads = await prisma.youtubeLead.findMany({
-            where: { userId: req.user.id },
+            where: { userId: req.userId },
             orderBy: { createdAt: 'desc' }
         });
         res.json(leads);
@@ -253,7 +253,7 @@ exports.submitLead = async (req, res) => {
 
 exports.getAnalytics = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.userId;
 
         const [totalComments, totalReplies, totalLeads] = await Promise.all([
             prisma.youtubeComment.count({ where: { userId } }),
