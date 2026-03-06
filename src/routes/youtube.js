@@ -1,41 +1,41 @@
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 const youtubeController = require('../controllers/youtubeController');
 
 // ── OAuth Flow ─────────────────────────────────────────────────────────────
 // GET /api/youtube/auth
 // Start the OAuth flow. Redirects user to Google.
-router.get('/auth', requireAuth, youtubeController.getAuthUrl);
+router.get('/auth', authenticate, youtubeController.getAuthUrl);
 
 // GET /api/youtube/callback
 // Handle Google OAuth callback and save tokens
-router.get('/callback', requireAuth, youtubeController.handleCallback);
+router.get('/callback', youtubeController.handleCallback); // Note: Removed requireAuth for callback to allow Google redirect
 
 // GET /api/youtube/status
 // Get connection status and basic channel info
-router.get('/status', requireAuth, youtubeController.getStatus);
+router.get('/status', authenticate, youtubeController.getStatus);
 
 // DELETE /api/youtube/disconnect
 // Disconnect YouTube account
-router.delete('/disconnect', requireAuth, youtubeController.disconnect);
+router.delete('/disconnect', authenticate, youtubeController.disconnect);
 
 // ── Automation Rules ───────────────────────────────────────────────────────
 // GET /api/youtube/rules
-router.get('/rules', requireAuth, youtubeController.getRules);
+router.get('/rules', authenticate, youtubeController.getRules);
 
 // POST /api/youtube/rules
-router.post('/rules', requireAuth, youtubeController.createRule);
+router.post('/rules', authenticate, youtubeController.createRule);
 
 // PUT /api/youtube/rules/:id
-router.put('/rules/:id', requireAuth, youtubeController.updateRule);
+router.put('/rules/:id', authenticate, youtubeController.updateRule);
 
 // DELETE /api/youtube/rules/:id
-router.delete('/rules/:id', requireAuth, youtubeController.deleteRule);
+router.delete('/rules/:id', authenticate, youtubeController.deleteRule);
 
 // ── Leads ──────────────────────────────────────────────────────────────────
 // GET /api/youtube/leads
-router.get('/leads', requireAuth, youtubeController.getLeads);
+router.get('/leads', authenticate, youtubeController.getLeads);
 
 // POST /api/youtube/leads
 // Public endpoint for submitting a lead form (no auth required)
@@ -43,6 +43,6 @@ router.post('/leads/submit', youtubeController.submitLead);
 
 // ── Analytics ──────────────────────────────────────────────────────────────
 // GET /api/youtube/analytics
-router.get('/analytics', requireAuth, youtubeController.getAnalytics);
+router.get('/analytics', authenticate, youtubeController.getAnalytics);
 
 module.exports = router;
