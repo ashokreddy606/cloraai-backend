@@ -5,10 +5,11 @@ const { authenticate, rateLimit } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const { registerSchema, loginSchema, resetPasswordSchema, googleAuthSchema } = require('../validators/auth');
 
-// Rate limiting for auth endpoints
-const authRateLimit = rateLimit(30, 15 * 60 * 1000); // 30 requests per 15 minutes
-// Specialized stricter rate limit for Auth to prevent brute force (15 attempts / 15 mins)
-const authLimiter = rateLimit(15, 15 * 60 * 1000);
+// Strict brute-force protection: 5 requests per 15 minutes per IP
+// Applied to login, register, forgot-password, reset-password
+const authLimiter = rateLimit(5, 15 * 60 * 1000);
+// Slightly relaxed for Google OAuth and other auth helpers: 20/15 min
+const authRateLimit = rateLimit(20, 15 * 60 * 1000);
 
 router.post('/register',
     authLimiter,

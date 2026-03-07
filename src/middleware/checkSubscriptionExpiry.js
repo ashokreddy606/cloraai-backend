@@ -1,39 +1,69 @@
 const prisma = require('../lib/prisma');
+const { cache } = require('../utils/cache');
+
+const CACHE_TTL_SECONDS = 300; // 5 minutes — balances freshness vs DB load
 
 /**
  * Middleware to check and enforce subscription expiry.
- * Automatically downgrades user to FREE if planEndDate is in the past.
+ * 
+ * Performance: Uses Redis cache (5-min TTL) to avoid hitting the DB
+ * on every authenticated request. At high concurrency this eliminates
+ * thousands of redundant DB queries per minute.
+ * 
+ * Cache key: sub:{userId}
+ * Cached value: { plan, planEndDate, subscriptionStatus }
  */
 const checkSubscriptionExpiry = async (req, res, next) => {
     if (!req.userId) return next();
 
     try {
+        const cacheKey = `sub:${req.userId}`;
+
+        // ── 1. Check Redis cache first ──────────────────────────────────
+        const cached = await cache.get(cacheKey);
+        if (cached) {
+            // Apply cached plan state to req.user for downstream middleware
+            if (req.user) {
+                req.user.plan = cached.plan;
+                req.user.subscriptionStatus = cached.subscriptionStatus;
+            }
+            return next();
+        }
+
+        // ── 2. Cache miss: query the DB ─────────────────────────────────
         const user = await prisma.user.findUnique({
             where: { id: req.userId },
             select: { id: true, plan: true, planEndDate: true, subscriptionStatus: true }
         });
 
-        if (
-            user &&
-            user.plan !== 'FREE' &&
-            user.planEndDate &&
-            new Date(user.planEndDate) < new Date()
-        ) {
-            console.log(`[SubscriptionCheck] Downgrading User ${user.id} - Plan expired on ${user.planEndDate}`);
+        if (!user) return next();
 
+        let { plan, planEndDate, subscriptionStatus } = user;
+
+        // ── 3. Enforce expiry if needed ─────────────────────────────────
+        if (
+            plan !== 'FREE' &&
+            plan !== 'LIFETIME' &&
+            planEndDate &&
+            new Date(planEndDate) < new Date()
+        ) {
+            console.log(`[SubscriptionCheck] Downgrading User ${user.id} — Plan expired on ${planEndDate}`);
             await prisma.user.update({
                 where: { id: user.id },
-                data: {
-                    plan: 'FREE',
-                    subscriptionStatus: 'EXPIRED'
-                }
+                data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' }
             });
+            plan = 'FREE';
+            subscriptionStatus = 'EXPIRED';
+        }
 
-            // Update local req user object if it exists
-            if (req.user) {
-                req.user.plan = 'FREE';
-                req.user.subscriptionStatus = 'EXPIRED';
-            }
+        // ── 4. Populate cache for next requests ─────────────────────────
+        const snapshot = { plan, planEndDate, subscriptionStatus };
+        await cache.set(cacheKey, snapshot, CACHE_TTL_SECONDS);
+
+        // Apply to req.user so downstream middleware sees updated plan
+        if (req.user) {
+            req.user.plan = plan;
+            req.user.subscriptionStatus = subscriptionStatus;
         }
 
         next();
@@ -43,4 +73,17 @@ const checkSubscriptionExpiry = async (req, res, next) => {
     }
 };
 
+/**
+ * Call this whenever a user's plan changes (subscription controller, admin controller)
+ * to immediately invalidate the cache so the next request reflects the new plan.
+ */
+const invalidateSubscriptionCache = async (userId) => {
+    try {
+        await cache.del(`sub:${userId}`);
+    } catch (err) {
+        console.error('[SubscriptionCheck] Cache invalidation failed:', err.message);
+    }
+};
+
 module.exports = checkSubscriptionExpiry;
+module.exports.invalidateSubscriptionCache = invalidateSubscriptionCache;

@@ -3,6 +3,7 @@ const { generateToken, hashPassword, verifyPassword } = require('../utils/helper
 const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 
 // ─────────────────────────────────────────────
 // Email: supports Resend API (recommended) OR Gmail SMTP (fallback)
@@ -65,8 +66,8 @@ const register = catchAsync(async (req, res, next) => {
   const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
   // Validation
-  if (!email || !password || password.length < 6) {
-    throw new AppError('Email and password (min 6 chars) are required', 400);
+  if (!email || !password || password.length < 8) {
+    throw new AppError('Email and password (min 8 chars) are required', 400);
   }
 
   // Check if user exists
@@ -106,8 +107,8 @@ const register = catchAsync(async (req, res, next) => {
         referredById,
         ipAddress,
         deviceFingerprint: deviceFingerprint || null,
-        // Promote specific user to ADMIN on registration
-        role: email === 'ashokreddy.kothapalli@gmail.com' ? 'ADMIN' : 'USER'
+        // Role assigned from DB only — never hardcoded based on email
+        role: 'USER'
       }
     });
 
@@ -158,21 +159,18 @@ const login = async (req, res) => {
       where: { email }
     });
 
+    // Use identical error for both cases to prevent user enumeration
+    const INVALID_CREDS = { error: 'Invalid credentials', message: 'Invalid email or password' };
+
     if (!user) {
-      return res.status(401).json({
-        error: 'Invalid credentials',
-        message: 'User not found'
-      });
+      return res.status(401).json(INVALID_CREDS);
     }
 
     // Verify password
     const passwordValid = await verifyPassword(password, user.password);
 
     if (!passwordValid) {
-      return res.status(401).json({
-        error: 'Invalid credentials',
-        message: 'Incorrect password'
-      });
+      return res.status(401).json(INVALID_CREDS);
     }
 
     // Generate token with tokenVersion (Phase 1 Fix)
@@ -204,7 +202,7 @@ const login = async (req, res) => {
     console.error('Login error:', error);
     res.status(500).json({
       error: 'Login failed',
-      message: error.message
+      message: 'Internal server error'
     });
   }
 };
@@ -274,7 +272,7 @@ const getCurrentUser = async (req, res) => {
     console.error('Get user error:', error);
     res.status(500).json({
       error: 'Failed to fetch user',
-      message: error.message,
+      message: 'Internal server error',
     });
   }
 };
@@ -411,10 +409,10 @@ const resetPassword = async (req, res) => {
   try {
     const { token, newPassword } = req.body;
 
-    if (!token || !newPassword || newPassword.length < 6) {
+    if (!token || !newPassword || newPassword.length < 8) {
       return res.status(400).json({
         error: 'Invalid input',
-        message: 'Token and new password (min 6 chars) are required'
+        message: 'Token and new password (min 8 chars) are required'
       });
     }
 
@@ -474,19 +472,25 @@ const deleteAccount = async (req, res) => {
   }
 };
 
-// Make Admin (protected by secret key from environment)
+// Make Admin (protected by secret key from environment — no fallback)
 const makeAdmin = async (req, res) => {
   try {
     const { email, secretKey } = req.body;
-    const expectedKey = process.env.ADMIN_SECRET_KEY || 'clora-admin-2026';
 
-    if (secretKey !== expectedKey) {
+    // SECURITY: No fallback — server must have ADMIN_SECRET_KEY or this endpoint is unusable
+    if (!process.env.ADMIN_SECRET_KEY) {
+      console.error('[SECURITY] ADMIN_SECRET_KEY is not configured. makeAdmin endpoint is disabled.');
+      return res.status(503).json({ error: 'Admin promotion is not configured on this server' });
+    }
+
+    if (secretKey !== process.env.ADMIN_SECRET_KEY) {
       return res.status(403).json({ error: 'Invalid secret key' });
     }
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      // Intentionally vague to prevent email enumeration
+      return res.status(403).json({ error: 'Invalid secret key or email' });
     }
 
     await prisma.user.update({
@@ -500,11 +504,11 @@ const makeAdmin = async (req, res) => {
     });
   } catch (error) {
     console.error('Make admin error:', error);
-    res.status(500).json({ error: 'Failed to update role', message: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
-// Google OAuth Sign-In
+// Google OAuth Sign-In — uses google-auth-library for cryptographic token verification
 const googleAuth = async (req, res) => {
   try {
     const { idToken, deviceFingerprint } = req.body;
@@ -514,16 +518,28 @@ const googleAuth = async (req, res) => {
       return res.status(400).json({ error: 'idToken is required' });
     }
 
-    // Verify token with Google
-    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
-    const payload = await response.json();
-
-    if (payload.error) {
-      return res.status(401).json({ error: 'Invalid Google token' });
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      console.error('[AUTH] GOOGLE_CLIENT_ID is not configured');
+      return res.status(500).json({ error: 'Google Sign-In is not configured on this server' });
     }
 
-    // We can also verify the audience matches our CLIENT_ID here if needed
-    // if (payload.aud !== process.env.GOOGLE_CLIENT_ID) { ... }
+    // Cryptographically verify token signature and audience claim
+    const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (verifyError) {
+      console.warn('[AUTH] Google token verification failed:', verifyError.message);
+      return res.status(401).json({ error: 'Invalid or expired Google token' });
+    }
+
+    if (!payload || !payload.email) {
+      return res.status(401).json({ error: 'Invalid Google token payload' });
+    }
 
     const email = payload.email.toLowerCase().trim();
     const username = payload.name || email.split('@')[0];
@@ -534,7 +550,7 @@ const googleAuth = async (req, res) => {
 
     if (!user) {
       // Create new user (generate random password since they use Google)
-      const randomPassword = Math.random().toString(36).slice(-10) + 'A1!'; // satisfying constraints
+      const randomPassword = crypto.randomBytes(16).toString('hex') + 'A1!';
       const hashedPassword = await hashPassword(randomPassword);
       const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
 
@@ -547,8 +563,8 @@ const googleAuth = async (req, res) => {
           referralCode,
           ipAddress,
           deviceFingerprint: deviceFingerprint || null,
-          // Promote specific user to ADMIN on Google login
-          role: email === 'ashokreddy.kothapalli@gmail.com' ? 'ADMIN' : 'USER'
+          // Role defaults to USER — promote via makeAdmin endpoint if needed
+          role: 'USER'
         }
       });
     } else {
@@ -581,7 +597,7 @@ const googleAuth = async (req, res) => {
 
   } catch (error) {
     console.error('Google Auth error:', error);
-    res.status(500).json({ error: 'Google authentication failed', message: error.message });
+    res.status(500).json({ error: 'Google authentication failed', message: 'Internal server error' });
   }
 };
 

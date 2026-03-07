@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
 const prisma = require('../lib/prisma');
+const jwt = require('jsonwebtoken');
 
 // Helper to get a new OAuth2Client instance
 const getOAuth2Client = () => {
@@ -12,14 +13,12 @@ const getOAuth2Client = () => {
     );
 };
 
-// Updated scopes to include upload and management
+// Minimum required scopes for CloraAI YouTube features
+// Reduced from broad scopes to principle of least privilege
 const SCOPES = [
-    'https://www.googleapis.com/auth/youtube',
+    'https://www.googleapis.com/auth/youtube.readonly',
     'https://www.googleapis.com/auth/youtube.upload',
-    'https://www.googleapis.com/auth/youtube.force-ssl',
-    'https://www.googleapis.com/auth/youtubepartner',
     'https://www.googleapis.com/auth/yt-analytics.readonly',
-    'https://www.googleapis.com/auth/userinfo.profile',
 ];
 
 // Helper: get authenticated YouTube client for the current user
@@ -42,12 +41,21 @@ exports.getAuthUrl = async (req, res) => {
         if (!userId) {
             return res.status(401).json({ error: 'User ID is required for authentication' });
         }
+        if (!process.env.JWT_SECRET) {
+            return res.status(500).json({ error: 'Server configuration error' });
+        }
         const client = getOAuth2Client();
+        // Sign state with JWT so it can be cryptographically verified in callback
+        const signedState = jwt.sign(
+            { userId },
+            process.env.JWT_SECRET,
+            { expiresIn: '10m' }
+        );
         const url = client.generateAuthUrl({
             access_type: 'offline',
             prompt: 'consent',
             scope: SCOPES,
-            state: userId
+            state: signedState
         });
         res.status(200).json({ url });
     } catch (error) {
@@ -59,10 +67,21 @@ exports.getAuthUrl = async (req, res) => {
 exports.handleCallback = async (req, res) => {
     try {
         const { code, state } = req.query;
-        const userId = state;
-        if (!code || !userId) {
+
+        if (!code || !state) {
             return res.status(400).json({ error: 'Invalid callback parameters' });
         }
+
+        // Verify and decode the signed state JWT to extract userId securely
+        let userId;
+        try {
+            const decoded = jwt.verify(state, process.env.JWT_SECRET);
+            userId = decoded.userId;
+        } catch (stateError) {
+            logger.warn('YOUTUBE', 'OAuth state JWT verification failed', { error: stateError.message });
+            return res.status(401).json({ error: 'Invalid or expired OAuth state. Please restart the connection flow.' });
+        }
+
         const client = getOAuth2Client();
         const { tokens } = await client.getToken(code);
         client.setCredentials(tokens);
@@ -140,11 +159,24 @@ exports.disconnect = async (req, res) => {
 
 exports.getRules = async (req, res) => {
     try {
-        const rules = await prisma.youtubeAutomationRule.findMany({
-            where: { userId: req.userId },
-            orderBy: { createdAt: 'desc' }
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = Math.min(100, parseInt(req.query.limit) || 20);
+        const skip = (page - 1) * limit;
+
+        const [rules, total] = await Promise.all([
+            prisma.youtubeAutomationRule.findMany({
+                where: { userId: req.userId },
+                orderBy: { createdAt: 'desc' },
+                take: limit,
+                skip
+            }),
+            prisma.youtubeAutomationRule.count({ where: { userId: req.userId } })
+        ]);
+
+        res.json({
+            data: rules,
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
         });
-        res.json(rules);
     } catch (error) {
         res.status(500).json({ error: 'Error fetching rules' });
     }
@@ -212,11 +244,24 @@ exports.deleteRule = async (req, res) => {
 
 exports.getLeads = async (req, res) => {
     try {
-        const leads = await prisma.youtubeLead.findMany({
-            where: { userId: req.userId },
-            orderBy: { createdAt: 'desc' }
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = Math.min(100, parseInt(req.query.limit) || 20);
+        const skip = (page - 1) * limit;
+
+        const [leads, total] = await Promise.all([
+            prisma.youtubeLead.findMany({
+                where: { userId: req.userId },
+                orderBy: { createdAt: 'desc' },
+                take: limit,
+                skip
+            }),
+            prisma.youtubeLead.count({ where: { userId: req.userId } })
+        ]);
+
+        res.json({
+            data: leads,
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
         });
-        res.json(leads);
     } catch (error) {
         res.status(500).json({ error: 'Error fetching leads' });
     }

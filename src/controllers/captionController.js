@@ -1,16 +1,31 @@
-const { OpenAIApi, Configuration } = require('openai');
+const OpenAI = require('openai');
 const { appConfig } = require('../config');
 const { logAIUsage } = require('../middleware/aiLimiter');
 const prisma = require('../lib/prisma');
 
-const openai = new OpenAIApi(new Configuration({
-  apiKey: process.env.OPENAI_API_KEY
-}));
+// OpenAI SDK v4 — clean instantiation
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+/**
+ * Sanitize AI topic input:
+ *  - Strip HTML/script injection characters
+ *  - Enforce 200-char max length
+ */
+const sanitizeTopic = (topic) => {
+  if (!topic || typeof topic !== 'string') return '';
+  return topic
+    .replace(/[<>{}"'`;\\]/g, '') // strip injection chars
+    .replace(/\s+/g, ' ')          // collapse whitespace
+    .trim()
+    .substring(0, 200);
+};
 
 // Generate Caption using AI
 const generateCaption = async (req, res) => {
   try {
-    const { topic, tone = 'casual', length = 'medium' } = req.body;
+    const { topic: rawTopic, tone = 'casual', length = 'medium' } = req.body;
 
     if (!appConfig.featureFlags.aiCaptionsEnabled) {
       return res.status(403).json({
@@ -26,38 +41,34 @@ const generateCaption = async (req, res) => {
       });
     }
 
+    if (!rawTopic) {
+      return res.status(400).json({ error: 'Topic is required' });
+    }
+
+    // Sanitize and validate topic
+    const topic = sanitizeTopic(rawTopic);
     if (!topic) {
-      return res.status(400).json({
-        error: 'Topic is required'
-      });
+      return res.status(400).json({ error: 'Topic contains invalid characters or is empty after sanitization.' });
     }
 
     // Plan and daily cap are enforced by aiLimiter middleware before reaching here.
 
     // Generate caption prompt
-    const prompt = `Generate an Instagram caption for a ${topic} post. 
-    Tone: ${tone}
-    Length: ${length}
-    Include relevant hashtags at the end.
-    Format: [Caption text]
-    #hashtags`;
+    const maxTokens = length === 'short' ? 100 : length === 'long' ? 300 : 150;
+    const prompt = `Generate an Instagram caption for a ${topic} post. \nTone: ${tone}\nLength: ${length}\nInclude relevant hashtags at the end.\nFormat: [Caption text]\n#hashtags`;
 
-    const response = await openai.createChatCompletion({
+    // OpenAI SDK v4 API call
+    const response = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
+      messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
-      max_tokens: length === 'short' ? 100 : length === 'long' ? 300 : 150
+      max_tokens: maxTokens,
     });
 
-    const caption = response.data.choices[0].message.content;
+    const caption = response.choices[0].message.content;
 
-    // Log token usage AFTER successful response (sourced from OpenAI metadata, not client)
-    const tokensUsed = response.data.usage?.total_tokens || 0;
+    // Log token usage AFTER successful response
+    const tokensUsed = response.usage?.total_tokens || 0;
     await logAIUsage(req.userId, 'caption', tokensUsed);
 
     // Extract hashtags
@@ -88,17 +99,17 @@ const generateCaption = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Generate caption error:', error.response?.data || error.message);
+    console.error('Generate caption error:', error.status, error.code, error.message);
 
-    // Handle OpenAI specific errors for better frontend UX
-    if (error.response?.status === 401 || error.message.includes('401')) {
+    // OpenAI SDK v4 error handling
+    if (error.status === 401 || error.code === 'invalid_api_key') {
       return res.status(500).json({
         error: 'OpenAI Configuration Error',
         message: 'The backend OpenAI API key is invalid or missing. Please check the Railway environment variables.'
       });
     }
 
-    if (error.response?.status === 429 || error.message.includes('429')) {
+    if (error.status === 429) {
       return res.status(500).json({
         error: 'OpenAI Quota Exceeded',
         message: 'The configured OpenAI account has run out of credits or hit its rate limit.'
@@ -107,7 +118,7 @@ const generateCaption = async (req, res) => {
 
     res.status(500).json({
       error: 'Failed to generate caption',
-      message: error.response?.data?.error?.message || error.message
+      message: 'Internal server error'
     });
   }
 };
@@ -115,19 +126,19 @@ const generateCaption = async (req, res) => {
 // Get Caption History
 const getCaptions = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = parseInt(req.query.skip) || 0;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(50, parseInt(req.query.limit) || 10);
+    const skip = (page - 1) * limit;
 
-    const captions = await prisma.caption.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      skip
-    });
-
-    const total = await prisma.caption.count({
-      where: { userId: req.userId }
-    });
+    const [captions, total] = await Promise.all([
+      prisma.caption.findMany({
+        where: { userId: req.userId },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip
+      }),
+      prisma.caption.count({ where: { userId: req.userId } })
+    ]);
 
     res.status(200).json({
       success: true,
@@ -135,15 +146,16 @@ const getCaptions = async (req, res) => {
         captions,
         pagination: {
           total,
+          page,
           limit,
-          skip
+          totalPages: Math.ceil(total / limit)
         }
       }
     });
   } catch (error) {
     res.status(500).json({
       error: 'Failed to fetch captions',
-      message: error.message
+      message: 'Internal server error'
     });
   }
 };
@@ -154,14 +166,10 @@ const deleteCaption = async (req, res) => {
     const { id } = req.params;
 
     // Verify ownership before deleting
-    const caption = await prisma.caption.findUnique({
-      where: { id }
-    });
+    const caption = await prisma.caption.findUnique({ where: { id } });
 
     if (!caption) {
-      return res.status(404).json({
-        error: 'Caption not found'
-      });
+      return res.status(404).json({ error: 'Caption not found' });
     }
 
     if (caption.userId !== req.userId) {
@@ -171,9 +179,7 @@ const deleteCaption = async (req, res) => {
       });
     }
 
-    await prisma.caption.delete({
-      where: { id }
-    });
+    await prisma.caption.delete({ where: { id } });
 
     res.status(200).json({
       success: true,
@@ -182,7 +188,7 @@ const deleteCaption = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Failed to delete caption',
-      message: error.message
+      message: 'Internal server error'
     });
   }
 };

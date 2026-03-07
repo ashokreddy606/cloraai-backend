@@ -71,10 +71,18 @@ const requiredEnvs = [
     'RAZORPAY_KEY_SECRET',
     'RAZORPAY_WEBHOOK_SECRET',
     'INSTAGRAM_APP_SECRET',
+    'ADMIN_SECRET_KEY',
+    'GOOGLE_CLIENT_ID',
+    'TOKEN_ENCRYPTION_SECRET',
 ];
 const missingEnvs = requiredEnvs.filter(env => !process.env[env]);
 if (missingEnvs.length > 0) {
-    logger.error('SERVER', `Missing critical environment variables: ${missingEnvs.join(', ')}. Server might be unstable.`);
+    // In production crash immediately — missing envs = broken security guarantees
+    const msg = `FATAL: Missing critical environment variables: ${missingEnvs.join(', ')}`;
+    logger.error('SERVER', msg);
+    if (process.env.NODE_ENV === 'production') {
+        process.exit(1);
+    }
 }
 
 // JWT_SECRET minimum strength check (must be ≥ 64 characters).
@@ -226,25 +234,27 @@ app.get('/api/config', (req, res) => {
 
 const maintenanceMiddleware = require('./src/middleware/maintenance');
 
-// API Routes
+// API Routes (versioned under /api/v1/)
 app.use(maintenanceMiddleware); // Block non-essential routes if maintenance mode is ON
-app.use('/api/auth', authRoutes);
-app.use('/api/instagram', instagramRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/captions', captionRoutes);
-app.use('/api/subscription', subscriptionRoutes);
-app.use('/api/scheduler', schedulerRoutes);
-app.use('/api/dm-automation', dmAutomationRoutes);
-app.use('/api/brand-deals', brandDealRoutes);
-app.use('/api/referral', referralRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/admin-plans', adminPlanRoutes);
-app.use('/api/payment', paymentRoutes);
-app.use('/api/calendar', calendarRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/instagram', instagramRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/captions', captionRoutes);
+app.use('/api/v1/subscription', subscriptionRoutes);
+app.use('/api/v1/scheduler', schedulerRoutes);
+app.use('/api/v1/dm-automation', dmAutomationRoutes);
+app.use('/api/v1/brand-deals', brandDealRoutes);
+app.use('/api/v1/referral', referralRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/admin-plans', adminPlanRoutes);
+app.use('/api/v1/payment', paymentRoutes);
+app.use('/api/v1/calendar', calendarRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/youtube', youtubeRoutes);
+// Webhooks must remain at non-versioned paths because external services (Razorpay, Instagram)
+// send to fixed URLs that we cannot change after configuration.
 app.use('/api/webhook', webhookRoutes);
-app.use('/api/youtube', youtubeRoutes);
-console.log('YouTube routes mounted');
+console.log('YouTube routes mounted at /api/v1/youtube');
 
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {
@@ -263,6 +273,12 @@ try {
     require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
 } catch (err) {
     logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message });
+}
+try {
+    require('./src/workers/scheduledPostWorker'); // BullMQ — processes instagram-publish queue
+    logger.info('SERVER', 'Scheduled post worker initialized.');
+} catch (err) {
+    logger.error('SERVER', 'Failed to initialize scheduled post worker:', { error: err.message });
 }
 
 // Start server
