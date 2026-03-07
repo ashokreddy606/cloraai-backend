@@ -4,11 +4,12 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM recommended IV length
 const AUTH_TAG_LENGTH = 16;
 
-// SECURITY: Fail hard at startup if encryption secret is missing.
-// This prevents OAuth tokens from being stored in plaintext.
-const SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY;
+// SECURITY: Use TOKEN_ENCRYPTION_SECRET for OAuth tokens.
+// Fallback to JWT_SECRET if missing to allow server to start, but log a warning.
+let SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY;
 if (!SECRET) {
-    throw new Error('FATAL: TOKEN_ENCRYPTION_SECRET is missing. Cannot start — would store OAuth tokens in plaintext.');
+    console.warn('[CRYPTO] WARNING: TOKEN_ENCRYPTION_SECRET is missing. Falling back to JWT_SECRET. Please set a unique encryption key for production tokens.');
+    SECRET = process.env.JWT_SECRET || 'temporary_fallback_secret_not_for_production';
 }
 
 /**

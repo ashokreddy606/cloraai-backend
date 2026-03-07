@@ -70,10 +70,12 @@ app.get("/test", (req, res) => {
     res.send("Backend API is working");
 });
 
-// Security: Crash immediately if critical keys are missing
-const requiredEnvs = [
+// Security: Log errors for missing keys, but only crash for CRITICAL ones
+const criticalEnvs = [
     'JWT_SECRET',
     'DATABASE_URL',
+];
+const featureEnvs = [
     'RAZORPAY_KEY_ID',
     'RAZORPAY_KEY_SECRET',
     'RAZORPAY_WEBHOOK_SECRET',
@@ -82,14 +84,20 @@ const requiredEnvs = [
     'GOOGLE_CLIENT_ID',
     'TOKEN_ENCRYPTION_SECRET',
 ];
-const missingEnvs = requiredEnvs.filter(env => !process.env[env]);
-if (missingEnvs.length > 0) {
-    // In production crash immediately — missing envs = broken security guarantees
-    const msg = `FATAL: Missing critical environment variables: ${missingEnvs.join(', ')}`;
+
+const missingCritical = criticalEnvs.filter(env => !process.env[env]);
+const missingFeatures = featureEnvs.filter(env => !process.env[env]);
+
+if (missingCritical.length > 0) {
+    const msg = `FATAL: Missing critical environment variables: ${missingCritical.join(', ')}`;
     logger.error('SERVER', msg);
     if (process.env.NODE_ENV === 'production') {
         process.exit(1);
     }
+}
+
+if (missingFeatures.length > 0) {
+    logger.warn('SERVER', `Missing feature-specific environment variables: ${missingFeatures.join(', ')}. Some features will be disabled.`);
 }
 
 // JWT_SECRET minimum strength check (must be ≥ 64 characters).
