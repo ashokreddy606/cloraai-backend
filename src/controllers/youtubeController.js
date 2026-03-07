@@ -233,6 +233,7 @@ exports.createRule = async (req, res) => {
         if (error.code === 'P2002') {
             return res.status(400).json({ error: 'Rule with this keyword already exists' });
         }
+        logger.error('YOUTUBE', 'createRule error', error);
         res.status(500).json({ error: 'Error creating rule' });
     }
 };
