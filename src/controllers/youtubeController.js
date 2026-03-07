@@ -430,40 +430,45 @@ exports.getUserVideos = async (req, res) => {
 };
 
 exports.uploadVideo = async (req, res) => {
+    let tempFilePath = null;
     try {
         const youtube = await getYoutubeClientForUser(req.userId);
-        const { title, description, tags, privacyStatus = 'private', publishAt, videoUrl } = req.body;
+        const { title, description, tags, privacyStatus = 'private', publishAt } = req.body;
 
         if (!title) {
             return res.status(400).json({ error: 'Title is required' });
         }
-        if (!videoUrl) {
-            return res.status(400).json({ error: 'Video URL is required' });
+        if (!req.file) {
+            return res.status(400).json({ error: 'Video file is required' });
+        }
+
+        tempFilePath = req.file.path;
+
+        // Parse tags if sent as a JSON string from FormData
+        let parsedTags = tags;
+        if (typeof tags === 'string') {
+            try { parsedTags = JSON.parse(tags); } catch { parsedTags = tags.split(',').map(t => t.trim()).filter(Boolean); }
         }
 
         const status = { privacyStatus };
         if (privacyStatus === 'private' && publishAt) {
-            status.privacyStatus = 'private';
             status.publishAt = new Date(publishAt).toISOString();
         }
 
-        // Fetch video from URL and pipe to YouTube upload
-        const axios = require('axios');
-        const videoStream = await axios({ url: videoUrl, method: 'GET', responseType: 'stream' });
-
+        const fs = require('fs');
         const uploadRes = await youtube.videos.insert({
             part: 'snippet,status',
             requestBody: {
                 snippet: {
                     title,
                     description: description || '',
-                    tags: tags || [],
+                    tags: parsedTags || [],
                     categoryId: '22', // People & Blogs default
                 },
                 status,
             },
             media: {
-                body: videoStream.data,
+                body: fs.createReadStream(tempFilePath),
             },
         });
 
@@ -479,6 +484,12 @@ exports.uploadVideo = async (req, res) => {
     } catch (error) {
         logger.error('YOUTUBE', 'uploadVideo', error);
         res.status(500).json({ error: 'Error uploading video', message: error.message });
+    } finally {
+        // Clean up temp file
+        if (tempFilePath) {
+            const fs = require('fs');
+            fs.unlink(tempFilePath, () => { });
+        }
     }
 };
 

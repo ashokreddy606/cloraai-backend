@@ -1,8 +1,17 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const os = require('os');
 const { authenticate } = require('../middleware/auth');
 const youtubeController = require('../controllers/youtubeController');
 const checkProAccess = require('../middleware/checkProAccess');
+
+// Configure multer for video uploads (temp dir, 500MB max)
+const upload = multer({
+    dest: path.join(os.tmpdir(), 'cloraai-uploads'),
+    limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
+});
 
 // ── OAuth Flow ─────────────────────────────────────────────────────────────
 router.get('/auth', authenticate, youtubeController.getAuthUrl);
@@ -31,7 +40,7 @@ router.get('/channel-analytics', authenticate, youtubeController.getChannelAnaly
 router.get('/videos', authenticate, youtubeController.getUserVideos);
 
 // POST /api/youtube/videos/upload — upload a new video
-router.post('/videos/upload', authenticate, youtubeController.uploadVideo);
+router.post('/videos/upload', authenticate, upload.single('video'), youtubeController.uploadVideo);
 
 // PUT  /api/youtube/videos/:videoId — update video metadata
 router.put('/videos/:videoId', authenticate, youtubeController.updateVideo);
