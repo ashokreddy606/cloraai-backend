@@ -10,10 +10,6 @@ if (dbUrl) {
     if (!dbUrl.includes('maxPoolSize')) {
         pooledDbUrl = `${dbUrl}${dbUrl.includes('?') ? '&' : '?'}maxPoolSize=50`;
     }
-    // Prisma 4 standard connection limit argument for robust scaling
-    if (!dbUrl.includes('connection_limit')) {
-        pooledDbUrl = `${pooledDbUrl}&connection_limit=50`;
-    }
 }
 
 if (process.env.NODE_ENV === 'production') {
