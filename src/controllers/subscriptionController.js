@@ -46,9 +46,10 @@ const createOrder = async (req, res) => {
     const totalCount = planType === 'yearly' ? 12 : 12; // 12 billing cycles for both (monthly=12 months, yearly=12 years max)
 
     if (!planId) {
+      console.warn(`[Subscription] createOrder: Missing plan ID for planType=${planType}. Check RAZORPAY_PLAN_ID in .env`);
       return res.status(400).json({
         error: 'Missing plan ID',
-        message: 'Razorpay Plan ID is required. Set RAZORPAY_PLAN_ID in .env',
+        message: 'Razorpay Plan ID is required. Please contact support.',
       });
     }
 
@@ -58,7 +59,8 @@ const createOrder = async (req, res) => {
       select: {
         id: true, email: true, username: true,
         plan: true, subscriptionStatus: true, planEndDate: true,
-        activeRazorpaySubscriptionId: true, updatedAt: true
+        activeRazorpaySubscriptionId: true, updatedAt: true,
+        role: true
       },
     });
 
@@ -71,14 +73,16 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // ── FIX: Block double billing ─────────────────────────────────────────
-    // Prevent an already-active PRO user from creating a second subscription.
+    const isAdmin = user.role === 'ADMIN' || user.role === 'SUPER_ADMIN';
+
     if (
       user.plan === 'PRO' &&
       user.subscriptionStatus === 'ACTIVE' &&
       user.planEndDate &&
-      new Date(user.planEndDate) > new Date()
+      new Date(user.planEndDate) > new Date() &&
+      !isAdmin
     ) {
+      console.warn(`[Subscription] createOrder: Double billing guard hit for user ${user.id}`);
       return res.status(400).json({
         error: 'Already on active PRO plan',
         message: 'Your PRO subscription is already active. You cannot start a new one while it is still running.',
