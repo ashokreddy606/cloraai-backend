@@ -316,7 +316,79 @@ const getStatus = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription };
+const renderCheckout = async (req, res) => {
+  const { subscriptionId } = req.params;
+  const keyId = process.env.RAZORPAY_KEY_ID;
+
+  if (!subscriptionId) return res.status(400).send('Subscription ID is required');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>CloraAI Checkout</title>
+        <style>
+          body { 
+            background: #0A0A0F; 
+            color: white; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+          }
+          .loader {
+            border: 3px solid #1A1A28;
+            border-top: 3px solid #38BDF8;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+          }
+          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+          h2 { font-weight: 700; margin-bottom: 8px; }
+          p { color: #9CA3AF; font-size: 14px; text-align: center; max-width: 80%; }
+        </style>
+      </head>
+      <body>
+        <div class="loader"></div>
+        <h2>Opening Secure Checkout...</h2>
+        <p>Please complete your payment in the Razorpay window. Your Pro features will activate automatically.</p>
+
+        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+        <script>
+          const options = {
+            key: "${keyId}",
+            subscription_id: "${subscriptionId}",
+            name: "CloraAI",
+            description: "Pro Subscription",
+            image: "https://your-cdn.com/cloraai-logo.png",
+            theme: { color: "#38BDF8" },
+            handler: function (response) {
+              // Redirect back or show success
+              document.body.innerHTML = '<h2>🎉 Payment Successful!</h2><p>You can now close this window and return to the app.</p>';
+              // Optionally notify app via deep link if configured
+            },
+            modal: {
+                ondismiss: function() {
+                    document.body.innerHTML = '<h2>Payment Cancelled</h2><p>You can close this window and try again in the app.</p><button onclick="window.location.reload()" style="margin-top:20px; padding:10px 20px; background:#38BDF8; border:none; border-radius:8px; color:white; font-weight:700;">Retry Payment</button>';
+                }
+            }
+          };
+          const rzp = new Razorpay(options);
+          rzp.open();
+        </script>
+      </body>
+    </html>
+  `;
+  res.send(html);
+};
+
+module.exports = { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription, renderCheckout };
 
 // ─── 4. GET PAYMENT HISTORY ──────────────────────────────────────────────────
 /**

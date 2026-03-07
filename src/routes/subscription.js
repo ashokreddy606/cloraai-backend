@@ -10,6 +10,9 @@ const { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscrip
 // Create a Razorpay subscription order → returns subscription_id to RN SDK
 router.post('/create-order', authenticate, createOrder);
 
+// Render a hosted checkout page for Expo Go fallback
+router.get('/checkout/:subscriptionId', renderCheckout);
+
 // Verify payment signature after user completes checkout → activates Pro plan
 router.post('/verify', authenticate, verifyPayment);
 
