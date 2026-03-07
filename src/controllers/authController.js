@@ -105,7 +105,12 @@ const register = catchAsync(async (req, res, next) => {
         referralCode,
         referredById,
         ipAddress,
-        deviceFingerprint: deviceFingerprint || null
+        deviceFingerprint: deviceFingerprint || null,
+        // Set PRO plan by default for testing / early launch phase (Fix #403)
+        plan: 'PRO',
+        subscriptionStatus: 'ACTIVE',
+        planStartDate: new Date(),
+        planEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
       }
     });
 
@@ -544,7 +549,12 @@ const googleAuth = async (req, res) => {
           profileImage,
           referralCode,
           ipAddress,
-          deviceFingerprint: deviceFingerprint || null
+          deviceFingerprint: deviceFingerprint || null,
+          // Set PRO plan by default for testing / early launch phase (Fix #403)
+          plan: 'PRO',
+          subscriptionStatus: 'ACTIVE',
+          planStartDate: new Date(),
+          planEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
         }
       });
     } else {
