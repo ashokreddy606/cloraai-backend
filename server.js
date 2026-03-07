@@ -1,4 +1,4 @@
-// redeploy trigger
+// redeploy trigger: 11:27 AM Fix
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -107,12 +107,15 @@ app.set('trust proxy', 1);
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
-            defaultSrc: ["'none'"],
-            frameAncestors: ["'none'"],   // Prevent clickjacking
-            formAction: ["'none'"],
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://checkout.razorpay.com"],
+            frameSrc: ["'self'", "https://api.razorpay.com", "https://tds.razorpay.com"],
+            imgSrc: ["'self'", "data:", "https://*.razorpay.com", "https://cloraai.com"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            connectSrc: ["'self'", "https://lumberjack.razorpay.com", "https://api.razorpay.com"],
         },
     },
-    crossOriginResourcePolicy: { policy: 'same-origin' },
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // Relax for checkout
     hsts: {
         maxAge: 31536000,              // 1 year
         includeSubDomains: true,
