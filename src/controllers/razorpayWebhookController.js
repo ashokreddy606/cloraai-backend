@@ -23,6 +23,7 @@
 
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
 
 // ─── Webhook Signature Verification ──────────────────────────────────────────
 const verifyWebhookSignature = (rawBody, signature, secret) => {
@@ -198,40 +199,45 @@ const handleSubscriptionCharged = async (payload, eventId) => {
     }
 
     // ── FIX: Complete state transition — always write BOTH plan AND status ────
-    await prisma.user.update({
-        where: { id: userId },
-        data: {
-            plan: 'PRO',
-            subscriptionStatus: 'ACTIVE',
-            planSource: 'RAZORPAY',
-            planEndDate: planEndDate,
-            manuallyUpgraded: false,
-        },
-    });
-
-    // ── Upsert PaymentHistory — safe if /verify already created the row ──────
-    if (payment?.id) {
-        await prisma.paymentHistory.upsert({
-            where: { razorpayPaymentId: payment.id },
-            update: {
-                endDate: planEndDate,
-                status: 'SUCCESS',
-                paymentMethod: payment.method || undefined,
-            },
-            create: {
-                userId,
-                razorpaySubscriptionId: subscriptionId,
-                razorpayPaymentId: payment.id,
-                amount: payment.amount || 19900,
-                currency: payment.currency || 'INR',
-                status: 'SUCCESS',
-                planName: 'PRO',
-                startDate: now,
-                endDate: planEndDate,
-                paymentMethod: payment.method || null,
+    // Wrapped in a transaction to prevent partial updates if server crashes mid-flight
+    await prisma.$transaction(async (tx) => {
+        await tx.user.update({
+            where: { id: userId },
+            data: {
+                plan: 'PRO',
+                subscriptionStatus: 'ACTIVE',
+                planSource: 'RAZORPAY',
+                planEndDate: planEndDate,
+                manuallyUpgraded: false,
             },
         });
-    } else {
+
+        // ── Upsert PaymentHistory — safe if /verify already created the row ──────
+        if (payment?.id) {
+            await tx.paymentHistory.upsert({
+                where: { razorpayPaymentId: payment.id },
+                update: {
+                    endDate: planEndDate,
+                    status: 'SUCCESS',
+                    paymentMethod: payment.method || undefined,
+                },
+                create: {
+                    userId,
+                    razorpaySubscriptionId: subscriptionId,
+                    razorpayPaymentId: payment.id,
+                    amount: payment.amount || 19900,
+                    currency: payment.currency || 'INR',
+                    status: 'SUCCESS',
+                    planName: 'PRO',
+                    startDate: now,
+                    endDate: planEndDate,
+                    paymentMethod: payment.method || null,
+                },
+            });
+        }
+    });
+
+    if (!payment?.id) {
         console.warn(`[Webhook] subscription.charged: payment entity absent for sub ${subscriptionId}. PaymentHistory not created.`);
     }
 

@@ -3,6 +3,7 @@ const { decrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
+const { acquireLock, releaseLock } = require('../utils/redisLock');
 
 const getOAuth2Client = () => {
     return new google.auth.OAuth2(
@@ -14,6 +15,16 @@ const getOAuth2Client = () => {
 
 // Worker runs every 2 minutes
 cron.schedule('*/2 * * * *', async () => {
+    const lockName = 'youtube_cron';
+    // Acquire lock for 110s (slightly less than the 2 min interval)
+    // so if a worker crashes, the lock will still expire before the next schedule
+    const locked = await acquireLock(lockName, 110);
+
+    if (!locked) {
+        logger.debug('YOUTUBE_WORKER', 'Cron is locked by another instance. Skipping.');
+        return;
+    }
+
     logger.info('YOUTUBE_WORKER', 'Starting YouTube background worker to fetch comments');
 
     try {
@@ -39,6 +50,9 @@ cron.schedule('*/2 * * * *', async () => {
 
     } catch (error) {
         logger.error('YOUTUBE_WORKER', 'Worker failed', error);
+    } finally {
+        // Release the lock when done so other instances aren't blocked from the next scheduled hit
+        await releaseLock(lockName);
     }
 });
 

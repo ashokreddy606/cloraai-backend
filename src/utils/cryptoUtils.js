@@ -3,8 +3,13 @@ const crypto = require('crypto');
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM recommended IV length
 const AUTH_TAG_LENGTH = 16;
-// Preferred secret from audit requirement
+
+// SECURITY: Fail hard at startup if encryption secret is missing.
+// This prevents OAuth tokens from being stored in plaintext.
 const SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY;
+if (!SECRET) {
+    throw new Error('FATAL: TOKEN_ENCRYPTION_SECRET is missing. Cannot start — would store OAuth tokens in plaintext.');
+}
 
 /**
  * Encrypts cleartext using AES-256-GCM.
@@ -14,10 +19,6 @@ const SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY
  */
 function encrypt(text) {
     if (!text) return text;
-    if (!SECRET) {
-        console.error('[CRYPTO] TOKEN_ENCRYPTION_SECRET is not defined');
-        return text;
-    }
 
     try {
         const iv = crypto.randomBytes(IV_LENGTH);
@@ -44,10 +45,6 @@ function encrypt(text) {
  */
 function decrypt(encryptedText) {
     if (!encryptedText) return encryptedText;
-    if (!SECRET) {
-        console.error('[CRYPTO] TOKEN_ENCRYPTION_SECRET is not defined');
-        return encryptedText;
-    }
 
     try {
         const parts = encryptedText.split(':');

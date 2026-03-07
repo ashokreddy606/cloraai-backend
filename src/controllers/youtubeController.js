@@ -3,6 +3,11 @@ const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
 const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
+const { createBreaker } = require('../utils/circuitBreaker');
+
+const youtubeBreaker = createBreaker(async (fn) => {
+    return await fn();
+}, 'YouTube', { timeout: 15000 });
 
 // Helper to get a new OAuth2Client instance
 const getOAuth2Client = () => {
@@ -28,10 +33,35 @@ const getYoutubeClientForUser = async (userId) => {
         throw new Error('YouTube not connected for this user');
     }
     const client = getOAuth2Client();
-    client.setCredentials({
-        access_token: decrypt(user.youtubeAccessToken),
-        refresh_token: user.youtubeRefreshToken ? decrypt(user.youtubeRefreshToken) : undefined,
-    });
+
+    // Set credentials with both access and refresh tokens
+    const credentials = {
+        access_token: decrypt(user.youtubeAccessToken)
+    };
+
+    if (user.youtubeRefreshToken) {
+        credentials.refresh_token = decrypt(user.youtubeRefreshToken);
+    }
+
+    client.setCredentials(credentials);
+
+    // FIX: Automatically refresh token if expired
+    // getAccessToken() will automatically refresh if a refresh_token is available and the access_token has expired.
+    try {
+        const { token } = await client.getAccessToken();
+
+        // If token was refreshed, update DB
+        if (token && token !== credentials.access_token) {
+            await prisma.user.update({
+                where: { id: userId },
+                data: { youtubeAccessToken: encrypt(token) }
+            });
+        }
+    } catch (refreshError) {
+        logger.error('YOUTUBE', 'Token refresh failed', { userId, error: refreshError.message });
+        throw new Error('YouTube session expired. Please reconnect your account.');
+    }
+
     return google.youtube({ version: 'v3', auth: client });
 };
 
@@ -269,9 +299,12 @@ exports.getLeads = async (req, res) => {
 
 exports.submitLead = async (req, res) => {
     try {
-        const { userId, name, email, phone } = req.body;
-        if (!userId || !name || !email) {
-            return res.status(400).json({ error: 'Missing required fields' });
+        // FIX: Always use authenticated userId from token instead of req.body
+        const userId = req.userId;
+        const { name, email, phone } = req.body;
+
+        if (!name || !email) {
+            return res.status(400).json({ error: 'Missing required fields: name and email' });
         }
         await prisma.youtubeLead.create({
             data: { userId, name, email, phone, source: 'youtube' }
@@ -312,10 +345,12 @@ exports.getChannelAnalytics = async (req, res) => {
         const youtube = await getYoutubeClientForUser(req.userId);
 
         // Fetch channel stats
-        const channelRes = await youtube.channels.list({
+        const channelRes = await youtubeBreaker.fire(() => youtube.channels.list({
             part: 'snippet,statistics,contentDetails',
             mine: true,
-        });
+        }));
+
+        if (channelRes.fallback) throw new Error("YouTube API Circuit Breaker Fallback");
 
         if (!channelRes.data.items || channelRes.data.items.length === 0) {
             return res.status(404).json({ error: 'No YouTube channel found' });
@@ -323,13 +358,6 @@ exports.getChannelAnalytics = async (req, res) => {
 
         const channel = channelRes.data.items[0];
         const stats = channel.statistics;
-
-        // Fetch top 5 videos by view count
-        const videosRes = await youtube.videos.list({
-            part: 'snippet,statistics',
-            myRating: 'like',
-            maxResults: 1, // fallback — we'll use search for top videos
-        }).catch(() => ({ data: { items: [] } }));
 
         // Get most viewed videos from the channel's uploads playlist
         const uploadsRes = await youtube.channels.list({
@@ -591,6 +619,30 @@ exports.deleteVideo = async (req, res) => {
     try {
         const youtube = await getYoutubeClientForUser(req.userId);
         const { videoId } = req.params;
+
+        // FIX: Verify ownership before deleting
+        // We verify ownership by fetching the video from the user's channel uploads playlist
+        const channelRes = await youtube.channels.list({
+            part: 'contentDetails',
+            mine: true,
+        });
+
+        const uploadsPlaylistId = channelRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+        if (!uploadsPlaylistId) {
+            return res.status(403).json({ error: 'Cannot verify video ownership: No uploads playlist found' });
+        }
+
+        // Check if the video belongs to this playlist (channel)
+        const playlistItemsRes = await youtube.playlistItems.list({
+            part: 'id,contentDetails',
+            playlistId: uploadsPlaylistId,
+            videoId: videoId
+        });
+
+        if (!playlistItemsRes.data.items || playlistItemsRes.data.items.length === 0) {
+            return res.status(403).json({ error: 'Unauthorized: You do not own this video' });
+        }
+
         await youtube.videos.delete({ id: videoId });
         res.json({ success: true, message: 'Video deleted' });
     } catch (error) {

@@ -4,6 +4,8 @@ const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 
 // ─────────────────────────────────────────────
 // Email: supports Resend API (recommended) OR Gmail SMTP (fallback)
@@ -62,8 +64,13 @@ const register = catchAsync(async (req, res, next) => {
 
   // Always normalise email — prevents duplicate accounts with different casing
   const email = (req.body.email || '').toLowerCase().trim();
-  const { password, username, deviceFingerprint, referredByCode } = req.body;
+  const { password, username, deviceFingerprint, referredByCode, tosAccepted } = req.body;
   const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+
+  // FIX 18: Reject if TOS not accepted
+  if (!tosAccepted) {
+    throw new AppError('You must accept the Terms of Service to register', 400);
+  }
 
   // Validation
   if (!email || !password || password.length < 8) {
@@ -107,6 +114,12 @@ const register = catchAsync(async (req, res, next) => {
         referredById,
         ipAddress,
         deviceFingerprint: deviceFingerprint || null,
+        // FIX 18: Record TOS acceptance
+        tosAccepted: true,
+        tosAcceptedAt: new Date(),
+        // FIX 19: Setup email verification
+        isEmailVerified: false,
+        emailVerificationToken: crypto.randomBytes(32).toString('hex'),
         // Role assigned from DB only — never hardcoded based on email
         role: 'USER'
       }
@@ -124,6 +137,20 @@ const register = catchAsync(async (req, res, next) => {
 
   // Generate token
   const token = generateToken(user.id);
+
+  // FIX 19: Send verification email
+  const verifyLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/verify-email?token=${user.emailVerificationToken}`;
+  const emailHtml = `<!DOCTYPE html><html><body>
+    <h2>Welcome to CloraAI, ${user.username}!</h2>
+    <p>Please verify your email address to access all features.</p>
+    <a href="${verifyLink}" style="padding:10px 20px; background:#4F46E5; color:white; text-decoration:none; border-radius:5px;">Verify Email</a>
+  </body></html>`;
+
+  try {
+    await sendEmail({ to: user.email, subject: 'Welcome to CloraAI - Verify Email', html: emailHtml });
+  } catch (err) {
+    console.error('Failed to send verification email:', err.message);
+  }
 
   res.status(201).json({
     success: true,
@@ -154,23 +181,51 @@ const login = async (req, res) => {
       });
     }
 
-    // Find user
     const user = await prisma.user.findUnique({
       where: { email }
     });
 
-    // Use identical error for both cases to prevent user enumeration
     const INVALID_CREDS = { error: 'Invalid credentials', message: 'Invalid email or password' };
+    const LOCKED_OUT = { error: 'Account locked', message: 'Too many failed login attempts. Please try again after 30 minutes.' };
 
     if (!user) {
       return res.status(401).json(INVALID_CREDS);
+    }
+
+    // Check Lockout Status
+    if (user.lockoutUntil && new Date(user.lockoutUntil) > new Date()) {
+      return res.status(403).json(LOCKED_OUT);
     }
 
     // Verify password
     const passwordValid = await verifyPassword(password, user.password);
 
     if (!passwordValid) {
+      // Increment failed attempts
+      const newAttempts = user.failedLoginAttempts + 1;
+      const lockoutUntil = newAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: newAttempts, lockoutUntil }
+      });
+
+      if (lockoutUntil) {
+        return res.status(403).json(LOCKED_OUT);
+      }
       return res.status(401).json(INVALID_CREDS);
+    }
+
+    // If password is valid but 2FA is enabled, return 2FA prompt
+    if (user.twoFactorEnabled) {
+      // Send a temporary token for 2FA validation
+      const tempToken = generateToken(user.id, user.tokenVersion);
+      return res.status(200).json({
+        success: true,
+        requires2FA: true,
+        tempToken,
+        message: 'Two-factor authentication required.'
+      });
     }
 
     // Generate token with tokenVersion (Phase 1 Fix)
@@ -181,7 +236,9 @@ const login = async (req, res) => {
       where: { id: user.id },
       data: {
         ipAddress,
-        ...(deviceFingerprint && { deviceFingerprint })
+        ...(deviceFingerprint && { deviceFingerprint }),
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
       }
     });
 
@@ -472,6 +529,40 @@ const deleteAccount = async (req, res) => {
   }
 };
 
+// Verify Email
+const verifyEmail = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token is required' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { emailVerificationToken: token }
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired verification token' });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isEmailVerified: true,
+        emailVerificationToken: null
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Email verified successfully. You can now access all features.'
+    });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({ error: 'Failed to verify email' });
+  }
+};
+
 // Make Admin (protected by secret key from environment — no fallback)
 const makeAdmin = async (req, res) => {
   try {
@@ -601,6 +692,80 @@ const googleAuth = async (req, res) => {
   }
 };
 
+// Setup 2FA
+const setup2FA = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const secret = speakeasy.generateSecret({ length: 20, name: `CloraAI (${user.email})` });
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { twoFactorSecret: secret.base32 }
+    });
+
+    QRCode.toDataURL(secret.otpauth_url, (err, data_url) => {
+      if (err) return res.status(500).json({ error: 'Failed to generate QR code' });
+      res.status(200).json({
+        success: true,
+        secret: secret.base32,
+        qrCode: data_url
+      });
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Verify 2FA
+const verify2FA = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'MFA token is required' });
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || !user.twoFactorSecret) return res.status(400).json({ error: '2FA not setup' });
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token
+    });
+
+    if (!verified) {
+      return res.status(400).json({ error: 'Invalid 2FA token' });
+    }
+
+    if (!user.twoFactorEnabled) {
+      // First time verification to enable it
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { twoFactorEnabled: true }
+      });
+      return res.status(200).json({ success: true, message: '2FA enabled successfully' });
+    }
+
+    // Refresh valid session data
+    const accessToken = generateToken(user.id, user.tokenVersion);
+    return res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          profileImage: user.profileImage,
+          role: user.role
+        },
+        token: accessToken
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -611,5 +776,8 @@ module.exports = {
   deleteAccount,
   logout,
   makeAdmin,
-  googleAuth
+  googleAuth,
+  verifyEmail,
+  setup2FA,
+  verify2FA
 };

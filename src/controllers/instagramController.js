@@ -1,6 +1,11 @@
 const axios = require('axios');
 const { encryptToken, decryptToken } = require('../utils/cryptoUtils');
 const prisma = require('../lib/prisma');
+const { createBreaker } = require('../utils/circuitBreaker');
+
+const instagramBreaker = createBreaker(async (url) => {
+  return await axios.get(url);
+}, 'Instagram');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v18.0';
 const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID;
@@ -152,9 +157,16 @@ const getAccountDetails = async (req, res) => {
     const decryptedToken = decryptToken(account.accessToken);
 
     // Fetch latest data from Instagram API
-    const userData = await axios.get(
+    const userData = await instagramBreaker.fire(
       `https://graph.instagram.com/me?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count,biography,website&access_token=${decryptedToken}`
     );
+
+    if (userData.fallback) {
+      return res.status(503).json({
+        error: 'Instagram API Unavailable',
+        message: 'Unable to fetch account details right now.'
+      });
+    }
 
     // Update database
     await prisma.instagramAccount.update({

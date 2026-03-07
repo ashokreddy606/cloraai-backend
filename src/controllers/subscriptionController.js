@@ -11,6 +11,7 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const { createSubscription, cancelSubscription: rzpCancelSubscription } = require('../services/razorpayService');
+const { cache } = require('../utils/cache');
 
 // ─── Helper: compute days remaining ──────────────────────────────────────────
 const getDaysRemaining = (planEndDate, plan) => {
@@ -254,6 +255,7 @@ const verifyPayment = async (req, res) => {
     ]);
 
     console.log(`[Subscription] User ${userId} payment confirmed via /verify — waiting for webhook to set planEndDate`);
+    await cache.clearUserCache(userId);
 
     return res.status(200).json({
       success: true,
@@ -556,6 +558,7 @@ async function cancelSubscription(req, res) {
     });
 
     console.log(`[Subscription] cancelSubscription: User ${req.userId} cancelled (access until ${user.planEndDate?.toISOString()})`);
+    await cache.clearUserCache(req.userId);
 
     return res.status(200).json({
       success: true,

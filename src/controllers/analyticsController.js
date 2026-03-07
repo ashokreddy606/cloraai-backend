@@ -1,4 +1,11 @@
 const prisma = require('../lib/prisma');
+const { cache } = require('../utils/cache');
+const { createBreaker } = require('../utils/circuitBreaker');
+const axios = require('axios');
+
+const instagramBreaker = createBreaker(async (url) => {
+  return await axios.get(url);
+}, 'Instagram');
 
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
@@ -42,8 +49,10 @@ const getDashboard = async (req, res) => {
         try {
           const { decryptToken } = require('../utils/cryptoUtils');
           const decryptedToken = decryptToken(account.accessToken);
-          const axios = require('axios');
-          const userData = await axios.get(`https://graph.instagram.com/me?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`);
+
+          const userData = await instagramBreaker.fire(`https://graph.instagram.com/me?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`);
+
+          if (userData.fallback) throw new Error("Fallback response");
 
           const followers = userData.data.followers_count || account.followers;
           const following = userData.data.follows_count || account.following;
@@ -134,10 +143,13 @@ const recordSnapshot = async (req, res) => {
     const { decryptToken } = require('../utils/cryptoUtils');
     const decryptedToken = decryptToken(account.accessToken);
 
-    const axios = require('axios');
-    const userData = await axios.get(
+    const userData = await instagramBreaker.fire(
       `https://graph.instagram.com/me?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`
     );
+
+    if (userData.fallback) {
+      return res.status(503).json({ error: 'Instagram API Unavailable', message: 'Instagram API is down' });
+    }
 
     const followers = userData.data.followers_count || 0;
     const following = userData.data.follows_count || 0;
@@ -158,6 +170,8 @@ const recordSnapshot = async (req, res) => {
         snapshotDate: new Date()
       }
     });
+
+    await cache.clearUserCache(req.userId);
 
     res.status(201).json({
       success: true,

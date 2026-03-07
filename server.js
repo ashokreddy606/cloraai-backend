@@ -1,8 +1,13 @@
-// redeploy trigger: 11:27 AM Fix
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const hpp = require('hpp');
+const xss = require('xss-clean');
+const mongoSanitize = require('express-mongo-sanitize');
+const compression = require('compression');
 require('dotenv').config();
+const validateEnv = require('./src/utils/envValidator');
+validateEnv();
 
 const { rateLimit } = require('./src/middleware/auth');
 const prisma = require('./src/lib/prisma');
@@ -42,10 +47,12 @@ const brandDealRoutes = require('./src/routes/brandDeal');
 const referralRoutes = require('./src/routes/referral');
 const adminRoutes = require('./src/routes/admin');
 const adminPlanRoutes = require('./src/routes/adminPlan');
+const userRoutes = require('./src/routes/user');
 const calendarRoutes = require('./src/routes/calendar');
 const notificationRoutes = require('./src/routes/notification');
 const webhookRoutes = require('./src/routes/webhook');
 const youtubeRoutes = require('./src/routes/youtube');
+const uploadRoutes = require('./src/routes/upload');
 const paymentRoutes = require('./src/routes/payment');
 
 // Initialize Prisma
@@ -110,17 +117,22 @@ app.use('/api/webhook/instagram', express.json({
 // proxies in front of your app in production if stacked.
 app.set('trust proxy', 1);
 
+// Compress responses
+app.use(compression());
+
 // Security middleware — Helmet sets secure HTTP headers.
-// CSP configured for an API-only backend: no frames, no scripts, API only.
+// CSP properly restricts unauthorized executions.
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "https://checkout.razorpay.com"],
+            scriptSrc: ["'self'", "https://checkout.razorpay.com"], // Removed unsafe-inline for tighter security
             frameSrc: ["'self'", "https://api.razorpay.com", "https://tds.razorpay.com"],
-            imgSrc: ["'self'", "data:", "https://*.razorpay.com", "https://cloraai.com"],
+            imgSrc: ["'self'", "data:", "https://*.razorpay.com", "https://cloraai.com", "https://s3.amazonaws.com"],
             styleSrc: ["'self'", "'unsafe-inline'"],
             connectSrc: ["'self'", "https://lumberjack.razorpay.com", "https://api.razorpay.com"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: [],
         },
     },
     crossOriginResourcePolicy: { policy: 'cross-origin' }, // Relax for checkout
@@ -130,6 +142,15 @@ app.use(helmet({
         preload: true,
     },
 }));
+
+// Prevent Cross-Site Scripting (XSS)
+app.use(xss());
+
+// Prevent NoSQL Injection
+app.use(mongoSanitize());
+
+// Prevent HTTP Parameter Pollution
+app.use(hpp());
 
 // CORS — restrict in production
 const allowedOrigins = [
@@ -162,17 +183,30 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Global rate limiting (200 requests per 15 minutes per IP)
-app.use(rateLimit(200, 15 * 60 * 1000));
+app.use(rateLimit(200, 15));
 
-// Request logging middleware (safe — no body logging)
-app.use((req, res, next) => {
-    logger.debug('HTTP', `${req.method} ${req.path}`, { ip: req.ip });
-    next();
-});
+// Request Tracing & Logging Middleware
+const tracing = require('./src/middleware/tracing');
+app.use(tracing);
 
 // Automatic Subscription Expiry Check
 const checkSubscriptionExpiry = require('./src/middleware/checkSubscriptionExpiry');
 app.use(checkSubscriptionExpiry);
+
+// Prometheus Metrics Middleware
+const promBundle = require('express-prom-bundle');
+const { register, updateMetrics } = require('./src/utils/metrics');
+const metricsMiddleware = promBundle({
+    includeMethod: true,
+    includePath: true,
+    includeStatusCode: true,
+    includeUp: true,
+    promClient: { collectDefaultMetrics: {} },
+    customLabels: { project_name: 'cloraai' },
+    promRegistry: register,
+    autoregister: false // Manually handle /internal/metrics for auth
+});
+app.use(metricsMiddleware);
 
 // Health check
 app.get("/health", (req, res) => {
@@ -186,29 +220,34 @@ app.get("/health", (req, res) => {
 
 // Internal monitoring metrics endpoint
 // Secured by X-Internal-Token header. INTERNAL_METRICS_TOKEN must be set in .env.
-// If the env var is not set, this endpoint is hard-blocked for safety.
-app.get('/internal/metrics', (req, res) => {
+app.get('/internal/metrics', async (req, res) => {
     const metricsToken = process.env.INTERNAL_METRICS_TOKEN;
 
-    // If no token configured, completely block this endpoint
     if (!metricsToken) {
         return res.status(503).json({ error: 'Metrics endpoint not configured' });
     }
 
-    // Require exact token match in header
     const providedToken = req.headers['x-internal-token'];
     if (!providedToken || providedToken !== metricsToken) {
         logger.warn('METRICS', 'Unauthorized /internal/metrics access attempt', { ip: req.ip });
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { getAISlotStatus } = require('./src/middleware/aiLimiter');
-    res.status(200).json({
-        uptime: process.uptime(),
-        counters: logger.getCounters(),
-        ai: getAISlotStatus(),
-        timestamp: new Date().toISOString()
-    });
+    // Refresh redis, queue data
+    await updateMetrics();
+
+    let metricsString = await register.metrics();
+
+    // Append Prisma native metrics if enabled
+    try {
+        const prismaMetrics = await prisma.$metrics.prometheus();
+        metricsString += '\n' + prismaMetrics;
+    } catch (e) {
+        // Silently ignore if `metrics` preview feature isn't enabled yet
+    }
+
+    res.set('Content-Type', register.contentType);
+    res.send(metricsString);
 });
 
 // Public App Config Endpoint - allows mobile app to load pricing and feature flags dynamically
@@ -251,6 +290,8 @@ app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/calendar', calendarRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/youtube', youtubeRoutes);
+app.use('/api/v1/user', userRoutes);
+app.use('/api/v1/upload', uploadRoutes);
 // Webhooks must remain at non-versioned paths because external services (Razorpay, Instagram)
 // send to fixed URLs that we cannot change after configuration.
 app.use('/api/webhook', webhookRoutes);
@@ -264,36 +305,55 @@ app.use((req, res, next) => {
     });
 });
 
+// Sentry Error Handler (Must be before our custom handler)
+if (process.env.SENTRY_DSN) {
+    const Sentry = require('@sentry/node');
+    Sentry.setupExpressErrorHandler(app);
+}
+
 // Error handling middleware
 const errorHandler = require('./src/middleware/errorHandler');
 app.use(errorHandler);
 
-// Background Workers
-try {
-    require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
-} catch (err) {
-    logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message });
-}
-try {
-    require('./src/workers/scheduledPostWorker'); // BullMQ — processes instagram-publish queue
-    logger.info('SERVER', 'Scheduled post worker initialized.');
-} catch (err) {
-    logger.error('SERVER', 'Failed to initialize scheduled post worker:', { error: err.message });
+// Background Workers (Bypassed in tests to avoid Redis/Cron interference)
+if (process.env.NODE_ENV !== 'test') {
+    try {
+        require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
+    } catch (err) {
+        logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message });
+    }
+    try {
+        require('./src/workers/scheduledPostWorker'); // BullMQ — processes instagram-publish queue
+        logger.info('SERVER', 'Scheduled post worker initialized.');
+    } catch (err) {
+        logger.error('SERVER', 'Failed to initialize scheduled post worker:', { error: err.message });
+    }
 }
 
 // Start server
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+    const server = app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on port ${PORT}`);
+    });
 
-// Graceful shutdown handler
-const gracefulShutdown = async (signal) => {
-    logger.info('SERVER', `${signal} received. Shutting down gracefully...`);
-    await prisma.$disconnect();
-    logger.info('SERVER', 'Shutdown complete.'); // process.exit is intentionally removed to avoid SIGTERM issues
-};
+    // Tune keepAliveTimeout for AWS ALB compatibility
+    server.keepAliveTimeout = 65000; // 65 seconds
+    server.headersTimeout = 66000; // 66 seconds
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    // Graceful shutdown handler
+    const gracefulShutdown = async (signal) => {
+        logger.info('SERVER', `${signal} received. Shutting down gracefully...`);
+        server.close(() => {
+            prisma.$disconnect().then(() => {
+                logger.info('SERVER', 'Shutdown complete.');
+            });
+        });
+    };
+
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+}
+
+module.exports = app; // Export for testing

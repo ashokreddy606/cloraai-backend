@@ -3,13 +3,13 @@ const { hashPassword } = require('../utils/helpers');
 const { appConfig, saveConfig } = require('../config');
 const { cancelSubscription: rzpCancelSub, createRefund } = require('../services/razorpayService');
 const logger = require('../utils/logger');
-const { OpenAIApi, Configuration } = require('openai');
+const OpenAI = require('openai');
 const { logAIUsage } = require('../middleware/aiLimiter');
 
 
-const openai = new OpenAIApi(new Configuration({
+const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
-}));
+});
 
 // Store for IP blacklist (in-memory — not plan-change-critical)
 let ipBlacklist = [];

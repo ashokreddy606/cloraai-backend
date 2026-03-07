@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { cache } = require('../utils/cache');
 
 const getTasks = async (req, res) => {
     try {
@@ -35,6 +36,7 @@ const createTask = async (req, res) => {
                 platform: platform || 'general',
             }
         });
+        await cache.clearUserCache(req.userId);
         res.status(201).json({ success: true, data: { task } });
     } catch (error) {
         res.status(500).json({ error: 'Failed to create task', message: error.message });
@@ -52,6 +54,7 @@ const toggleTask = async (req, res) => {
             where: { id: req.params.id },
             data: { completed: !task.completed }
         });
+        await cache.clearUserCache(req.userId);
         res.json({ success: true, data: { task: updated } });
     } catch (error) {
         res.status(500).json({ error: 'Failed to update task', message: error.message });
@@ -63,6 +66,7 @@ const deleteTask = async (req, res) => {
         await prisma.calendarTask.deleteMany({
             where: { id: req.params.id, userId: req.userId }
         });
+        await cache.clearUserCache(req.userId);
         res.json({ success: true, message: 'Task deleted' });
     } catch (error) {
         res.status(500).json({ error: 'Failed to delete task', message: error.message });
@@ -137,6 +141,8 @@ const generateCalendar = async (req, res) => {
                 endDate
             }
         });
+
+        await cache.clearUserCache(req.userId);
 
         res.json({ success: true, message: "30-day content calendar generated" });
     } catch (error) {

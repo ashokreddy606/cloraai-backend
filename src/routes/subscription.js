@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription, renderCheckout } = require('../controllers/subscriptionController');
+const { cacheRoute } = require('../utils/cache');
 
 // Create a Razorpay subscription order → returns subscription_id to RN SDK
 router.post('/create-order', authenticate, createOrder);
@@ -17,10 +18,10 @@ router.get('/checkout/:subscriptionId', renderCheckout);
 router.post('/verify', authenticate, verifyPayment);
 
 // Get current subscription state (plan, status, daysRemaining, planSource)
-router.get('/status', authenticate, getStatus);
+router.get('/status', authenticate, cacheRoute(3600, 'subscription'), getStatus);
 
 // Get all payment transactions for the authenticated user
-router.get('/history', authenticate, getPaymentHistory);
+router.get('/history', authenticate, cacheRoute(3600, 'subscription'), getPaymentHistory);
 
 // Cancel the active Razorpay subscription gracefully (access kept until cycle end)
 router.post('/cancel', authenticate, cancelSubscription);

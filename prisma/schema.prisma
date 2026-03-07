@@ -1,7 +1,8 @@
 // This is your Prisma schema file for CloraAI
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["metrics"]
 }
 
 datasource db {
@@ -40,6 +41,16 @@ model User {
   pushToken    String? // Expo push token
   role         String  @default("USER") // USER | ADMIN | SUSPENDED | BANNED
   tokenVersion Int     @default(0) // Enforces forced-logout (Phase 1)
+
+  // ── Account Security & Compliance ───────────────────────────────────────
+  tosAccepted            Boolean   @default(false)
+  tosAcceptedAt          DateTime?
+  isEmailVerified        Boolean   @default(false)
+  emailVerificationToken String?
+  twoFactorSecret        String?
+  twoFactorEnabled       Boolean   @default(false)
+  failedLoginAttempts    Int       @default(0)
+  lockoutUntil           DateTime?
 
   // ── Subscription Plan (single-source-of-truth) ──────────────────────────
   plan               Plan                @default(FREE)
@@ -108,6 +119,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([plan])
+  @@index([createdAt])
   @@index([planEndDate])
 }
 
@@ -198,6 +210,7 @@ model PaymentHistory {
   @@index([userId])
   @@index([razorpaySubscriptionId])
   @@index([status])
+  @@index([createdAt])
 }
 
 // ─── Razorpay Webhook Event Deduplication ────────────────────────────────────
@@ -208,6 +221,9 @@ model WebhookEvent {
   eventId     String   @unique // Razorpay event.id (e.g. "evt_XXXXX")
   eventType   String // e.g. "subscription.charged"
   processedAt DateTime @default(now())
+
+  @@index([eventType])
+  @@index([processedAt])
 }
 
 // AI Generated Captions
@@ -230,6 +246,7 @@ model Caption {
 
   @@index([userId])
   @@index([isUsed])
+  @@index([createdAt])
 }
 
 // Scheduled Posts
@@ -291,6 +308,7 @@ model AnalyticsSnapshot {
 
   @@index([userId])
   @@index([snapshotDate])
+  @@index([userId, snapshotDate])
 }
 
 // DM Automation Rules
@@ -339,6 +357,9 @@ model BrandDeal {
 
   interactions BrandDealInteraction[]
   replies      BrandDealReply[]
+
+  @@index([createdAt])
+  @@index([isBrandDeal])
 }
 
 // Track when a user ignores a brand deal

@@ -2,11 +2,16 @@ const OpenAI = require('openai');
 const { appConfig } = require('../config');
 const { logAIUsage } = require('../middleware/aiLimiter');
 const prisma = require('../lib/prisma');
+const { createBreaker } = require('../utils/circuitBreaker');
 
 // OpenAI SDK v4 — clean instantiation
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+const openaiBreaker = createBreaker(async (params) => {
+  return await openai.chat.completions.create(params);
+}, 'OpenAI');
 
 /**
  * Sanitize AI topic input:
@@ -57,13 +62,20 @@ const generateCaption = async (req, res) => {
     const maxTokens = length === 'short' ? 100 : length === 'long' ? 300 : 150;
     const prompt = `Generate an Instagram caption for a ${topic} post. \nTone: ${tone}\nLength: ${length}\nInclude relevant hashtags at the end.\nFormat: [Caption text]\n#hashtags`;
 
-    // OpenAI SDK v4 API call
-    const response = await openai.chat.completions.create({
+    // OpenAI SDK v4 API call wrapped in Circuit Breaker
+    const response = await openaiBreaker.fire({
       model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
       max_tokens: maxTokens,
     });
+
+    if (response.fallback) {
+      return res.status(503).json({
+        error: 'OpenAI Unavailable',
+        message: 'The AI service is currently experiencing high load or is unreachable. Please try again later.'
+      });
+    }
 
     const caption = response.choices[0].message.content;
 

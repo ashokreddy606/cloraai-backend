@@ -1,0 +1,35 @@
+config:
+  target: "http://localhost:5000"
+  phases:
+    - duration: 60
+      arrivalRate: 50
+      name: "Warm up phase"
+    - duration: 120
+      arrivalRate: 50
+      rampTo: 500
+      name: "Ramp up load"
+    - duration: 300
+      arrivalRate: 500
+      name: "Sustained peak load (10k concurrent users equiv)"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+
+scenarios:
+  - name: "Health check flow"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+          
+  - name: "Public App Config load"
+    weight: 5
+    flow:
+      - get:
+          url: "/api/config"
+
+  - name: "Unauthorized API attempt (Tests Rate Limiter)"
+    weight: 2
+    flow:
+      - get:
+          url: "/api/auth/me"

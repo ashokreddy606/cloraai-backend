@@ -5,45 +5,43 @@ const { authenticate, rateLimit } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const { registerSchema, loginSchema, resetPasswordSchema, googleAuthSchema } = require('../validators/auth');
 
-// Strict brute-force protection: 5 requests per 15 minutes per IP
-// Applied to login, register, forgot-password, reset-password
-const authLimiter = rateLimit(5, 15);  // 5 requests per 15 minutes
-// Slightly relaxed for Google OAuth and other auth helpers: 20/15 min
-const authRateLimit = rateLimit(20, 15); // 20 requests per 15 minutes
+// Strict brute-force protection specific to different auth actions
+const { authLimiterLogin, authLimiterRegister, authLimiterForgot } = require('../middleware/auth');
 
 router.post('/register',
-    authLimiter,
+    authLimiterRegister,
     validate(registerSchema),
     authController.register
 );
 
 router.post('/login',
-    authLimiter,
+    authLimiterLogin,
     validate(loginSchema),
     authController.login
 );
 
 router.post('/google',
-    authRateLimit,
+    authLimiterLogin,
     validate(googleAuthSchema),
     authController.googleAuth
 );
 
 router.post('/forgot-password',
-    authRateLimit,
+    authLimiterForgot,
     // Reuse email logic directly here without a separate file for a single field
     validate(require('zod').object({ body: require('zod').object({ email: require('zod').string().email('Valid email is required') }) })),
     authController.forgotPassword
 );
 
 router.post('/reset-password',
-    authRateLimit,
+    authLimiterForgot,
     validate(resetPasswordSchema),
     authController.resetPassword
 );
 
 router.get('/me', authenticate, authController.getCurrentUser);
 router.put('/profile', authenticate, authController.updateProfile);
+router.post('/verify-email', authController.verifyEmail);
 router.post('/logout', authenticate, authController.logout);
 router.delete('/account', authenticate, authController.deleteAccount);
 
@@ -52,5 +50,9 @@ router.post('/make-admin',
     validate(require('zod').object({ body: require('zod').object({ email: require('zod').string().email(), secretKey: require('zod').string().min(1) }) })),
     authController.makeAdmin
 );
+
+// 2FA Routes
+router.post('/setup-2fa', authenticate, authController.setup2FA);
+router.post('/verify-2fa', authenticate, authController.verify2FA);
 
 module.exports = router;

@@ -38,8 +38,19 @@ function generateToken(userId, tokenVersion = 0) {
 
 function verifyToken(token) {
   const secret = getJwtSecret();
+  const previousSecret = process.env.JWT_SECRET_PREVIOUS;
+
   if (!secret) throw new Error("JWT_SECRET is not configured");
-  return jwt.verify(token, secret);
+
+  try {
+    return jwt.verify(token, secret);
+  } catch (err) {
+    if (previousSecret && err.name === 'JsonWebTokenError') {
+      // Try fallback to previous secret if signature is invalid under new secret
+      return jwt.verify(token, previousSecret);
+    }
+    throw err;
+  }
 }
 
 /**

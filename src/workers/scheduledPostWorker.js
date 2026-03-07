@@ -101,12 +101,12 @@ const scheduledPostWorker = new Worker(
     {
         connection,
         concurrency: 5, // process up to 5 posts simultaneously
-        // Retry policy: 3 attempts with exponential backoff (2s, 4s, 8s)
+        // Retry policy: 3 attempts with exponential backoff
         defaultJobOptions: {
             attempts: 3,
             backoff: {
                 type: 'exponential',
-                delay: 2000,
+                delay: 5000,
             },
         },
     }

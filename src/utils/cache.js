@@ -42,7 +42,67 @@ const cache = {
         } catch (error) {
             logger.warn('REDIS', `Cache del error for key: ${key}`, { error: error.message });
         }
+    },
+
+    async clearUserCache(userId) {
+        try {
+            const patterns = [`*:${userId}:*`, `*${userId}*`];
+            let allKeys = [];
+            for (const p of patterns) {
+                const keys = await redisClient.keys(p);
+                allKeys = [...allKeys, ...keys];
+            }
+            if (allKeys.length > 0) {
+                await redisClient.del(allKeys);
+            }
+        } catch (error) {
+            logger.warn('REDIS', `Cache clear error for user: ${userId}`, { error: error.message });
+        }
+    },
+
+    async clearPattern(pattern) {
+        try {
+            const keys = await redisClient.keys(pattern);
+            if (keys.length > 0) {
+                await redisClient.del(keys);
+            }
+        } catch (error) {
+            logger.warn('REDIS', `Cache clear pattern error: ${pattern}`, { error: error.message });
+        }
     }
 };
 
-module.exports = { redisClient, cache };
+const cacheRoute = (ttlSeconds, keyPrefix = 'route') => {
+    return async (req, res, next) => {
+        if (redisClient.status !== 'ready' && redisClient.status !== 'connect') {
+            return next();
+        }
+
+        if (req.method !== 'GET') {
+            return next();
+        }
+
+        const userId = req.userId || 'guest';
+        const key = `${keyPrefix}:${userId}:${req.originalUrl || req.url}`;
+
+        try {
+            const cachedData = await cache.get(key);
+            if (cachedData) {
+                return res.json(cachedData);
+            }
+
+            const originalJson = res.json.bind(res);
+            res.json = (body) => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    cache.set(key, body, ttlSeconds);
+                }
+                originalJson(body);
+            };
+            next();
+        } catch (error) {
+            next();
+        }
+    };
+};
+
+module.exports = { redisClient, cache, cacheRoute };

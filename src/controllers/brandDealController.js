@@ -1,10 +1,10 @@
 const prisma = require('../lib/prisma');
-const { OpenAIApi, Configuration } = require('openai');
+const OpenAI = require('openai');
 const { logAIUsage } = require('../middleware/aiLimiter');
 
-const openai = new OpenAIApi(new Configuration({
+const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
-}));
+});
 
 // Fetch stored brand deals for the user, filtering out ones they've already interacted with
 const getBrandDeals = async (req, res) => {
@@ -86,7 +86,7 @@ const analyzeAndSaveBrandDeal = async (message, senderUsername, userId) => {
             analysis = { isBrandDeal: true, confidence: 0.95, dealCategory: "Fitness & Apparel" };
             tokensUsed = 50; // mock token count
         } else {
-            const response = await openai.createChatCompletion({
+            const response = await openai.chat.completions.create({
                 model: 'gpt-3.5-turbo',
                 messages: [
                     { role: 'system', content: 'You output only valid JSON.' },
@@ -94,8 +94,8 @@ const analyzeAndSaveBrandDeal = async (message, senderUsername, userId) => {
                 ],
                 temperature: 0.2,
             });
-            const content = response.data.choices[0].message.content.trim();
-            tokensUsed = response.data.usage?.total_tokens || 0;
+            const content = response.choices[0].message.content.trim();
+            tokensUsed = response.usage?.total_tokens || 0;
             analysis = JSON.parse(content);
         }
 
