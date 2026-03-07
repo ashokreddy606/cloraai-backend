@@ -62,7 +62,7 @@ const register = catchAsync(async (req, res, next) => {
   // Always normalise email — prevents duplicate accounts with different casing
   const email = (req.body.email || '').toLowerCase().trim();
   const { password, username, deviceFingerprint, referredByCode } = req.body;
-  const ipAddress = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+  const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
   // Validation
   if (!email || !password || password.length < 6) {
@@ -142,7 +142,7 @@ const login = async (req, res) => {
     // Always normalise email — must match normalised value stored at registration
     const email = (req.body.email || '').toLowerCase().trim();
     const { password, deviceFingerprint } = req.body;
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
     if (!email || !password) {
       return res.status(400).json({
@@ -173,8 +173,8 @@ const login = async (req, res) => {
       });
     }
 
-    // Generate token
-    const token = generateToken(user.id);
+    // Generate token with tokenVersion (Phase 1 Fix)
+    const token = generateToken(user.id, user.tokenVersion);
 
     // Update login analytics
     await prisma.user.update({
@@ -506,7 +506,7 @@ const makeAdmin = async (req, res) => {
 const googleAuth = async (req, res) => {
   try {
     const { idToken, deviceFingerprint } = req.body;
-    const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
     if (!idToken) {
       return res.status(400).json({ error: 'idToken is required' });
@@ -558,8 +558,8 @@ const googleAuth = async (req, res) => {
       });
     }
 
-    // Generate our JWT
-    const token = generateToken(user.id);
+    // Generate our JWT with tokenVersion
+    const token = generateToken(user.id, user.tokenVersion);
 
     res.status(200).json({
       success: true,
