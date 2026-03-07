@@ -18,6 +18,7 @@ const validate = (schema) => async (req, res, next) => {
             return res.status(400).json({
                 success: false,
                 error: 'Validation failed',
+                message: issues.map(err => err.message).join(', '),
                 details: issues.map(err => ({
                     field: err.path ? err.path.join('.') : 'unknown',
                     message: err.message,

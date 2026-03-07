@@ -43,8 +43,9 @@ const errorHandler = (err, req, res, next) => {
 
     // Railway-safe structurued response
     res.status(statusCode).json({
-        error: isProduction && !err.isOperational ? 'Internal server error' : displayMessage,
-        code: isProduction && !err.isOperational ? 'SERVER_ERROR' : errorName,
+        error: displayMessage,
+        message: displayMessage,
+        code: errorName,
     });
 };
 

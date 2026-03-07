@@ -2,8 +2,7 @@ const logger = require('./logger');
 
 const CRITICAL_ENV_VARS = [
     'DATABASE_URL',
-    'JWT_SECRET',
-    'REDIS_URL'
+    'JWT_SECRET'
 ];
 
 const OPTIONAL_FEATURE_VARS = [
@@ -18,7 +17,8 @@ const OPTIONAL_FEATURE_VARS = [
     'INSTAGRAM_APP_SECRET',
     'ADMIN_SECRET_KEY',
     'GOOGLE_CLIENT_ID',
-    'TOKEN_ENCRYPTION_SECRET'
+    'TOKEN_ENCRYPTION_SECRET',
+    'REDIS_URL'
 ];
 
 /**
