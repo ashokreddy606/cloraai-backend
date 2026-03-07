@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
-const { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription } = require('../controllers/subscriptionController');
+const { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription, renderCheckout } = require('../controllers/subscriptionController');
 
 // Create a Razorpay subscription order → returns subscription_id to RN SDK
 router.post('/create-order', authenticate, createOrder);

@@ -58,7 +58,7 @@ const createOrder = async (req, res) => {
       select: {
         id: true, email: true, username: true,
         plan: true, subscriptionStatus: true, planEndDate: true,
-        activeRazorpaySubscriptionId: true,
+        activeRazorpaySubscriptionId: true, updatedAt: true
       },
     });
 
