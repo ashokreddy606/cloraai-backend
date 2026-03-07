@@ -298,6 +298,7 @@ app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/calendar', calendarRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/youtube', youtubeRoutes);
+app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/upload', uploadRoutes);
 // Webhooks must remain at non-versioned paths because external services (Razorpay, Instagram)

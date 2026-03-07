@@ -14,7 +14,7 @@ const getOAuth2Client = () => {
     return new google.auth.OAuth2(
         process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
         process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
-        process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/api/youtube/callback`
+        process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/api/v1/youtube/callback`
     );
 };
 
