@@ -81,6 +81,10 @@ model User {
   youtubeChannelId    String?
   youtubeAccessToken  String?
   youtubeRefreshToken String?
+  youtubeSubscriberCount Int?     @default(0)
+  youtubeViewCount       Int?     @default(0)
+  youtubeVideoCount      Int?     @default(0)
+  youtubeLastSyncedAt    DateTime?
 
   // ── Relations ───────────────────────────────────────────────────────────
   instagramAccounts     InstagramAccount[]
@@ -98,6 +102,7 @@ model User {
   youtubeComments       YoutubeComment[]
   youtubeRules          YoutubeAutomationRule[]
   youtubeLeads          YoutubeLead[]
+  contentCalendars      ContentCalendar[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -232,14 +237,16 @@ model ScheduledPost {
   userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  mediaUrl String
-  caption  String
-  hashtags String?
-
-  scheduledTime DateTime
-  status        String    @default("scheduled") // scheduled, published, failed
-  publishedAt   DateTime?
-  retryCount    Int       @default(0) // tracks failed attempts
+  platform    String    @default("instagram")
+  mediaUrl    String
+  title       String?
+  caption     String?
+  scheduledAt DateTime
+  status      String    @default("scheduled") // scheduled, published, failed
+  publishedAt DateTime?
+  videoType   String?   // reels, shorts, etc.
+  calendarDay Int?
+  retryCount  Int       @default(0) // tracks failed attempts
 
   instagramPostId String?
   errorMessage    String?
@@ -249,7 +256,18 @@ model ScheduledPost {
 
   @@index([userId])
   @@index([status])
-  @@index([scheduledTime])
+  @@index([scheduledAt])
+}
+
+model ContentCalendar {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // Analytics Snapshots

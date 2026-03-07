@@ -1,7 +1,13 @@
-const cron = require('node-cron');
+const os = require('os');
 const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
+const { encryptToken, decryptToken } = require('../utils/cryptoUtils');
+const { instagramQueue, youtubeQueue } = require('../utils/queue');
+const { createNotification } = require('../controllers/notificationController');
+const axios = require('axios');
+
 const WORKER_ID = `${os.hostname()}-${process.pid}`;
-const LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — if lock older than this, it's stale
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PART 1: DB-Based Leader Lock for Multi-Instance Safety
@@ -44,11 +50,10 @@ const releaseLock = async (lockName) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HELPER: Retry Logic Helper
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const handleFailure = async (postId, currentRetryCount, errorMessage, oldScheduledTime) => {
+const handleFailure = async (postId, currentRetryCount, errorMessage, oldScheduledAt) => {
     const post = await prisma.scheduledPost.findUnique({ where: { id: postId }, select: { userId: true } });
     if (currentRetryCount >= 3) {
         logger.warn('CRON:SCHEDULER', `Post ${postId} reached max retries. Marking as failed.`);
-        logger.increment('schedulerFailed');
         await prisma.scheduledPost.update({
             where: { id: postId },
             data: { status: 'failed', errorMessage: `Max retries (3) reached. Last error: ${errorMessage}` }
@@ -61,7 +66,7 @@ const handleFailure = async (postId, currentRetryCount, errorMessage, oldSchedul
             }).catch(e => logger.warn('CRON:NOTIFY', e.message));
         }
     } else {
-        const nextTry = new Date(oldScheduledTime || Date.now());
+        const nextTry = new Date(oldScheduledAt || Date.now());
         nextTry.setMinutes(nextTry.getMinutes() + 15);
         logger.info('CRON:SCHEDULER', `Post ${postId} failed. Retry ${currentRetryCount + 1}/3 at ${nextTry.toISOString()}`);
         await prisma.scheduledPost.update({
@@ -69,7 +74,7 @@ const handleFailure = async (postId, currentRetryCount, errorMessage, oldSchedul
             data: {
                 status: 'scheduled',
                 retryCount: currentRetryCount + 1,
-                scheduledTime: nextTry,
+                scheduledAt: nextTry,
                 errorMessage: `Attempt ${currentRetryCount + 1} failed: ${errorMessage}`
             }
         });
@@ -190,8 +195,7 @@ const schedulerJob = cron.schedule('*/15 * * * *', async () => {
     try {
         const now = new Date();
         const pendingPosts = await prisma.scheduledPost.findMany({
-            where: { status: 'scheduled', scheduledTime: { lte: now } },
-            include: { user: { include: { instagramAccounts: true } } }
+            where: { status: 'scheduled', scheduledAt: { lte: now } },
         });
 
         if (pendingPosts.length === 0) {
@@ -201,67 +205,34 @@ const schedulerJob = cron.schedule('*/15 * * * *', async () => {
 
         logger.info('CRON:SCHEDULER', `Found ${pendingPosts.length} post(s) ready to publish.`);
 
+        const igJobs = [];
+        const ytJobs = [];
+
         for (const post of pendingPosts) {
-            // Atomic row lock — prevents any concurrent worker from double-publishing
+            // Atomic row lock
             const updated = await prisma.scheduledPost.updateMany({
                 where: { id: post.id, status: 'scheduled' },
                 data: { status: 'publishing' }
             });
-            if (updated.count === 0) continue; // Already claimed
+            if (updated.count === 0) continue;
 
-            const igAccount = post.user.instagramAccounts[0];
-            if (!igAccount || !igAccount.accessToken || !igAccount.isConnected) {
-                await handleFailure(post.id, post.retryCount, 'Instagram account not connected.', post.scheduledTime);
-                continue;
-            }
-
-            const decryptedToken = decryptToken(igAccount.accessToken);
-
-            try {
-                const containerRes = await axios.post(
-                    `https://graph.facebook.com/v18.0/${igAccount.instagramUserId}/media`,
-                    { image_url: post.mediaUrl, caption: `${post.caption}\n\n${post.hashtags || ''}`, access_token: decryptedToken },
-                    { timeout: 15000 }
-                );
-
-                const publishRes = await axios.post(
-                    `https://graph.facebook.com/v18.0/${igAccount.instagramUserId}/media_publish`,
-                    { creation_id: containerRes.data.id, access_token: decryptedToken },
-                    { timeout: 15000 }
-                );
-
-                await prisma.scheduledPost.update({
-                    where: { id: post.id },
-                    data: {
-                        status: 'published',
-                        publishedAt: new Date(),
-                        instagramPostId: publishRes.data.id,
-                        publishedUrl: `https://instagram.com/p/${publishRes.data.id}`,
-                        errorMessage: null
-                    }
-                });
-
-                await createNotification(igAccount.userId, {
-                    type: 'success', icon: 'checkmark-circle', color: '#10B981',
-                    title: 'Post Published!', body: `Your scheduled post was successfully published.`
-                }).catch(e => logger.warn('CRON:NOTIFY', e.message));
-
-                logger.info('CRON:SCHEDULER', `Published post ${post.id}. IG ID: ${publishRes.data.id}`);
-                logger.increment('schedulerPublished');
-
-            } catch (error) {
-                const metaErr = error.response?.data?.error;
-                if (metaErr?.code === 190) {
-                    logger.warn('CRON:SCHEDULER', `Token expired for user ${igAccount.userId}. Disconnecting.`);
-                    await prisma.instagramAccount.update({ where: { id: igAccount.id }, data: { isConnected: false } });
-                    await handleFailure(post.id, post.retryCount, 'Instagram token expired. Please reconnect.', post.scheduledTime);
-                } else {
-                    const errorMsg = metaErr?.message || error.message || 'Unknown Graph API Error';
-                    logger.error('CRON:SCHEDULER', `Failed to publish post ${post.id}`, { error: errorMsg });
-                    await handleFailure(post.id, post.retryCount, errorMsg, post.scheduledTime);
-                }
+            if (post.platform === 'instagram') {
+                igJobs.push({ name: 'publish', data: { postId: post.id } });
+            } else if (post.platform === 'youtube') {
+                ytJobs.push({ name: 'upload', data: { postId: post.id } });
             }
         }
+
+        // Bulk Queue Optimization (Step 6)
+        if (igJobs.length > 0) {
+            await instagramQueue.addBulk(igJobs);
+            logger.info('CRON:SCHEDULER', `Enqueued ${igJobs.length} Instagram jobs.`);
+        }
+        if (ytJobs.length > 0) {
+            await youtubeQueue.addBulk(ytJobs);
+            logger.info('CRON:SCHEDULER', `Enqueued ${ytJobs.length} YouTube jobs.`);
+        }
+
     } catch (error) {
         logger.error('CRON:SCHEDULER', 'Worker-level failure', { error: error.message });
     } finally {

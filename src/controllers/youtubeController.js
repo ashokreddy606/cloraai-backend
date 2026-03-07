@@ -1,6 +1,5 @@
-const prisma = require('../lib/prisma');
-const { google } = require('googleapis');
 const logger = require('../utils/logger');
+const { encrypt, decrypt } = require('../utils/cryptoUtils');
 
 // Helper to get a new OAuth2Client instance
 const getOAuth2Client = () => {
@@ -54,10 +53,10 @@ exports.handleCallback = async (req, res) => {
         const { tokens } = await client.getToken(code);
         client.setCredentials(tokens);
 
-        // Fetch channel details to store channel ID
+        // Fetch channel details to store channel ID and metrics (Fix #4)
         const youtube = google.youtube({ version: 'v3', auth: client });
         const channelRes = await youtube.channels.list({
-            part: 'id,snippet',
+            part: 'id,snippet,statistics',
             mine: true
         });
 
@@ -65,17 +64,24 @@ exports.handleCallback = async (req, res) => {
             return res.status(404).json({ error: 'No YouTube channel found for this account' });
         }
 
-        const channelId = channelRes.data.items[0].id;
+        const channel = channelRes.data.items[0];
+        const channelId = channel.id;
+        const stats = channel.statistics;
 
-        // Save configuration directly to user model
+        // Save configuration directly to user model (Fix #1 & #4)
         await prisma.user.update({
             where: { id: userId },
             data: {
                 youtubeChannelId: channelId,
-                youtubeAccessToken: tokens.access_token,
+                youtubeAccessToken: encrypt(tokens.access_token),
                 // Only update refresh token if a new one is provided.
-                // Google might not send a refresh token on subsequent logins unless prompt=consent is used.
-                ...(tokens.refresh_token && { youtubeRefreshToken: tokens.refresh_token })
+                ...(tokens.refresh_token && { youtubeRefreshToken: encrypt(tokens.refresh_token) }),
+
+                // Store metrics (Fix #4)
+                youtubeSubscriberCount: parseInt(stats.subscriberCount || 0),
+                youtubeViewCount: parseInt(stats.viewCount || 0),
+                youtubeVideoCount: parseInt(stats.videoCount || 0),
+                youtubeLastSyncedAt: new Date()
             }
         });
 

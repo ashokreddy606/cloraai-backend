@@ -44,6 +44,7 @@ const calendarRoutes = require('./routes/calendar');
 const notificationRoutes = require('./routes/notification');
 const webhookRoutes = require('./routes/webhook');
 const youtubeRoutes = require('./routes/youtube');
+const postRoutes = require('./routes/posts');
 
 // (Now using shared instance from lib/prisma.js)
 
@@ -227,6 +228,7 @@ app.use('/api/calendar', calendarRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/youtube', youtubeRoutes);
+app.use('/api/posts', postRoutes);
 
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {

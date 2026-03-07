@@ -9,12 +9,16 @@ const connection = redisClient;
 const QUEUES = {
     AI_TASKS: 'ai-tasks',
     WEBHOOKS: 'webhooks',
-    SUBSCRIPTIONS: 'subscriptions'
+    SUBSCRIPTIONS: 'subscriptions',
+    INSTAGRAM: 'instagram-publish',
+    YOUTUBE: 'youtube-upload'
 };
 
 const aiQueue = new Queue(QUEUES.AI_TASKS, { connection });
 const webhookQueue = new Queue(QUEUES.WEBHOOKS, { connection });
 const subscriptionQueue = new Queue(QUEUES.SUBSCRIPTIONS, { connection });
+const instagramQueue = new Queue(QUEUES.INSTAGRAM, { connection });
+const youtubeQueue = new Queue(QUEUES.YOUTUBE, { connection });
 
 // Helper function to add jobs
 const enqueueJob = async (queue, jobName, data, options = {}) => {
@@ -42,5 +46,7 @@ module.exports = {
     aiQueue,
     webhookQueue,
     subscriptionQueue,
+    instagramQueue,
+    youtubeQueue,
     enqueueJob
 };

@@ -1,55 +1,109 @@
 const crypto = require('crypto');
 
-// Uses a SHA-256 hash of the ENCRYPTION_KEY to ensure it's always exactly 32 bytes for AES-256
-const getEncryptionKey = () => {
-    const rawKey = process.env.ENCRYPTION_KEY || 'clora_ai_default_secret_key_change_in_prod';
-    return crypto.createHash('sha256').update(rawKey).digest('base64').substring(0, 32);
-};
+const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 12; // GCM recommended IV length
+const AUTH_TAG_LENGTH = 16;
+// Preferred secret from audit requirement
+const SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY;
 
-const IV_LENGTH = 16;
-
-const encryptToken = (text) => {
+/**
+ * Encrypts cleartext using AES-256-GCM.
+ * Returns a string in the format: iv:authTag:encryptedContent
+ * @param {string} text 
+ * @returns {string} 
+ */
+function encrypt(text) {
     if (!text) return text;
-    try {
-        const iv = crypto.randomBytes(IV_LENGTH);
-        const key = getEncryptionKey();
-        const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key), iv);
-
-        let encrypted = cipher.update(text);
-        encrypted = Buffer.concat([encrypted, cipher.final()]);
-
-        return iv.toString('hex') + ':' + encrypted.toString('hex');
-    } catch (error) {
-        console.error('Encryption failed:', error.message);
+    if (!SECRET) {
+        console.error('[CRYPTO] TOKEN_ENCRYPTION_SECRET is not defined');
         return text;
     }
-};
 
-const decryptToken = (text) => {
-    if (!text) return text;
     try {
-        const textParts = text.split(':');
-        // If it isn't split by colon, it probably isn't encrypted (fallback for old tokens)
-        if (textParts.length !== 2) return text;
+        const iv = crypto.randomBytes(IV_LENGTH);
+        // Ensure key is 32 bytes for AES-256
+        const key = crypto.createHash('sha256').update(SECRET).digest();
+        const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
-        const iv = Buffer.from(textParts.shift(), 'hex');
-        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-        const key = getEncryptionKey();
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
 
-        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(key), iv);
+        const authTag = cipher.getAuthTag().toString('hex');
 
+        return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+    } catch (error) {
+        console.error('[CRYPTO] Encryption failed:', error.message);
+        return text;
+    }
+}
+
+/**
+ * Decrypts a string in the format: iv:authTag:encryptedContent
+ * @param {string} encryptedText 
+ * @returns {string}
+ */
+function decrypt(encryptedText) {
+    if (!encryptedText) return encryptedText;
+    if (!SECRET) {
+        console.error('[CRYPTO] TOKEN_ENCRYPTION_SECRET is not defined');
+        return encryptedText;
+    }
+
+    try {
+        const parts = encryptedText.split(':');
+
+        // If it doesn't have 3 parts (iv, tag, content), it might be old CBC or plain text
+        if (parts.length !== 3) {
+            // Check for old CBC format (iv:content)
+            if (parts.length === 2) {
+                return decryptCBC(encryptedText);
+            }
+            return encryptedText;
+        }
+
+        const [ivHex, authTagHex, encryptedContent] = parts;
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(authTagHex, 'hex');
+        const key = crypto.createHash('sha256').update(SECRET).digest();
+
+        const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+        decipher.setAuthTag(authTag);
+
+        let decrypted = decipher.update(encryptedContent, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+
+        return decrypted;
+    } catch (error) {
+        console.error('[CRYPTO] Decryption failed:', error.message);
+        return encryptedText;
+    }
+}
+
+/**
+ * Fallback for legacy AES-256-CBC tokens
+ */
+function decryptCBC(text) {
+    try {
+        const parts = text.split(':');
+        if (parts.length !== 2) return text;
+
+        const iv = Buffer.from(parts[0], 'hex');
+        const encryptedText = Buffer.from(parts[1], 'hex');
+        const key = crypto.createHash('sha256').update(SECRET).digest();
+
+        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
         let decrypted = decipher.update(encryptedText);
         decrypted = Buffer.concat([decrypted, decipher.final()]);
 
         return decrypted.toString();
-    } catch (error) {
-        // Fallback to returning original text if decryption fails
-        // This helps manage existing plain-text tokens seamlessly
+    } catch (err) {
         return text;
     }
-};
+}
 
 module.exports = {
-    encryptToken,
-    decryptToken
+    encrypt,
+    decrypt,
+    encryptToken: encrypt,  // Alias for backward compatibility
+    decryptToken: decrypt   // Alias for backward compatibility
 };

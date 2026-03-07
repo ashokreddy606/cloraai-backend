@@ -1,7 +1,5 @@
-const prisma = require('../lib/prisma');
-const { google } = require('googleapis');
-const logger = require('../utils/logger');
 const cron = require('node-cron');
+const { decrypt } = require('../utils/cryptoUtils');
 
 const getOAuth2Client = () => {
     return new google.auth.OAuth2(
@@ -43,11 +41,11 @@ cron.schedule('*/2 * * * *', async () => {
 
 async function processUser(user) {
     try {
-        // Set credentials for this user
+        // Set credentials for this user - Decrypt tokens (Fix #1)
         const client = getOAuth2Client();
         client.setCredentials({
-            access_token: user.youtubeAccessToken,
-            refresh_token: user.youtubeRefreshToken
+            access_token: decrypt(user.youtubeAccessToken),
+            refresh_token: decrypt(user.youtubeRefreshToken)
         });
 
         const youtube = google.youtube({ version: 'v3', auth: client });

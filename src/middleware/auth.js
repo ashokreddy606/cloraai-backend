@@ -32,7 +32,6 @@ const authenticate = async (req, res, next) => {
     }
 
     const token = authHeader.split(" ")[1];
-
     let decoded;
     try {
       decoded = verifyToken(token);
@@ -41,9 +40,30 @@ const authenticate = async (req, res, next) => {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
 
-    req.user = decoded;
-    req.userId = decoded.userId;
+    // ── Fix #2: Validate tokenVersion and user role ──
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, role: true, tokenVersion: true }
+    });
 
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    // Check for suspended or banned users
+    if (user.role === 'SUSPENDED' || user.role === 'BANNED') {
+      console.warn(`[AUTH] 403 - Blocked access for ${user.role} user:`, user.id);
+      return res.status(403).json({ error: `Your account has been ${user.role.toLowerCase()}. Please contact support.` });
+    }
+
+    // Check token version (enables forced logout/password change invalidation)
+    if (decoded.tokenVersion !== undefined && user.tokenVersion !== decoded.tokenVersion) {
+      console.warn("[AUTH] 401 - Token version mismatch. Forced logout required.");
+      return res.status(401).json({ error: "Session expired. Please login again." });
+    }
+
+    req.user = user;
+    req.userId = user.id;
     next();
   } catch (err) {
     console.error("Authentication middleware error:", err);
@@ -93,10 +113,26 @@ const limiter = expressRateLimit({
   },
 });
 
-// Keep the old factory signature as a thin wrapper so existing server.js import
-// (rateLimit(200, 15 * 60 * 1000)) continues to work without changes.
-// The parameters are ignored — the global limiter is returned directly.
-const rateLimit = () => limiter;
+/**
+ * Fix #3: Rate Limiter Factory
+ * Correctly accepts maxRequests and windowMinutes.
+ */
+const rateLimit = (maxRequests = 200, windowMinutes = 15) => {
+  return expressRateLimit({
+    windowMs: windowMinutes * 60 * 1000,
+    max: maxRequests,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: 'Too many requests',
+      message: `Rate limit exceeded. Please wait ${windowMinutes} minutes.`,
+    },
+    handler: (req, res, next, options) => {
+      logger.warn('RATE_LIMIT', `Rate limit hit`, { ip: req.ip, path: req.path, limit: maxRequests });
+      res.status(429).json(options.message);
+    },
+  });
+};
 
 module.exports = {
   authenticate,
