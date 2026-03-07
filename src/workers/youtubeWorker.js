@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { decrypt } = require('../utils/cryptoUtils');
+const { decrypt, encrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
@@ -56,19 +56,41 @@ cron.schedule('*/2 * * * *', async () => {
     }
 });
 
-async function processUser(user) {
+// Helper to get an authenticated YouTube client for a user, with token refresh
+async function getYoutubeClient(user) {
+    const client = getOAuth2Client();
+    const credentials = {
+        access_token: decrypt(user.youtubeAccessToken)
+    };
+    if (user.youtubeRefreshToken) {
+        credentials.refresh_token = decrypt(user.youtubeRefreshToken);
+    }
+    client.setCredentials(credentials);
+
     try {
-        // Set credentials for this user - Decrypt tokens (Fix #1)
-        const client = getOAuth2Client();
-        client.setCredentials({
-            access_token: decrypt(user.youtubeAccessToken),
-            refresh_token: decrypt(user.youtubeRefreshToken)
-        });
+        // Automatically refresh if expired
+        const { token } = await client.getAccessToken();
+        if (token && token !== credentials.access_token) {
+            logger.info('YOUTUBE_WORKER', 'Refreshing access token', { userId: user.id });
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { youtubeAccessToken: encrypt(token) }
+            });
+        }
+    } catch (refreshError) {
+        logger.error('YOUTUBE_WORKER', 'Token refresh failed', { userId: user.id, error: refreshError.message });
+        throw refreshError;
+    }
 
-        const youtube = google.youtube({ version: 'v3', auth: client });
+    return google.youtube({ version: 'v3', auth: client });
+}
 
-        // 2. Fetch recent comment threads for the user's channel
-        // We fetch a small number (e.g., 20) per cycle to handle real-time without overwhelming rate limits
+async function processUser(user) {
+    let youtube;
+    try {
+        youtube = await getYoutubeClient(user);
+        logger.debug('YOUTUBE_WORKER', `Processing user ${user.id}`, { channelId: user.youtubeChannelId });
+
         const response = await youtube.commentThreads.list({
             part: 'snippet,replies',
             allThreadsRelatedToChannelId: user.youtubeChannelId,
@@ -77,57 +99,61 @@ async function processUser(user) {
         });
 
         const items = response.data.items || [];
+        if (items.length === 0) {
+            logger.debug('YOUTUBE_WORKER', `No new comments for user ${user.id}`);
+            return;
+        }
 
         for (const item of items) {
-            const topLevelComment = item.snippet.topLevelComment.snippet;
+            const topLevelComment = item.snippet?.topLevelComment?.snippet;
+            if (!topLevelComment) continue;
+
             const commentId = item.id;
             const videoId = topLevelComment.videoId;
-            const textDisplay = topLevelComment.textDisplay.toLowerCase();
+            const textDisplay = (topLevelComment.textDisplay || '').toLowerCase();
             const authorDisplayName = topLevelComment.authorDisplayName;
 
             // Prevent replying to own comments
-            if (topLevelComment.authorChannelId.value === user.youtubeChannelId) continue;
+            if (topLevelComment.authorChannelId?.value === user.youtubeChannelId) continue;
 
             // 3. Deduplicate: check if we already processed this comment
             const existingRecord = await prisma.youtubeComment.findUnique({
                 where: { commentId }
             });
 
-            if (existingRecord) continue; // Already known
-
-            // Skip rule matching if it's already a saved comment to avoid double replies
+            if (existingRecord) continue;
 
             let matchedRule = null;
             for (const rule of user.youtubeRules) {
-                if (textDisplay.includes(rule.keyword)) {
+                if (textDisplay.includes(rule.keyword.toLowerCase())) {
                     matchedRule = rule;
-                    break; // First rule match wins
+                    break;
                 }
             }
 
             const shouldReply = matchedRule !== null;
 
-            // Save comment immediately
+            // Save comment
             await prisma.youtubeComment.create({
                 data: {
                     userId: user.id,
                     videoId,
                     commentId,
-                    username: authorDisplayName,
-                    commentText: topLevelComment.textDisplay,
+                    username: authorDisplayName || 'Unknown',
+                    commentText: topLevelComment.textDisplay || '',
                     replied: shouldReply
                 }
             });
 
-            if (!shouldReply) continue;
+            if (!shouldReply) {
+                logger.debug('YOUTUBE_WORKER', `Comment ${commentId} did not match any rules`);
+                continue;
+            }
 
-            // 4. Rate Limiting Check (limit per hour per rule)
+            logger.info('YOUTUBE_WORKER', `Matched rule "${matchedRule.keyword}" for comment ${commentId}`);
+
+            // 4. Rate Limiting Check
             const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-
-            // How many replies were made by this user in the last hour?
-            // In a more complex setup, you'd match it explicitly by rule ID or track replies precisely
-            // Here we just limit the user's total active replies to avoid spam flags.
-            // Alternatively, store `ruleId` in `YoutubeComment` or `YoutubeAutomationEvent`
             const recentRepliesCount = await prisma.youtubeComment.count({
                 where: {
                     userId: user.id,
@@ -137,14 +163,12 @@ async function processUser(user) {
             });
 
             if (recentRepliesCount >= matchedRule.limitPerHour) {
-                logger.info('YOUTUBE_WORKER', `Rate limit exceeded for user ${user.id} (Rule: ${matchedRule.keyword})`);
-                continue; // Skip reply this round
+                logger.warn('YOUTUBE_WORKER', `Rate limit exceeded for user ${user.id} (Rule: ${matchedRule.keyword})`);
+                continue;
             }
 
             // 5. Send Auto-Reply
             if (matchedRule.replyDelay > 0) {
-                // Simple memory setTimeout for small delays (e.g. 10s-60s). 
-                // For larger delays (hours), you'd need a robust job queue like BullMQ.
                 setTimeout(() => {
                     sendReply(youtube, commentId, matchedRule.replyMessage, user.id);
                 }, matchedRule.replyDelay * 1000);
@@ -153,7 +177,7 @@ async function processUser(user) {
             }
         }
     } catch (error) {
-        logger.error('YOUTUBE_WORKER', `Failed to process user ${user.id}`, error);
+        logger.error('YOUTUBE_WORKER', `Failed to process user ${user.id}`, { error: error.message });
     }
 }
 
@@ -170,11 +194,14 @@ async function sendReply(youtubeClient, parentId, textOriginal, userId) {
         });
         logger.info('YOUTUBE_WORKER', `Successfully replied to comment ${parentId} for user ${userId}`);
     } catch (error) {
-        logger.error('YOUTUBE_WORKER', `Failed to send reply to comment ${parentId}`, error);
-        // You might want to update `replied: false` in database here if it fails
+        logger.error('YOUTUBE_WORKER', `Failed to send reply to comment ${parentId}`, {
+            userId,
+            error: error.message,
+            details: error.response?.data
+        });
     }
 }
 
 module.exports = {
-    processUser // Exported for manual testing if needed
+    processUser
 };

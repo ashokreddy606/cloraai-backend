@@ -24,6 +24,7 @@ const SCOPES = [
     'https://www.googleapis.com/auth/youtube.readonly',
     'https://www.googleapis.com/auth/youtube.upload',
     'https://www.googleapis.com/auth/yt-analytics.readonly',
+    'https://www.googleapis.com/auth/youtube.force-ssl',
 ];
 
 // Helper: get authenticated YouTube client for the current user
@@ -264,9 +265,18 @@ exports.updateRule = async (req, res) => {
 exports.deleteRule = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.youtubeAutomationRule.deleteMany({ where: { id, userId: req.userId } });
+        if (!id || id.length !== 24) {
+            return res.status(400).json({ error: 'Invalid rule ID format' });
+        }
+        const result = await prisma.youtubeAutomationRule.deleteMany({
+            where: { id, userId: req.userId }
+        });
+        if (result.count === 0) {
+            return res.status(404).json({ error: 'Rule not found or unauthorized' });
+        }
         res.json({ success: true });
     } catch (error) {
+        logger.error('YOUTUBE', 'deleteRule error', error);
         res.status(500).json({ error: 'Error deleting rule' });
     }
 };
@@ -621,33 +631,56 @@ exports.deleteVideo = async (req, res) => {
         const youtube = await getYoutubeClientForUser(req.userId);
         const { videoId } = req.params;
 
-        // FIX: Verify ownership before deleting
-        // We verify ownership by fetching the video from the user's channel uploads playlist
-        const channelRes = await youtube.channels.list({
-            part: 'contentDetails',
-            mine: true,
-        });
-
-        const uploadsPlaylistId = channelRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-        if (!uploadsPlaylistId) {
-            return res.status(403).json({ error: 'Cannot verify video ownership: No uploads playlist found' });
+        if (!videoId) {
+            return res.status(400).json({ error: 'Video ID is required' });
         }
 
-        // Check if the video belongs to this playlist (channel)
-        const playlistItemsRes = await youtube.playlistItems.list({
-            part: 'id,contentDetails',
-            playlistId: uploadsPlaylistId,
-            videoId: videoId
+        // 1. Verify ownership more robustly
+        // Fetch the video and check if it belongs to the authenticated user's channel
+        const videoRes = await youtube.videos.list({
+            part: 'snippet',
+            id: videoId
         });
 
-        if (!playlistItemsRes.data.items || playlistItemsRes.data.items.length === 0) {
+        if (!videoRes.data.items || videoRes.data.items.length === 0) {
+            return res.status(404).json({ error: 'Video not found on YouTube' });
+        }
+
+        const videoChannelId = videoRes.data.items[0].snippet.channelId;
+
+        // Fetch user's own channel ID
+        const channelRes = await youtube.channels.list({
+            part: 'id',
+            mine: true
+        });
+
+        const myChannelId = channelRes.data.items?.[0]?.id;
+
+        if (!myChannelId || videoChannelId !== myChannelId) {
+            logger.warn('YOUTUBE', 'Unauthorized delete attempt', { userId: req.userId, videoId, videoChannelId, myChannelId });
             return res.status(403).json({ error: 'Unauthorized: You do not own this video' });
         }
 
+        // 2. Perform deletion
         await youtube.videos.delete({ id: videoId });
+
+        logger.info('YOUTUBE', 'Video deleted successfully', { userId: req.userId, videoId });
         res.json({ success: true, message: 'Video deleted' });
     } catch (error) {
-        logger.error('YOUTUBE', 'deleteVideo', error);
-        res.status(500).json({ error: 'Error deleting video', message: error.message });
+        logger.error('YOUTUBE', 'deleteVideo error', {
+            userId: req.userId,
+            videoId: req.params.videoId,
+            error: error.message,
+            stack: error.stack,
+            details: error.response?.data
+        });
+
+        const status = error.response?.status || 500;
+        const message = error.response?.data?.error?.message || error.message || 'Error deleting video';
+
+        res.status(status).json({
+            error: 'Error deleting video',
+            message: message
+        });
     }
 };
