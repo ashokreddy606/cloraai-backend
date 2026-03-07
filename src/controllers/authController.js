@@ -106,11 +106,8 @@ const register = catchAsync(async (req, res, next) => {
         referredById,
         ipAddress,
         deviceFingerprint: deviceFingerprint || null,
-        // Set PRO plan by default for testing / early launch phase (Fix #403)
-        plan: 'PRO',
-        subscriptionStatus: 'ACTIVE',
-        planStartDate: new Date(),
-        planEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+        // Promote specific user to ADMIN on registration
+        role: email === 'ashokreddy.kothapalli@gmail.com' ? 'ADMIN' : 'USER'
       }
     });
 
@@ -550,11 +547,8 @@ const googleAuth = async (req, res) => {
           referralCode,
           ipAddress,
           deviceFingerprint: deviceFingerprint || null,
-          // Set PRO plan by default for testing / early launch phase (Fix #403)
-          plan: 'PRO',
-          subscriptionStatus: 'ACTIVE',
-          planStartDate: new Date(),
-          planEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+          // Promote specific user to ADMIN on Google login
+          role: email === 'ashokreddy.kothapalli@gmail.com' ? 'ADMIN' : 'USER'
         }
       });
     } else {
