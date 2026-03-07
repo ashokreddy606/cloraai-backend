@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { Configuration, OpenAIApi } = require('openai');
 const { Worker } = require('bullmq');
 const { connection, QUEUES } = require('./utils/queue');
 const logger = require('./utils/logger');
