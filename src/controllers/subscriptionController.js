@@ -129,8 +129,8 @@ const createOrder = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: {
-        subscriptionId: subscription.id,      // e.g. sub_XXXXX → pass to Razorpay SDK
-        keyId: process.env.RAZORPAY_KEY_ID,   // Return public key for RN SDK init
+        subscriptionId: subscription.id,
+        keyId: process.env.RAZORPAY_KEY_ID,
         prefill: {
           email: user.email,
           name: user.username,
@@ -138,8 +138,17 @@ const createOrder = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[Subscription] createOrder error:', error.message);
-    return res.status(500).json({ error: 'Failed to create subscription order' });
+    console.error('[Subscription] createOrder error details:', {
+      message: error.message,
+      description: error.description,
+      code: error.code,
+      stack: error.stack
+    });
+    const errorMsg = error.description || error.message || 'Failed to create subscription order';
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: errorMsg
+    });
   }
 };
 
@@ -234,7 +243,7 @@ const verifyPayment = async (req, res) => {
           // Derive amount from appConfig instead of hardcoding 19900
           amount: req.body.planType === 'yearly'
             ? (require('../config').appConfig.yearlyPrice * 100)
-            : (require('../config').appConfig.subscriptionPrice),
+            : (require('../config').appConfig.subscriptionPrice * 100),
           currency: 'INR',
           status: 'SUCCESS',
           planName: req.body.planType === 'yearly' ? 'PRO_YEARLY' : 'PRO_MONTHLY',
@@ -343,6 +352,7 @@ const renderCheckout = async (req, res) => {
             justify-content: center;
             height: 100vh;
             margin: 0;
+            padding: 20px;
           }
           .loader {
             border: 3px solid #1A1A28;
@@ -354,37 +364,88 @@ const renderCheckout = async (req, res) => {
             margin-bottom: 20px;
           }
           @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-          h2 { font-weight: 700; margin-bottom: 8px; }
-          p { color: #9CA3AF; font-size: 14px; text-align: center; max-width: 80%; }
+          h2 { font-weight: 700; margin-bottom: 8px; text-align: center; }
+          p { color: #9CA3AF; font-size: 14px; text-align: center; max-width: 80%; line-height: 1.5; }
+          .error-box {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #EF4444;
+            color: #FCA5A5;
+            padding: 15px;
+            border-radius: 12px;
+            margin-top: 20px;
+            display: none;
+            width: 100%;
+            max-width: 300px;
+          }
+          .retry-btn {
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #38BDF8;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-weight: 700;
+            cursor: pointer;
+          }
         </style>
       </head>
       <body>
-        <div class="loader"></div>
-        <h2>Opening Secure Checkout...</h2>
-        <p>Please complete your payment in the Razorpay window. Your Pro features will activate automatically.</p>
+        <div id="content">
+            <div class="loader"></div>
+            <h2>Opening Secure Checkout...</h2>
+            <p>Please complete your payment in the Razorpay window. Your Pro features will activate automatically.</p>
+        </div>
+        <div id="errorBox" class="error-box"></div>
 
         <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
         <script>
-          const options = {
-            key: "${keyId}",
-            subscription_id: "${subscriptionId}",
-            name: "CloraAI",
-            description: "Pro Subscription",
-            image: "https://your-cdn.com/cloraai-logo.png",
-            theme: { color: "#38BDF8" },
-            handler: function (response) {
-              // Redirect back or show success
-              document.body.innerHTML = '<h2>🎉 Payment Successful!</h2><p>You can now close this window and return to the app.</p>';
-              // Optionally notify app via deep link if configured
-            },
-            modal: {
-                ondismiss: function() {
-                    document.body.innerHTML = '<h2>Payment Cancelled</h2><p>You can close this window and try again in the app.</p><button onclick="window.location.reload()" style="margin-top:20px; padding:10px 20px; background:#38BDF8; border:none; border-radius:8px; color:white; font-weight:700;">Retry Payment</button>';
-                }
-            }
+          window.onerror = function(message, source, lineno, colno, error) {
+            showError("JS Error: " + message);
+            return true;
           };
-          const rzp = new Razorpay(options);
-          rzp.open();
+
+          function showError(msg) {
+            console.error(msg);
+            const errorBox = document.getElementById('errorBox');
+            errorBox.innerText = msg;
+            errorBox.style.display = 'block';
+            document.getElementById('content').style.display = 'none';
+          }
+
+          const keyId = "${keyId || ''}";
+          const subId = "${subscriptionId || ''}";
+
+          if (!keyId || keyId === "undefined" || keyId === "null") {
+            showError("Missing Razorpay Key ID. Please check backend config.");
+          } else if (!subId) {
+            showError("Missing Subscription ID.");
+          } else {
+            try {
+              const options = {
+                key: keyId,
+                subscription_id: subId,
+                name: "CloraAI",
+                description: "Pro Subscription",
+                image: "https://cloraai.com/logo.png",
+                theme: { color: "#38BDF8" },
+                handler: function (response) {
+                  document.body.innerHTML = '<h2>🎉 Payment Successful!</h2><p>Your subscription is being activated. You can now close this window and return to the app.</p><button onclick="window.close()" class="retry-btn">Return to App</button>';
+                },
+                modal: {
+                    ondismiss: function() {
+                        document.body.innerHTML = '<h2>Payment Cancelled</h2><p>The payment process was not completed.</p><button onclick="window.location.reload()" class="retry-btn">Retry Payment</button>';
+                    }
+                }
+              };
+              const rzp = new Razorpay(options);
+              rzp.on('payment.failed', function (response){
+                  showError("Payment Failed: " + (response.error.description || "Unknown error"));
+              });
+              rzp.open();
+            } catch (e) {
+              showError("Failed to open Razorpay: " + e.message);
+            }
+          }
         </script>
       </body>
     </html>
