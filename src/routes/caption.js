@@ -8,7 +8,7 @@ const validate = require('../middleware/validate');
 const { z } = require('zod');
 
 // 10 generations per 15 mins to protect OpenAI credits
-const aiRateLimit = rateLimit(10, 15 * 60 * 1000);
+const aiRateLimit = rateLimit(10, 15); // 10 requests per 15 minutes
 
 // AI Caption Generation (aiLimiter enforces Free=3/day, Pro=30/day, plus global budget)
 router.post('/generate',

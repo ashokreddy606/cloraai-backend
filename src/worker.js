@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Configuration, OpenAIApi } = require('openai');
+const OpenAI = require('openai');
 const { Worker } = require('bullmq');
 const { connection, QUEUES } = require('./utils/queue');
 const logger = require('./utils/logger');
@@ -8,9 +8,9 @@ const axios = require('axios');
 const { decryptToken } = require('./utils/cryptoUtils');
 const { createNotification } = require('./controllers/notificationController');
 
-const openai = new OpenAIApi(new Configuration({
+const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
-}));
+});
 
 // ─── Process-Level Error Catchers ────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -65,14 +65,14 @@ const processCaptionJob = async (job) => {
     // 4. OpenAI Call with optimized parameters
     let captions = [];
     try {
-        const response = await openai.createChatCompletion({
+        const response = await openai.chat.completions.create({
             model: 'gpt-3.5-turbo',
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.7,
             max_tokens: 400
         });
 
-        const content = response.data.choices[0].message.content;
+        const content = response.choices[0].message.content;
 
         try {
             // Attempt to parse the JSON array requested in the prompt
@@ -94,7 +94,7 @@ const processCaptionJob = async (job) => {
         const processingTime = Date.now() - startTime;
         logger.info('WORKER', `AI job completed: ${jobId}`, {
             processingTimeMs: processingTime,
-            tokensUsed: response.data.usage?.total_tokens || 0
+            tokensUsed: response.usage?.total_tokens || 0
         });
 
         // 10. Return Structured Results

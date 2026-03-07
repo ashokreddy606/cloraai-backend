@@ -7,9 +7,9 @@ const { registerSchema, loginSchema, resetPasswordSchema, googleAuthSchema } = r
 
 // Strict brute-force protection: 5 requests per 15 minutes per IP
 // Applied to login, register, forgot-password, reset-password
-const authLimiter = rateLimit(5, 15 * 60 * 1000);
+const authLimiter = rateLimit(5, 15);  // 5 requests per 15 minutes
 // Slightly relaxed for Google OAuth and other auth helpers: 20/15 min
-const authRateLimit = rateLimit(20, 15 * 60 * 1000);
+const authRateLimit = rateLimit(20, 15); // 20 requests per 15 minutes
 
 router.post('/register',
     authLimiter,
