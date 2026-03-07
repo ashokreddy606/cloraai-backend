@@ -12,29 +12,43 @@ const getOAuth2Client = () => {
     );
 };
 
+// Updated scopes to include upload and management
 const SCOPES = [
-    'https://www.googleapis.com/auth/youtube.readonly',
-    'https://www.googleapis.com/auth/youtube.force-ssl', // needed for comments.insert
-    'https://www.googleapis.com/auth/userinfo.profile'
+    'https://www.googleapis.com/auth/youtube',
+    'https://www.googleapis.com/auth/youtube.upload',
+    'https://www.googleapis.com/auth/youtube.force-ssl',
+    'https://www.googleapis.com/auth/youtubepartner',
+    'https://www.googleapis.com/auth/yt-analytics.readonly',
+    'https://www.googleapis.com/auth/userinfo.profile',
 ];
+
+// Helper: get authenticated YouTube client for the current user
+const getYoutubeClientForUser = async (userId) => {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.youtubeAccessToken) {
+        throw new Error('YouTube not connected for this user');
+    }
+    const client = getOAuth2Client();
+    client.setCredentials({
+        access_token: decrypt(user.youtubeAccessToken),
+        refresh_token: user.youtubeRefreshToken ? decrypt(user.youtubeRefreshToken) : undefined,
+    });
+    return google.youtube({ version: 'v3', auth: client });
+};
 
 exports.getAuthUrl = async (req, res) => {
     try {
         const userId = req.query.userId || req.userId || (req.user && (req.user.userId || req.user.id));
-
         if (!userId) {
             return res.status(401).json({ error: 'User ID is required for authentication' });
         }
-
         const client = getOAuth2Client();
         const url = client.generateAuthUrl({
-            access_type: 'offline', // ensures we get a refresh token
+            access_type: 'offline',
             prompt: 'consent',
             scope: SCOPES,
-            state: userId // pass user ID so callback knows who it is
+            state: userId
         });
-
-        // Return URL to frontend
         res.status(200).json({ url });
     } catch (error) {
         logger.error('YOUTUBE', 'Generate Auth URL failed', error);
@@ -44,18 +58,15 @@ exports.getAuthUrl = async (req, res) => {
 
 exports.handleCallback = async (req, res) => {
     try {
-        const { code, state } = req.query; // state contains userId
+        const { code, state } = req.query;
         const userId = state;
-
         if (!code || !userId) {
             return res.status(400).json({ error: 'Invalid callback parameters' });
         }
-
         const client = getOAuth2Client();
         const { tokens } = await client.getToken(code);
         client.setCredentials(tokens);
 
-        // Fetch channel details to store channel ID and metrics (Fix #4)
         const youtube = google.youtube({ version: 'v3', auth: client });
         const channelRes = await youtube.channels.list({
             part: 'id,snippet,statistics',
@@ -70,16 +81,12 @@ exports.handleCallback = async (req, res) => {
         const channelId = channel.id;
         const stats = channel.statistics;
 
-        // Save configuration directly to user model (Fix #1 & #4)
         await prisma.user.update({
             where: { id: userId },
             data: {
                 youtubeChannelId: channelId,
                 youtubeAccessToken: encrypt(tokens.access_token),
-                // Only update refresh token if a new one is provided.
                 ...(tokens.refresh_token && { youtubeRefreshToken: encrypt(tokens.refresh_token) }),
-
-                // Store metrics (Fix #4)
                 youtubeSubscriberCount: parseInt(stats.subscriberCount || 0),
                 youtubeViewCount: parseInt(stats.viewCount || 0),
                 youtubeVideoCount: parseInt(stats.videoCount || 0),
@@ -87,11 +94,8 @@ exports.handleCallback = async (req, res) => {
             }
         });
 
-        // In a real app, you might want to redirect back to frontend
-        // Redirecting to mobile deep link or a web success page
         const frontendUrl = process.env.FRONTEND_APP_SCHEME || 'cloraai://youtube-success';
         res.redirect(frontendUrl);
-
     } catch (error) {
         logger.error('YOUTUBE', 'Callback handler failed', error);
         res.status(500).json({ error: 'OAuth callback failed' });
@@ -100,17 +104,16 @@ exports.handleCallback = async (req, res) => {
 
 exports.getStatus = async (req, res) => {
     try {
-        const user = await prisma.user.findUnique({
-            where: { id: req.userId }
-        });
-
+        const user = await prisma.user.findUnique({ where: { id: req.userId } });
         if (!user || !user.youtubeChannelId || !user.youtubeAccessToken) {
             return res.json({ connected: false });
         }
-
         res.json({
             connected: true,
-            channelId: user.youtubeChannelId
+            channelId: user.youtubeChannelId,
+            subscriberCount: user.youtubeSubscriberCount,
+            viewCount: user.youtubeViewCount,
+            videoCount: user.youtubeVideoCount,
         });
     } catch (error) {
         res.status(500).json({ error: 'Server error retrieving status' });
@@ -150,11 +153,9 @@ exports.getRules = async (req, res) => {
 exports.createRule = async (req, res) => {
     try {
         const { keyword, replyMessage, isActive, replyDelay, limitPerHour } = req.body;
-
         if (!keyword || !replyMessage) {
             return res.status(400).json({ error: 'Keyword and replyMessage are required' });
         }
-
         const rule = await prisma.youtubeAutomationRule.create({
             data: {
                 userId: req.userId,
@@ -165,7 +166,6 @@ exports.createRule = async (req, res) => {
                 limitPerHour: limitPerHour || 20
             }
         });
-
         res.status(201).json(rule);
     } catch (error) {
         if (error.code === 'P2002') {
@@ -179,14 +179,8 @@ exports.updateRule = async (req, res) => {
     try {
         const { id } = req.params;
         const { keyword, replyMessage, isActive, replyDelay, limitPerHour } = req.body;
-
-        // Check ownership
-        const existing = await prisma.youtubeAutomationRule.findFirst({
-            where: { id, userId: req.userId }
-        });
-
+        const existing = await prisma.youtubeAutomationRule.findFirst({ where: { id, userId: req.userId } });
         if (!existing) return res.status(404).json({ error: 'Rule not found' });
-
         const updated = await prisma.youtubeAutomationRule.update({
             where: { id },
             data: {
@@ -197,7 +191,6 @@ exports.updateRule = async (req, res) => {
                 limitPerHour: limitPerHour !== undefined ? limitPerHour : existing.limitPerHour
             }
         });
-
         res.json(updated);
     } catch (error) {
         logger.error('YOUTUBE', 'updateRule', error);
@@ -208,9 +201,7 @@ exports.updateRule = async (req, res) => {
 exports.deleteRule = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.youtubeAutomationRule.deleteMany({
-            where: { id, userId: req.userId }
-        });
+        await prisma.youtubeAutomationRule.deleteMany({ where: { id, userId: req.userId } });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Error deleting rule' });
@@ -233,22 +224,13 @@ exports.getLeads = async (req, res) => {
 
 exports.submitLead = async (req, res) => {
     try {
-        const { userId, name, email, phone } = req.body; // userId of the creator capturing the lead
-
+        const { userId, name, email, phone } = req.body;
         if (!userId || !name || !email) {
             return res.status(400).json({ error: 'Missing required fields' });
         }
-
-        const lead = await prisma.youtubeLead.create({
-            data: {
-                userId,
-                name,
-                email,
-                phone,
-                source: 'youtube'
-            }
+        await prisma.youtubeLead.create({
+            data: { userId, name, email, phone, source: 'youtube' }
         });
-
         res.status(201).json({ success: true, message: 'Lead captured successfully' });
     } catch (error) {
         logger.error('YOUTUBE', 'submitLead', error);
@@ -256,28 +238,307 @@ exports.submitLead = async (req, res) => {
     }
 };
 
-// ── Analytics ──────────────────────────────────────────────────────────────
+// ── Analytics (automation) ──────────────────────────────────────────────────
 
 exports.getAnalytics = async (req, res) => {
     try {
         const userId = req.userId;
-
         const [totalComments, totalReplies, totalLeads] = await Promise.all([
             prisma.youtubeComment.count({ where: { userId } }),
             prisma.youtubeComment.count({ where: { userId, replied: true } }),
             prisma.youtubeLead.count({ where: { userId } })
         ]);
-
         const conversionRate = totalReplies > 0 ? ((totalLeads / totalReplies) * 100).toFixed(2) : 0;
-
         res.json({
             totalComments,
             totalReplies,
             totalLeads,
             conversionRate: parseFloat(conversionRate)
         });
-
     } catch (error) {
         res.status(500).json({ error: 'Error fetching analytics' });
+    }
+};
+
+// ── Channel Analytics (Real YouTube Data API) ─────────────────────────────
+
+exports.getChannelAnalytics = async (req, res) => {
+    try {
+        const youtube = await getYoutubeClientForUser(req.userId);
+
+        // Fetch channel stats
+        const channelRes = await youtube.channels.list({
+            part: 'snippet,statistics,contentDetails',
+            mine: true,
+        });
+
+        if (!channelRes.data.items || channelRes.data.items.length === 0) {
+            return res.status(404).json({ error: 'No YouTube channel found' });
+        }
+
+        const channel = channelRes.data.items[0];
+        const stats = channel.statistics;
+
+        // Fetch top 5 videos by view count
+        const videosRes = await youtube.videos.list({
+            part: 'snippet,statistics',
+            myRating: 'like',
+            maxResults: 1, // fallback — we'll use search for top videos
+        }).catch(() => ({ data: { items: [] } }));
+
+        // Get most viewed videos from the channel's uploads playlist
+        const uploadsRes = await youtube.channels.list({
+            part: 'contentDetails',
+            mine: true,
+        });
+
+        let topVideos = [];
+        const uploadsPlaylistId = uploadsRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+
+        if (uploadsPlaylistId) {
+            const playlistRes = await youtube.playlistItems.list({
+                part: 'snippet,contentDetails',
+                playlistId: uploadsPlaylistId,
+                maxResults: 10,
+            }).catch(() => ({ data: { items: [] } }));
+
+            const videoIds = playlistRes.data.items?.map(i => i.contentDetails.videoId).filter(Boolean) || [];
+
+            if (videoIds.length > 0) {
+                const videoStatsRes = await youtube.videos.list({
+                    part: 'snippet,statistics',
+                    id: videoIds.join(','),
+                });
+                topVideos = (videoStatsRes.data.items || [])
+                    .sort((a, b) => parseInt(b.statistics?.viewCount || 0) - parseInt(a.statistics?.viewCount || 0))
+                    .slice(0, 5)
+                    .map(v => ({
+                        id: v.id,
+                        title: v.snippet.title,
+                        thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
+                        viewCount: parseInt(v.statistics?.viewCount || 0),
+                        likeCount: parseInt(v.statistics?.likeCount || 0),
+                        commentCount: parseInt(v.statistics?.commentCount || 0),
+                        publishedAt: v.snippet.publishedAt,
+                        privacyStatus: v.snippet.liveBroadcastContent,
+                    }));
+            }
+        }
+
+        // Update cached metrics on user
+        await prisma.user.update({
+            where: { id: req.userId },
+            data: {
+                youtubeSubscriberCount: parseInt(stats.subscriberCount || 0),
+                youtubeViewCount: parseInt(stats.viewCount || 0),
+                youtubeVideoCount: parseInt(stats.videoCount || 0),
+                youtubeLastSyncedAt: new Date(),
+            }
+        });
+
+        res.json({
+            success: true,
+            channel: {
+                title: channel.snippet.title,
+                description: channel.snippet.description,
+                thumbnail: channel.snippet.thumbnails?.medium?.url,
+                customUrl: channel.snippet.customUrl,
+                publishedAt: channel.snippet.publishedAt,
+            },
+            stats: {
+                subscriberCount: parseInt(stats.subscriberCount || 0),
+                viewCount: parseInt(stats.viewCount || 0),
+                videoCount: parseInt(stats.videoCount || 0),
+                hiddenSubscriberCount: stats.hiddenSubscriberCount,
+            },
+            topVideos,
+        });
+    } catch (error) {
+        logger.error('YOUTUBE', 'getChannelAnalytics', error);
+
+        // Fallback to cached data from DB if YouTube API fails
+        try {
+            const user = await prisma.user.findUnique({ where: { id: req.userId } });
+            res.json({
+                success: true,
+                cached: true,
+                channel: { title: 'Your Channel' },
+                stats: {
+                    subscriberCount: user?.youtubeSubscriberCount || 0,
+                    viewCount: user?.youtubeViewCount || 0,
+                    videoCount: user?.youtubeVideoCount || 0,
+                },
+                topVideos: [],
+            });
+        } catch {
+            res.status(500).json({ error: 'Error fetching channel analytics' });
+        }
+    }
+};
+
+// ── Video Management ──────────────────────────────────────────────────────
+
+exports.getUserVideos = async (req, res) => {
+    try {
+        const youtube = await getYoutubeClientForUser(req.userId);
+        const { maxResults = 20 } = req.query;
+
+        // Get uploads playlist
+        const channelRes = await youtube.channels.list({
+            part: 'contentDetails',
+            mine: true,
+        });
+        const uploadsPlaylistId = channelRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+
+        if (!uploadsPlaylistId) {
+            return res.json({ success: true, videos: [] });
+        }
+
+        const playlistRes = await youtube.playlistItems.list({
+            part: 'snippet,contentDetails',
+            playlistId: uploadsPlaylistId,
+            maxResults: parseInt(maxResults),
+        });
+
+        const videoIds = playlistRes.data.items?.map(i => i.contentDetails.videoId).filter(Boolean) || [];
+
+        if (videoIds.length === 0) return res.json({ success: true, videos: [] });
+
+        const videoStatsRes = await youtube.videos.list({
+            part: 'snippet,statistics,status',
+            id: videoIds.join(','),
+        });
+
+        const videos = (videoStatsRes.data.items || []).map(v => ({
+            id: v.id,
+            title: v.snippet.title,
+            description: v.snippet.description,
+            tags: v.snippet.tags || [],
+            thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
+            publishedAt: v.snippet.publishedAt,
+            privacyStatus: v.status?.privacyStatus,
+            viewCount: parseInt(v.statistics?.viewCount || 0),
+            likeCount: parseInt(v.statistics?.likeCount || 0),
+            commentCount: parseInt(v.statistics?.commentCount || 0),
+        }));
+
+        res.json({ success: true, videos });
+    } catch (error) {
+        logger.error('YOUTUBE', 'getUserVideos', error);
+        res.status(500).json({ error: 'Error fetching videos', message: error.message });
+    }
+};
+
+exports.uploadVideo = async (req, res) => {
+    try {
+        const youtube = await getYoutubeClientForUser(req.userId);
+        const { title, description, tags, privacyStatus = 'private', publishAt, videoUrl } = req.body;
+
+        if (!title) {
+            return res.status(400).json({ error: 'Title is required' });
+        }
+        if (!videoUrl) {
+            return res.status(400).json({ error: 'Video URL is required' });
+        }
+
+        const status = { privacyStatus };
+        if (privacyStatus === 'private' && publishAt) {
+            status.privacyStatus = 'private';
+            status.publishAt = new Date(publishAt).toISOString();
+        }
+
+        // Fetch video from URL and pipe to YouTube upload
+        const axios = require('axios');
+        const videoStream = await axios({ url: videoUrl, method: 'GET', responseType: 'stream' });
+
+        const uploadRes = await youtube.videos.insert({
+            part: 'snippet,status',
+            requestBody: {
+                snippet: {
+                    title,
+                    description: description || '',
+                    tags: tags || [],
+                    categoryId: '22', // People & Blogs default
+                },
+                status,
+            },
+            media: {
+                body: videoStream.data,
+            },
+        });
+
+        res.status(201).json({
+            success: true,
+            video: {
+                id: uploadRes.data.id,
+                title: uploadRes.data.snippet.title,
+                status: uploadRes.data.status.privacyStatus,
+                publishAt: uploadRes.data.status.publishAt,
+            }
+        });
+    } catch (error) {
+        logger.error('YOUTUBE', 'uploadVideo', error);
+        res.status(500).json({ error: 'Error uploading video', message: error.message });
+    }
+};
+
+exports.updateVideo = async (req, res) => {
+    try {
+        const youtube = await getYoutubeClientForUser(req.userId);
+        const { videoId } = req.params;
+        const { title, description, tags, privacyStatus } = req.body;
+
+        // Fetch current video first to merge fields
+        const currentRes = await youtube.videos.list({
+            part: 'snippet,status',
+            id: videoId,
+        });
+
+        if (!currentRes.data.items || currentRes.data.items.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+        const current = currentRes.data.items[0];
+
+        const updatedRes = await youtube.videos.update({
+            part: 'snippet,status',
+            requestBody: {
+                id: videoId,
+                snippet: {
+                    title: title || current.snippet.title,
+                    description: description !== undefined ? description : current.snippet.description,
+                    tags: tags !== undefined ? tags : current.snippet.tags,
+                    categoryId: current.snippet.categoryId,
+                },
+                status: {
+                    privacyStatus: privacyStatus || current.status.privacyStatus,
+                },
+            },
+        });
+
+        res.json({
+            success: true,
+            video: {
+                id: updatedRes.data.id,
+                title: updatedRes.data.snippet.title,
+                description: updatedRes.data.snippet.description,
+                tags: updatedRes.data.snippet.tags,
+                privacyStatus: updatedRes.data.status.privacyStatus,
+            }
+        });
+    } catch (error) {
+        logger.error('YOUTUBE', 'updateVideo', error);
+        res.status(500).json({ error: 'Error updating video', message: error.message });
+    }
+};
+
+exports.deleteVideo = async (req, res) => {
+    try {
+        const youtube = await getYoutubeClientForUser(req.userId);
+        const { videoId } = req.params;
+        await youtube.videos.delete({ id: videoId });
+        res.json({ success: true, message: 'Video deleted' });
+    } catch (error) {
+        logger.error('YOUTUBE', 'deleteVideo', error);
+        res.status(500).json({ error: 'Error deleting video', message: error.message });
     }
 };

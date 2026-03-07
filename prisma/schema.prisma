@@ -120,6 +120,7 @@ model CalendarTask {
   date      DateTime
   startTime String?
   endTime   String?
+  platform  String   @default("general") // general, instagram, youtube
   repeat    String   @default("one-time") // one-time, daily, weekly
   notes     String?
   color     String   @default("#6D28D9")

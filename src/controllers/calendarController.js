@@ -2,8 +2,12 @@ const prisma = require('../lib/prisma');
 
 const getTasks = async (req, res) => {
     try {
+        const { platform } = req.query;
+        const where = { userId: req.userId };
+        if (platform && platform !== 'all') where.platform = platform;
+
         const tasks = await prisma.calendarTask.findMany({
-            where: { userId: req.userId },
+            where,
             orderBy: { date: 'asc' }
         });
         res.json({ success: true, data: { tasks } });
@@ -14,7 +18,7 @@ const getTasks = async (req, res) => {
 
 const createTask = async (req, res) => {
     try {
-        const { title, date, startTime, endTime, repeat, notes, color } = req.body;
+        const { title, date, startTime, endTime, repeat, notes, color, platform } = req.body;
         if (!title || !date) {
             return res.status(400).json({ error: 'Title and date are required' });
         }
@@ -28,6 +32,7 @@ const createTask = async (req, res) => {
                 repeat: repeat || 'one-time',
                 notes: notes || null,
                 color: color || '#6D28D9',
+                platform: platform || 'general',
             }
         });
         res.status(201).json({ success: true, data: { task } });
