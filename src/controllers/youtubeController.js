@@ -1,5 +1,7 @@
 const logger = require('../utils/logger');
 const { encrypt, decrypt } = require('../utils/cryptoUtils');
+const { google } = require('googleapis');
+const prisma = require('../lib/prisma');
 
 // Helper to get a new OAuth2Client instance
 const getOAuth2Client = () => {

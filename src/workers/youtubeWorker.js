@@ -1,5 +1,8 @@
 const cron = require('node-cron');
 const { decrypt } = require('../utils/cryptoUtils');
+const { google } = require('googleapis');
+const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
 
 const getOAuth2Client = () => {
     return new google.auth.OAuth2(
