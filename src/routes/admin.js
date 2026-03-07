@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('../controllers/adminController');
+const adminAnalytics = require('../controllers/adminAnalyticsController');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 
 // All routes require auth + admin role
@@ -10,6 +11,14 @@ router.use(authenticate, requireAdmin);
 router.get('/metrics', admin.getMetrics);
 router.get('/system-metrics', admin.getSystemMetrics); // Phase 3: AI cost + subscription health
 router.get('/analytics', admin.getAnalytics);
+
+// ── Billing & Analytics (Stripe-Style) ────────────────────────────────
+router.get('/billing-dashboard', adminAnalytics.getBillingDashboard);
+router.get('/revenue-chart', adminAnalytics.getRevenueChart);
+router.get('/subscriber-growth', adminAnalytics.getSubscriberGrowth);
+router.get('/plan-distribution', adminAnalytics.getPlanDistribution);
+router.get('/top-customers', adminAnalytics.getTopCustomers);
+router.get('/recent-transactions', adminAnalytics.getRecentTransactions);
 
 // ── User Management ───────────────────────────────────────────────────
 router.get('/users', admin.getUsers);

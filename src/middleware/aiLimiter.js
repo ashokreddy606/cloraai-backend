@@ -14,10 +14,8 @@
  *   router.post('/generate', authenticate, aiLimiter('caption'), captionController.generateCaption);
  */
 
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
-
-const prisma = new PrismaClient();
 
 const { appConfig } = require('../config');
 

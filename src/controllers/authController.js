@@ -1,10 +1,8 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { generateToken, hashPassword, verifyPassword } = require('../utils/helpers');
 const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
-
-const prisma = new PrismaClient();
 
 // ─────────────────────────────────────────────
 // Email: supports Resend API (recommended) OR Gmail SMTP (fallback)

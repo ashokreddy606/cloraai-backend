@@ -1,8 +1,6 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const axios = require('axios');
 const { appConfig } = require('../config');
-
-const prisma = new PrismaClient();
 
 // Schedule Post
 const schedulePost = async (req, res) => {

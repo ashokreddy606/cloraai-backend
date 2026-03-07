@@ -1,8 +1,6 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { OpenAIApi, Configuration } = require('openai');
 const { logAIUsage } = require('../middleware/aiLimiter');
-
-const prisma = new PrismaClient();
 
 const openai = new OpenAIApi(new Configuration({
     apiKey: process.env.OPENAI_API_KEY

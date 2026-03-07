@@ -3,6 +3,7 @@ const router = express.Router();
 const captionController = require('../controllers/captionController');
 const { authenticate, rateLimit } = require('../middleware/auth');
 const { aiLimiter } = require('../middleware/aiLimiter');
+const checkProAccess = require('../middleware/checkProAccess');
 const validate = require('../middleware/validate');
 const { z } = require('zod');
 
@@ -12,6 +13,7 @@ const aiRateLimit = rateLimit(10, 15 * 60 * 1000);
 // AI Caption Generation (aiLimiter enforces Free=3/day, Pro=30/day, plus global budget)
 router.post('/generate',
     authenticate,
+    checkProAccess,
     aiLimiter('caption'),  // ← replaces manual plan check in controller
     aiRateLimit,
     validate(z.object({

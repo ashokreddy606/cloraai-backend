@@ -18,13 +18,11 @@
  *   subscription.cancelled   → set status=CANCELLED (access until planEndDate)
  *   subscription.halted      → set status=PAST_DUE
  *   subscription.completed   → set plan=FREE + status=EXPIRED
- *   payment.failed           → log FAILED payment record (idempotent)
+ *   payment.failed           → log FAILED
  */
 
 const crypto = require('crypto');
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ─── Webhook Signature Verification ──────────────────────────────────────────
 const verifyWebhookSignature = (rawBody, signature, secret) => {

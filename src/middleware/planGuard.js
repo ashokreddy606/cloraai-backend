@@ -12,8 +12,7 @@
  *   router.post('/generate', authenticate, requirePro, captionController.generate);
  */
 
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ─── Core Plan Check Helper ──────────────────────────────────────────────────
 const getUserPlanData = async (userId) => {

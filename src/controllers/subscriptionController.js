@@ -9,10 +9,8 @@
  */
 
 const crypto = require('crypto');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { createSubscription, cancelSubscription: rzpCancelSubscription } = require('../services/razorpayService');
-
-const prisma = new PrismaClient();
 
 // ─── Helper: compute days remaining ──────────────────────────────────────────
 const getDaysRemaining = (planEndDate, plan) => {

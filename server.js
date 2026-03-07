@@ -3,8 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 require('dotenv').config();
-const { PrismaClient } = require('@prisma/client');
+
 const { rateLimit } = require('./src/middleware/auth');
+const prisma = require('./src/lib/prisma');
 const logger = require('./src/utils/logger');
 
 // ─── Optional Sentry Error Tracking ──────────────────────────────────────────
@@ -40,13 +41,15 @@ const dmAutomationRoutes = require('./src/routes/dmAutomation');
 const brandDealRoutes = require('./src/routes/brandDeal');
 const referralRoutes = require('./src/routes/referral');
 const adminRoutes = require('./src/routes/admin');
+const adminPlanRoutes = require('./src/routes/adminPlan');
 const calendarRoutes = require('./src/routes/calendar');
 const notificationRoutes = require('./src/routes/notification');
 const webhookRoutes = require('./src/routes/webhook');
 const youtubeRoutes = require('./src/routes/youtube');
+const paymentRoutes = require('./src/routes/payment');
 
 // Initialize Prisma
-const prisma = new PrismaClient();
+// (Now using shared instance from src/lib/prisma.js)
 
 // Initialize Express app
 const app = express();
@@ -156,6 +159,10 @@ app.use((req, res, next) => {
     next();
 });
 
+// Automatic Subscription Expiry Check
+const checkSubscriptionExpiry = require('./src/middleware/checkSubscriptionExpiry');
+app.use(checkSubscriptionExpiry);
+
 // Health check
 app.get("/health", (req, res) => {
     res.status(200).json({
@@ -228,6 +235,8 @@ app.use('/api/dm-automation', dmAutomationRoutes);
 app.use('/api/brand-deals', brandDealRoutes);
 app.use('/api/referral', referralRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin-plans', adminPlanRoutes);
+app.use('/api/payment', paymentRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhook', webhookRoutes);
@@ -247,7 +256,11 @@ const errorHandler = require('./src/middleware/errorHandler');
 app.use(errorHandler);
 
 // Background Workers
-require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
+try {
+    require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
+} catch (err) {
+    logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message });
+}
 
 // Start server
 const PORT = process.env.PORT || 3000;

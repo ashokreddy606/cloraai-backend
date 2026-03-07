@@ -9,12 +9,10 @@
  */
 
 const { verifyToken } = require('../utils/helpers');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const expressRateLimit = require('express-rate-limit');
 const logger = require('../utils/logger');
 const jwt = require('jsonwebtoken');
-
-const prisma = new PrismaClient();
 
 // ─── 1. Authentication Middleware ─────────────────────────────────────────────
 /**

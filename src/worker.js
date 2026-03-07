@@ -2,11 +2,7 @@ require('dotenv').config();
 const { Worker } = require('bullmq');
 const { connection, QUEUES } = require('./utils/queue');
 const logger = require('./utils/logger');
-const { PrismaClient } = require('@prisma/client');
-const { OpenAIApi, Configuration } = require('openai');
-const { cache } = require('./utils/cache');
-
-const prisma = new PrismaClient();
+const prisma = require('./lib/prisma');
 
 const openai = new OpenAIApi(new Configuration({
     apiKey: process.env.OPENAI_API_KEY

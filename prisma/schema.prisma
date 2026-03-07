@@ -48,6 +48,8 @@ model User {
   planStartDate      DateTime?
   planEndDate        DateTime? // null = LIFETIME / never expires
   manuallyUpgraded   Boolean             @default(false) // Admin override flag
+  paymentStatus      String              @default("NONE") // NONE | SUCCESS | FAILED
+  retryAttempts      Int                 @default(0)
 
   // ── Razorpay Live Link ───────────────────────────────────────────────────
   // Set in createOrder so webhook can find userId without depending on PaymentHistory.
@@ -76,7 +78,7 @@ model User {
   referralTransactionsGot   ReferralTransaction[] @relation("ReceivedRewards")
 
   // ── YouTube Integration ───────────────────────────────────────────────
-  youtubeChannelId    String?   @unique
+  youtubeChannelId    String?
   youtubeAccessToken  String?
   youtubeRefreshToken String?
 
@@ -182,6 +184,8 @@ model PaymentHistory {
   startDate     DateTime?
   endDate       DateTime?
   paymentMethod String? // upi | card | netbanking | wallet
+  processed     Boolean   @default(false) // Webhook idempotency link
+  refundedAmount Int      @default(0) // Track partial refunds
 
   createdAt DateTime @default(now())
 
@@ -423,51 +427,51 @@ model AuditLog {
 // ─── YouTube Automation Models ──────────────────────────────────────────
 
 model YoutubeComment {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId      String   @db.ObjectId
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   videoId     String
-  commentId   String   @unique // YouTube comment ID (for deduplication)
-  username    String   // Author of the comment
+  commentId   String  @unique // YouTube comment ID (for deduplication)
+  username    String // Author of the comment
   commentText String
-  replied     Boolean  @default(false)
-  
-  createdAt   DateTime @default(now())
-  
+  replied     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
   @@index([userId, videoId])
   @@index([replied])
 }
 
 model YoutubeAutomationRule {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId       String   @db.ObjectId
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   keyword      String
   replyMessage String
-  isActive     Boolean  @default(true)
-  replyDelay   Int      @default(0)   // Delay in seconds before replying
-  limitPerHour Int      @default(20)  // Max replies per hour for this rule
-  
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  
+  isActive     Boolean @default(true)
+  replyDelay   Int     @default(0) // Delay in seconds before replying
+  limitPerHour Int     @default(20) // Max replies per hour for this rule
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([userId, keyword])
   @@index([userId])
 }
 
 model YoutubeLead {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  name      String
-  email     String
-  phone     String?
-  source    String   @default("youtube")
-  
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name   String
+  email  String
+  phone  String?
+  source String  @default("youtube")
+
   createdAt DateTime @default(now())
-  
+
   @@index([userId])
 }

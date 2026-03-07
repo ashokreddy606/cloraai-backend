@@ -5,8 +5,7 @@
  * Use this for hard-block routes — no free tier allowed at all.
  * For soft-gating with limits, use per-controller checks instead.
  */
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 const requirePremium = async (req, res, next) => {
     try {

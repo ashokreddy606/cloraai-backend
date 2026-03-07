@@ -1,8 +1,7 @@
-const { PrismaClient } = require('@prisma/client');
 const axios = require('axios');
 const { encryptToken, decryptToken } = require('../utils/cryptoUtils');
+const prisma = require('../lib/prisma');
 
-const prisma = new PrismaClient();
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v18.0';
 const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID;
 const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;

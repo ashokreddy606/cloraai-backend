@@ -1,12 +1,5 @@
 const cron = require('node-cron');
-const { PrismaClient } = require('@prisma/client');
-const axios = require('axios');
-const os = require('os');
-const { decryptToken, encryptToken } = require('../utils/cryptoUtils');
-const logger = require('../utils/logger');
-const { createNotification } = require('../controllers/notificationController');
-
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 const WORKER_ID = `${os.hostname()}-${process.pid}`;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — if lock older than this, it's stale
 

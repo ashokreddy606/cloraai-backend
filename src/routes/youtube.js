@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const youtubeController = require('../controllers/youtubeController');
+const checkProAccess = require('../middleware/checkProAccess');
 
 // ── OAuth Flow ─────────────────────────────────────────────────────────────
 // GET /api/youtube/auth
@@ -22,16 +23,16 @@ router.delete('/disconnect', authenticate, youtubeController.disconnect);
 
 // ── Automation Rules ───────────────────────────────────────────────────────
 // GET /api/youtube/rules
-router.get('/rules', authenticate, youtubeController.getRules);
+router.get('/rules', authenticate, checkProAccess, youtubeController.getRules);
 
 // POST /api/youtube/rules
-router.post('/rules', authenticate, youtubeController.createRule);
+router.post('/rules', authenticate, checkProAccess, youtubeController.createRule);
 
 // PUT /api/youtube/rules/:id
-router.put('/rules/:id', authenticate, youtubeController.updateRule);
+router.put('/rules/:id', authenticate, checkProAccess, youtubeController.updateRule);
 
 // DELETE /api/youtube/rules/:id
-router.delete('/rules/:id', authenticate, youtubeController.deleteRule);
+router.delete('/rules/:id', authenticate, checkProAccess, youtubeController.deleteRule);
 
 // ── Leads ──────────────────────────────────────────────────────────────────
 // GET /api/youtube/leads
@@ -43,6 +44,6 @@ router.post('/leads/submit', youtubeController.submitLead);
 
 // ── Analytics ──────────────────────────────────────────────────────────────
 // GET /api/youtube/analytics
-router.get('/analytics', authenticate, youtubeController.getAnalytics);
+router.get('/analytics', authenticate, checkProAccess, youtubeController.getAnalytics);
 
 module.exports = router;

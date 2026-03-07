@@ -1,4 +1,3 @@
-const { PrismaClient } = require('@prisma/client');
 const axios = require('axios');
 const crypto = require('crypto');
 const { appConfig } = require('../config');
@@ -6,7 +5,7 @@ const { decryptToken } = require('../utils/cryptoUtils');
 const logger = require('../utils/logger');
 const { analyzeAndSaveBrandDeal } = require('./brandDealController');
 
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
 const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
 

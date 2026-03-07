@@ -1,11 +1,11 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { hashPassword } = require('../utils/helpers');
 const { appConfig, saveConfig } = require('../config');
 const { cancelSubscription: rzpCancelSub, createRefund } = require('../services/razorpayService');
 const logger = require('../utils/logger');
 const { OpenAIApi, Configuration } = require('openai');
 const { logAIUsage } = require('../middleware/aiLimiter');
-const prisma = new PrismaClient();
+
 
 const openai = new OpenAIApi(new Configuration({
     apiKey: process.env.OPENAI_API_KEY

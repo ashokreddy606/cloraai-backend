@@ -1,6 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // Send real Expo push notification
 const sendExpoPush = async (pushToken, title, body) => {

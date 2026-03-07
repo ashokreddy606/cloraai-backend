@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 require('dotenv').config();
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('./lib/prisma');
 const { rateLimit } = require('./middleware/auth');
 const logger = require('./utils/logger');
 
@@ -45,8 +45,7 @@ const notificationRoutes = require('./routes/notification');
 const webhookRoutes = require('./routes/webhook');
 const youtubeRoutes = require('./routes/youtube');
 
-// Initialize Prisma
-const prisma = new PrismaClient();
+// (Now using shared instance from lib/prisma.js)
 
 // Initialize Express app
 const app = express();
