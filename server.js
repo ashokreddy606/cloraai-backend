@@ -76,12 +76,6 @@ if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 64) {
     logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters).');
 }
 
-// JWT_SECRET minimum strength check (must be ≥ 64 characters).
-// helpers.js also enforces this, but belt-and-suspenders catch at server entry.
-if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 64) {
-    logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters).');
-}
-
 // Raw body capture for Razorpay webhook signature verification
 // MUST be registered BEFORE express.json() for this specific path
 app.use('/api/webhook/razorpay', express.raw({ type: 'application/json' }));
