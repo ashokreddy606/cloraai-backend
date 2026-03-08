@@ -435,7 +435,7 @@ exports.getChannelAnalytics = async (req, res) => {
         // Fetch Daily views (last 30 days) for the chart
         const minus30d = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
         const dailyViewsRes = await youtubeAnalytics.reports.query({
-            ids: 'channel==MINE',
+            ids: `channel==${channelId}`,
             startDate: minus30d,
             endDate: today,
             metrics: 'views',
