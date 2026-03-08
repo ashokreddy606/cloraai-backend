@@ -88,6 +88,12 @@ router.get('/security', admin.getSecurityLogs);
 router.post('/security/blacklist', admin.blacklistIP);
 router.delete('/security/blacklist/:ip', admin.removeIPFromBlacklist);
 
+// ── YouTube Automation Admin ──────────────────────────────────────────
+router.get('/youtube/rules', admin.getYouTubeRules);
+router.patch('/youtube/rules/:id', admin.updateYouTubeRule);
+router.delete('/youtube/rules/:id', admin.deleteYouTubeRule);
+router.get('/youtube/comments', admin.getYouTubeComments);
+
 // ── Referral Management ───────────────────────────────────────────────
 const adminReferral = require('../controllers/adminReferralController');
 router.get('/referrals/overview', adminReferral.getOverview);

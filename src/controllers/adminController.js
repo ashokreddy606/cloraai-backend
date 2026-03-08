@@ -1381,6 +1381,75 @@ const getSystemMetrics = async (req, res) => {
     }
 };
 
+// ─── 8. YOUTUBE AUTOMATION CONTROL ───────────────────────────────────
+const getYouTubeRules = async (req, res) => {
+    try {
+        const { page = 1, limit = 20 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const [rules, total] = await Promise.all([
+            prisma.youtubeAutomationRule.findMany({
+                include: { user: { select: { email: true, username: true } } },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: parseInt(limit),
+            }),
+            prisma.youtubeAutomationRule.count(),
+        ]);
+        res.json({ success: true, data: { rules, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) } });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch YouTube rules', message: error.message });
+    }
+};
+
+const updateYouTubeRule = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isActive, replyMessage } = req.body;
+        const rule = await prisma.youtubeAutomationRule.update({
+            where: { id },
+            data: {
+                ...(isActive !== undefined && { isActive }),
+                ...(replyMessage !== undefined && { replyMessage })
+            },
+            include: { user: { select: { email: true, username: true } } }
+        });
+        logAdminAction(req.userId, 'UPDATE_YOUTUBE_RULE', id);
+        res.json({ success: true, message: 'YouTube rule updated', data: { rule } });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to update YouTube rule', message: error.message });
+    }
+};
+
+const deleteYouTubeRule = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prisma.youtubeAutomationRule.delete({ where: { id } });
+        logAdminAction(req.userId, 'DELETE_YOUTUBE_RULE', id);
+        res.json({ success: true, message: 'YouTube rule deleted' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete YouTube rule', message: error.message });
+    }
+};
+
+const getYouTubeComments = async (req, res) => {
+    try {
+        const { page = 1, limit = 20 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const [comments, total] = await Promise.all([
+            prisma.youtubeComment.findMany({
+                include: { user: { select: { email: true, username: true } } },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: parseInt(limit),
+            }),
+            prisma.youtubeComment.count(),
+        ]);
+        res.json({ success: true, data: { comments, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) } });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch YouTube comments', message: error.message });
+    }
+};
+
 module.exports = {
     getMetrics,
     getSystemMetrics,   // NEW: Phase 3 system observability
@@ -1431,4 +1500,8 @@ module.exports = {
     aiShortlistReplies,
     manualShortlist,
     sendDealNotifications,
+    getYouTubeRules,
+    updateYouTubeRule,
+    deleteYouTubeRule,
+    getYouTubeComments,
 };
