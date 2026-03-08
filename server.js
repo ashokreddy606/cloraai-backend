@@ -70,34 +70,10 @@ app.get("/test", (req, res) => {
     res.send("Backend API is working");
 });
 
-// Security: Log errors for missing keys, but only crash for CRITICAL ones
-const criticalEnvs = [
-    'JWT_SECRET',
-    'DATABASE_URL',
-];
-const featureEnvs = [
-    'RAZORPAY_KEY_ID',
-    'RAZORPAY_KEY_SECRET',
-    'RAZORPAY_WEBHOOK_SECRET',
-    'INSTAGRAM_APP_SECRET',
-    'ADMIN_SECRET_KEY',
-    'GOOGLE_CLIENT_ID',
-    'TOKEN_ENCRYPTION_SECRET',
-];
-
-const missingCritical = criticalEnvs.filter(env => !process.env[env]);
-const missingFeatures = featureEnvs.filter(env => !process.env[env]);
-
-if (missingCritical.length > 0) {
-    const msg = `FATAL: Missing critical environment variables: ${missingCritical.join(', ')}`;
-    logger.error('SERVER', msg);
-    if (process.env.NODE_ENV === 'production') {
-        process.exit(1);
-    }
-}
-
-if (missingFeatures.length > 0) {
-    logger.warn('SERVER', `Missing feature-specific environment variables: ${missingFeatures.join(', ')}. Some features will be disabled.`);
+// JWT_SECRET minimum strength check (must be ≥ 64 characters).
+// helpers.js also enforces this, but belt-and-suspenders catch at server entry.
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 64) {
+    logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters).');
 }
 
 // JWT_SECRET minimum strength check (must be ≥ 64 characters).

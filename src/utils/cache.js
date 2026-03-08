@@ -23,10 +23,10 @@ const redisClient = new Redis(REDIS_URL, {
 });
 
 redisClient.on('error', (err) => {
-    if (err.code === 'EAI_AGAIN') {
-        logger.error('REDIS', 'DNS Lookup failed for Redis. Check if your REDIS_URL/Host is correct.', { host: err.hostname });
+    if (err.code === 'EAI_AGAIN' || err.code === 'ECONNREFUSED') {
+        logger.warn('REDIS', 'Redis connection failed. Features like caching and dashboard metrics will be restricted.', { error: err.message });
     } else {
-        logger.error('REDIS', 'Redis connection error', { error: err.message, code: err.code });
+        logger.error('REDIS', 'Redis unexpected error', { error: err.message, code: err.code });
     }
 });
 

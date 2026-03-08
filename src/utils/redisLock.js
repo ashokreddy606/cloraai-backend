@@ -4,8 +4,14 @@ const Redis = require('ioredis');
 const redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
     maxRetriesPerRequest: null,
     retryStrategy(times) {
+        // Stop retrying after 3 attempts if we're not in production to avoid hanging dev startup
+        if (process.env.NODE_ENV !== 'production' && times > 3) return null;
         return Math.min(times * 50, 2000);
     }
+});
+
+redisClient.on('error', (err) => {
+    logger.warn('REDIS_LOCK', 'Redis Lock connection error', { error: err.message });
 });
 
 /**
