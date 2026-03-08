@@ -3,6 +3,7 @@ const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
 const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
+const dayjs = require('dayjs');
 const { createBreaker } = require('../utils/circuitBreaker');
 
 const youtubeBreaker = createBreaker(async (fn) => {
@@ -358,8 +359,10 @@ exports.getAnalytics = async (req, res) => {
 exports.getChannelAnalytics = async (req, res) => {
     try {
         const youtube = await getYoutubeClientForUser(req.userId);
+        const auth = youtube.context._options.auth;
+        const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth });
 
-        // Fetch channel stats
+        // Fetch channel metadata and lifetime stats
         const channelRes = await youtubeBreaker.fire(() => youtube.channels.list({
             part: 'snippet,statistics,contentDetails',
             mine: true,
@@ -372,48 +375,98 @@ exports.getChannelAnalytics = async (req, res) => {
         }
 
         const channel = channelRes.data.items[0];
+        const channelId = channel.id;
         const stats = channel.statistics;
 
-        // Get most viewed videos from the channel's uploads playlist
-        const uploadsRes = await youtube.channels.list({
-            part: 'contentDetails',
-            mine: true,
-        });
+        // Set date ranges for Analytics
+        const today = dayjs().format('YYYY-MM-DD');
+        const minus28d = dayjs().subtract(28, 'day').format('YYYY-MM-DD');
+        const minus90d = dayjs().subtract(90, 'day').format('YYYY-MM-DD');
 
+        // Fetch Analytics: 28-day views, 90-day views, and Top Videos
+        const [stats28d, stats90d, topContentRes] = await Promise.all([
+            youtubeAnalytics.reports.query({
+                ids: `channel==${channelId}`,
+                startDate: minus28d,
+                endDate: today,
+                metrics: 'views',
+            }).catch(e => { logger.warn('YOUTUBE', 'Analytics 28d error', e.message); return { data: { rows: [[0]] } }; }),
+            youtubeAnalytics.reports.query({
+                ids: `channel==${channelId}`,
+                startDate: minus90d,
+                endDate: today,
+                metrics: 'views',
+            }).catch(e => { logger.warn('YOUTUBE', 'Analytics 90d error', e.message); return { data: { rows: [[0]] } }; }),
+            youtubeAnalytics.reports.query({
+                ids: `channel==${channelId}`,
+                startDate: minus28d,
+                endDate: today,
+                metrics: 'views,likes,comments',
+                dimensions: 'video',
+                maxResults: 5,
+                sort: '-views',
+            }).catch(e => { logger.warn('YOUTUBE', 'Analytics top content error', e.message); return { data: { rows: [] } }; })
+        ]);
+
+        const views28d = parseInt(stats28d.data.rows?.[0]?.[0] || 0);
+        const views90d = parseInt(stats90d.data.rows?.[0]?.[0] || 0);
+
+        // Fetch metadata for top videos found in Analytics
         let topVideos = [];
-        const uploadsPlaylistId = uploadsRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+        const topVideoIds = topContentRes.data.rows?.map(row => row[0]) || [];
 
-        if (uploadsPlaylistId) {
-            const playlistRes = await youtube.playlistItems.list({
-                part: 'snippet,contentDetails',
-                playlistId: uploadsPlaylistId,
-                maxResults: 10,
-            }).catch(() => ({ data: { items: [] } }));
+        if (topVideoIds.length > 0) {
+            const videoMetaRes = await youtube.videos.list({
+                part: 'snippet,statistics',
+                id: topVideoIds.join(','),
+            });
 
-            const videoIds = playlistRes.data.items?.map(i => i.contentDetails.videoId).filter(Boolean) || [];
+            // Map Analytics results to video metadata
+            topVideos = (videoMetaRes.data.items || []).map(v => {
+                const analyticsRow = topContentRes.data.rows.find(row => row[0] === v.id);
+                return {
+                    id: v.id,
+                    title: v.snippet.title,
+                    thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
+                    viewCount: parseInt(analyticsRow?.[1] || v.statistics?.viewCount || 0),
+                    likeCount: parseInt(analyticsRow?.[2] || v.statistics?.likeCount || 0),
+                    commentCount: parseInt(analyticsRow?.[3] || v.statistics?.commentCount || 0),
+                    publishedAt: v.snippet.publishedAt,
+                };
+            }).sort((a, b) => b.viewCount - a.viewCount);
+        }
 
-            if (videoIds.length > 0) {
-                const videoStatsRes = await youtube.videos.list({
-                    part: 'snippet,statistics',
-                    id: videoIds.join(','),
-                });
-                topVideos = (videoStatsRes.data.items || [])
-                    .sort((a, b) => parseInt(b.statistics?.viewCount || 0) - parseInt(a.statistics?.viewCount || 0))
-                    .slice(0, 5)
-                    .map(v => ({
-                        id: v.id,
-                        title: v.snippet.title,
-                        thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
-                        viewCount: parseInt(v.statistics?.viewCount || 0),
-                        likeCount: parseInt(v.statistics?.likeCount || 0),
-                        commentCount: parseInt(v.statistics?.commentCount || 0),
-                        publishedAt: v.snippet.publishedAt,
-                        privacyStatus: v.snippet.liveBroadcastContent,
-                    }));
+        // Fallback: If Analytics didn't return videos, use the old method (last uploads)
+        if (topVideos.length === 0) {
+            const uploadsPlaylistId = channel.contentDetails?.relatedPlaylists?.uploads;
+            if (uploadsPlaylistId) {
+                const playlistRes = await youtube.playlistItems.list({
+                    part: 'contentDetails',
+                    playlistId: uploadsPlaylistId,
+                    maxResults: 10,
+                }).catch(() => ({ data: { items: [] } }));
+
+                const videoIds = playlistRes.data.items?.map(i => i.contentDetails.videoId).filter(Boolean) || [];
+                if (videoIds.length > 0) {
+                    const videoStatsRes = await youtube.videos.list({
+                        part: 'snippet,statistics',
+                        id: videoIds.join(','),
+                    });
+                    topVideos = (videoStatsRes.data.items || [])
+                        .sort((a, b) => parseInt(b.statistics?.viewCount || 0) - parseInt(a.statistics?.viewCount || 0))
+                        .slice(0, 5)
+                        .map(v => ({
+                            id: v.id,
+                            title: v.snippet.title,
+                            thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
+                            viewCount: parseInt(v.statistics?.viewCount || 0),
+                            publishedAt: v.snippet.publishedAt,
+                        }));
+                }
             }
         }
 
-        // Update cached metrics on user
+        // Update cached metrics on user (Lifetime stats)
         await prisma.user.update({
             where: { id: req.userId },
             data: {
@@ -431,13 +484,13 @@ exports.getChannelAnalytics = async (req, res) => {
                 description: channel.snippet.description,
                 thumbnail: channel.snippet.thumbnails?.medium?.url,
                 customUrl: channel.snippet.customUrl,
-                publishedAt: channel.snippet.publishedAt,
             },
             stats: {
                 subscriberCount: parseInt(stats.subscriberCount || 0),
-                viewCount: parseInt(stats.viewCount || 0),
+                lifetimeViews: parseInt(stats.viewCount || 0),
+                views28d,
+                views90d,
                 videoCount: parseInt(stats.videoCount || 0),
-                hiddenSubscriberCount: stats.hiddenSubscriberCount,
             },
             topVideos,
         });
