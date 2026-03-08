@@ -360,7 +360,7 @@ exports.getChannelAnalytics = async (req, res) => {
     try {
         const youtube = await getYoutubeClientForUser(req.userId);
         const client = youtube.context._options.auth; // The OAuth2Client instance
-        const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth: client });
+        const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth: client });
 
         // Fetch channel metadata and lifetime stats
         console.log('[YOUTUBE DEBUG] Fetching channel info...');
@@ -528,7 +528,7 @@ exports.getVideoAnalytics = async (req, res) => {
         const { videoId } = req.params;
         const youtube = await getYoutubeClientForUser(req.userId);
         const auth = youtube.context._options.auth;
-        const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth });
+        const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth });
 
         // Basic meta
         const videoRes = await youtube.videos.list({
@@ -542,12 +542,7 @@ exports.getVideoAnalytics = async (req, res) => {
 
         const video = videoRes.data.items[0];
         const publishedAt = video.snippet.publishedAt;
-        const startDate = dayjs(publishedAt).format('YYYY-MM-DD');
         const endDate = dayjs().format('YYYY-MM-DD');
-
-        // Fetch channel ID for the analytics query
-        const channelRes = await youtube.channels.list({ part: 'id', mine: true });
-        const channelId = channelRes.data.items[0].id;
 
         // Daily views for this specific video
         const dailyStats = await youtubeAnalytics.reports.query({
