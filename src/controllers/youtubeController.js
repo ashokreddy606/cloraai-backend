@@ -391,6 +391,7 @@ exports.getChannelAnalytics = async (req, res) => {
 
         // Set date ranges
         const today = dayjs().format('YYYY-MM-DD');
+        const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
         const minus28d = dayjs().subtract(28, 'day').format('YYYY-MM-DD');
         const minus90d = dayjs().subtract(90, 'day').format('YYYY-MM-DD');
         const minus30d = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
@@ -400,7 +401,7 @@ exports.getChannelAnalytics = async (req, res) => {
             youtubeAnalytics.reports.query({
                 ids: `channel==${channelId}`,
                 startDate: minus28d,
-                endDate: today,
+                endDate: yesterday,
                 metrics: 'views',
             }).catch(e => {
                 console.error('[YOUTUBE DEBUG] 28d query error:', e.response?.data || e.message);
@@ -409,7 +410,7 @@ exports.getChannelAnalytics = async (req, res) => {
             youtubeAnalytics.reports.query({
                 ids: `channel==${channelId}`,
                 startDate: minus90d,
-                endDate: today,
+                endDate: yesterday,
                 metrics: 'views',
             }).catch(e => {
                 console.error('[YOUTUBE DEBUG] 90d query error:', e.response?.data || e.message);
@@ -418,7 +419,7 @@ exports.getChannelAnalytics = async (req, res) => {
             youtubeAnalytics.reports.query({
                 ids: `channel==${channelId}`,
                 startDate: minus28d,
-                endDate: today,
+                endDate: yesterday,
                 metrics: 'views,likes,comments',
                 dimensions: 'video',
                 maxResults: 5,
@@ -430,7 +431,7 @@ exports.getChannelAnalytics = async (req, res) => {
             youtubeAnalytics.reports.query({
                 ids: `channel==${channelId}`,
                 startDate: minus30d,
-                endDate: today,
+                endDate: yesterday,
                 metrics: 'views',
                 dimensions: 'day',
                 sort: 'day',
@@ -542,7 +543,7 @@ exports.getVideoAnalytics = async (req, res) => {
 
         const video = videoRes.data.items[0];
         const publishedAt = video.snippet.publishedAt;
-        const endDate = dayjs().format('YYYY-MM-DD');
+        const endDate = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
 
         // Daily views for this specific video
         const dailyStats = await youtubeAnalytics.reports.query({
