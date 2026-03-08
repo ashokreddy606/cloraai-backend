@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const youtubeController = require('../controllers/youtubeController');
+const { youtubeGuard, youtubeAutomationGuard } = require('../middleware/youtubeGuard');
 const checkProAccess = require('../middleware/checkProAccess');
 const { uploadTempVideo } = require('../middleware/upload');
+
+router.use(youtubeGuard);
 
 // ── OAuth Flow ─────────────────────────────────────────────────────────────
 router.get('/auth', authenticate, youtubeController.getAuthUrl);

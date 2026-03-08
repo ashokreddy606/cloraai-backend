@@ -174,6 +174,12 @@ async function processUser(user) {
             }
 
             // 5. Send Auto-Reply
+            const { appConfig } = require('../config');
+            if (!appConfig.featureFlags.youtubeCommentRepliesEnabled) {
+                logger.debug('YOUTUBE_WORKER', 'Comment replies are globally disabled. Skipping reply.');
+                continue;
+            }
+
             if (matchedRule.replyDelay > 0) {
                 setTimeout(() => {
                     sendReply(youtube, commentId, matchedRule.replyMessage, user.id);

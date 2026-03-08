@@ -1463,7 +1463,13 @@ const toggleYouTubeFeature = async (req, res) => {
         saveConfig();
 
         logAdminAction(req.userId, 'TOGGLE_YOUTUBE_FEATURE', `${feature}:${enabled}`);
-        res.json({ success: true, message: `Feature ${feature} updated`, featureFlags: appConfig.featureFlags });
+        res.json({
+            success: true,
+            message: `Feature ${feature} updated`,
+            data: {
+                featureFlags: appConfig.featureFlags
+            }
+        });
     } catch (error) {
         res.status(500).json({ error: 'Failed to toggle YouTube feature', message: error.message });
     }
