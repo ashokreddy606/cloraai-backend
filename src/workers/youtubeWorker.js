@@ -143,6 +143,7 @@ async function processUser(user) {
             await prisma.youtubeComment.create({
                 data: {
                     userId: user.id,
+                    channelId: user.youtubeChannelId,
                     videoId,
                     commentId,
                     username: authorDisplayName || 'Unknown',

@@ -472,6 +472,7 @@ model YoutubeComment {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   videoId     String
+  channelId   String? // Link to specific YouTube channel
   commentId   String  @unique // YouTube comment ID (for deduplication)
   username    String // Author of the comment
   commentText String
@@ -493,9 +494,9 @@ model YoutubeAutomationRule {
   isActive     Boolean @default(true)
   replyDelay   Int     @default(0) // Delay in seconds before replying
   limitPerHour Int     @default(20) // Max replies per hour for this rule
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  channelId    String? // Link to specific YouTube channel
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([userId, keyword])
   @@index([userId])
@@ -510,7 +511,7 @@ model YoutubeLead {
   email  String
   phone  String?
   source String  @default("youtube")
-
+  channelId String? // Link to specific YouTube channel
   createdAt DateTime @default(now())
 
   @@index([userId])

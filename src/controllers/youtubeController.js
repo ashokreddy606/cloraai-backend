@@ -149,6 +149,12 @@ exports.handleCallback = async (req, res) => {
             }
         });
 
+        // Migrate legacy rules (null channelId) to the newly connected channel
+        await prisma.youtubeAutomationRule.updateMany({
+            where: { userId, channelId: null },
+            data: { channelId }
+        });
+
         const frontendUrl = process.env.FRONTEND_APP_SCHEME || 'cloraai://youtube-success';
         res.redirect(frontendUrl);
     } catch (error) {
@@ -199,14 +205,25 @@ exports.getRules = async (req, res) => {
         const limit = Math.min(100, parseInt(req.query.limit) || 20);
         const skip = (page - 1) * limit;
 
+        const user = await prisma.user.findUnique({ where: { id: req.userId } });
+        const channelId = user?.youtubeChannelId;
+
         const [rules, total] = await Promise.all([
             prisma.youtubeAutomationRule.findMany({
-                where: { userId: req.userId },
+                where: {
+                    userId: req.userId,
+                    OR: [{ channelId }, { channelId: null }]
+                },
                 orderBy: { createdAt: 'desc' },
                 take: limit,
                 skip
             }),
-            prisma.youtubeAutomationRule.count({ where: { userId: req.userId } })
+            prisma.youtubeAutomationRule.count({
+                where: {
+                    userId: req.userId,
+                    OR: [{ channelId }, { channelId: null }]
+                }
+            })
         ]);
 
         res.json({
@@ -224,9 +241,13 @@ exports.createRule = async (req, res) => {
         if (!keyword || !replyMessage) {
             return res.status(400).json({ error: 'Keyword and replyMessage are required' });
         }
+        const user = await prisma.user.findUnique({ where: { id: req.userId } });
+        const channelId = user?.youtubeChannelId;
+
         const rule = await prisma.youtubeAutomationRule.create({
             data: {
                 userId: req.userId,
+                channelId,
                 keyword: keyword.toLowerCase(),
                 replyMessage,
                 isActive: isActive !== undefined ? isActive : true,
@@ -294,14 +315,25 @@ exports.getLeads = async (req, res) => {
         const limit = Math.min(100, parseInt(req.query.limit) || 20);
         const skip = (page - 1) * limit;
 
+        const user = await prisma.user.findUnique({ where: { id: req.userId } });
+        const channelId = user?.youtubeChannelId;
+
         const [leads, total] = await Promise.all([
             prisma.youtubeLead.findMany({
-                where: { userId: req.userId },
+                where: {
+                    userId: req.userId,
+                    OR: [{ channelId }, { channelId: null }]
+                },
                 orderBy: { createdAt: 'desc' },
                 take: limit,
                 skip
             }),
-            prisma.youtubeLead.count({ where: { userId: req.userId } })
+            prisma.youtubeLead.count({
+                where: {
+                    userId: req.userId,
+                    OR: [{ channelId }, { channelId: null }]
+                }
+            })
         ]);
 
         res.json({
@@ -337,10 +369,29 @@ exports.submitLead = async (req, res) => {
 exports.getAnalytics = async (req, res) => {
     try {
         const userId = req.userId;
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const channelId = user?.youtubeChannelId;
+
         const [totalComments, totalReplies, totalLeads] = await Promise.all([
-            prisma.youtubeComment.count({ where: { userId } }),
-            prisma.youtubeComment.count({ where: { userId, replied: true } }),
-            prisma.youtubeLead.count({ where: { userId } })
+            prisma.youtubeComment.count({
+                where: {
+                    userId,
+                    OR: [{ channelId }, { channelId: null }]
+                }
+            }),
+            prisma.youtubeComment.count({
+                where: {
+                    userId,
+                    OR: [{ channelId }, { channelId: null }],
+                    replied: true
+                }
+            }),
+            prisma.youtubeLead.count({
+                where: {
+                    userId,
+                    OR: [{ channelId }, { channelId: null }]
+                }
+            })
         ]);
         const conversionRate = totalReplies > 0 ? ((totalLeads / totalReplies) * 100).toFixed(2) : 0;
         res.json({
