@@ -1487,7 +1487,9 @@ const getYouTubeUserVideos = async (req, res) => {
         await getUserVideos(req, res);
         req.userId = originalUserId;
     } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch user videos', message: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to fetch user videos', message: error.message });
+        }
     }
 };
 

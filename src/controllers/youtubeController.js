@@ -57,10 +57,14 @@ const getYoutubeClientForUser = async (userId) => {
                 where: { id: userId },
                 data: { youtubeAccessToken: encrypt(token) }
             });
+            logger.info('YOUTUBE', 'Token automatically refreshed and saved', { userId });
         }
     } catch (refreshError) {
         logger.error('YOUTUBE', 'Token refresh failed', { userId, error: refreshError.message });
-        throw new Error('YouTube session expired. Please reconnect your account.');
+        if (refreshError.message.includes('invalid_grant')) {
+            throw new Error('YouTube session expired. Please reconnect your account in settings.');
+        }
+        throw new Error('Failed to refresh YouTube session: ' + refreshError.message);
     }
 
     return google.youtube({ version: 'v3', auth: client });
