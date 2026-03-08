@@ -52,8 +52,14 @@ if (fs.existsSync(configFilePath)) {
     try {
         const fileData = fs.readFileSync(configFilePath, 'utf8');
         const parsed = JSON.parse(fileData);
-        // Merge defaults with saved config to ensure no missing keys
-        appConfig = { ...defaultAppConfig, ...parsed };
+
+        // Custom merge to ensure new feature flags or limits aren't lost
+        appConfig = {
+            ...defaultAppConfig,
+            ...parsed,
+            featureFlags: { ...defaultAppConfig.featureFlags, ...(parsed.featureFlags || {}) },
+            aiLimits: { ...defaultAppConfig.aiLimits, ...(parsed.aiLimits || {}) }
+        };
     } catch (err) {
         console.error('Failed to parse config.json, using defaults:', err);
     }
