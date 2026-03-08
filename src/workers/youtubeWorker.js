@@ -15,6 +15,12 @@ const getOAuth2Client = () => {
 
 // Worker runs every 2 minutes
 cron.schedule('*/2 * * * *', async () => {
+    const { appConfig } = require('../config');
+    if (!appConfig.featureFlags.youtubeAutomationEnabled) {
+        logger.debug('YOUTUBE_WORKER', 'YouTube Automation is globally disabled. Skipping.');
+        return;
+    }
+
     const lockName = 'youtube_cron';
     // Acquire lock for 110s (slightly less than the 2 min interval)
     // so if a worker crashes, the lock will still expire before the next schedule

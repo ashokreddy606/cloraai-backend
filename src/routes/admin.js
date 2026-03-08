@@ -93,6 +93,10 @@ router.get('/youtube/rules', admin.getYouTubeRules);
 router.patch('/youtube/rules/:id', admin.updateYouTubeRule);
 router.delete('/youtube/rules/:id', admin.deleteYouTubeRule);
 router.get('/youtube/comments', admin.getYouTubeComments);
+router.post('/youtube/toggle-feature', admin.toggleYouTubeFeature);
+router.get('/youtube/videos', admin.getYouTubeUserVideos);
+router.delete('/youtube/videos/:userId/:videoId', admin.adminDeleteYouTubeVideo);
+router.get('/youtube/analytics/:userId', admin.getYouTubeUserAnalytics);
 
 // ── Referral Management ───────────────────────────────────────────────
 const adminReferral = require('../controllers/adminReferralController');

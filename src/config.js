@@ -30,6 +30,9 @@ const defaultAppConfig = {
         autoDMEnabled: true,
         reelSchedulerEnabled: true,
         brandDealsEnabled: true,
+        youtubeEnabled: true,
+        youtubeAutomationEnabled: true,
+        youtubeCommentRepliesEnabled: true,
     },
     aiLimits: {
         freeDailyCaptions: 5,

@@ -1450,6 +1450,83 @@ const getYouTubeComments = async (req, res) => {
     }
 };
 
+const toggleYouTubeFeature = async (req, res) => {
+    try {
+        const { feature, enabled } = req.body;
+        const { appConfig, saveConfig } = require('../config');
+
+        if (!appConfig.featureFlags.hasOwnProperty(feature)) {
+            return res.status(400).json({ error: 'Invalid feature flag' });
+        }
+
+        appConfig.featureFlags[feature] = enabled;
+        saveConfig();
+
+        logAdminAction(req.userId, 'TOGGLE_YOUTUBE_FEATURE', `${feature}:${enabled}`);
+        res.json({ success: true, message: `Feature ${feature} updated`, featureFlags: appConfig.featureFlags });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to toggle YouTube feature', message: error.message });
+    }
+};
+
+const getYouTubeUserVideos = async (req, res) => {
+    try {
+        const { userId, maxResults = 20 } = req.query;
+        if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+        const { getUserVideos } = require('./youtubeController');
+        // We temporarily override req.userId to reuse the existing controller logic
+        const originalUserId = req.userId;
+        req.userId = userId;
+        await getUserVideos(req, res);
+        req.userId = originalUserId;
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch user videos', message: error.message });
+    }
+};
+
+const adminDeleteYouTubeVideo = async (req, res) => {
+    try {
+        const { userId, videoId } = req.params;
+        const youtubeController = require('./youtubeController');
+
+        // Setup req for the existing delete logic if it exists, or implement directly
+        // YouTube API delete requires the authenticated client for that user
+        const { google } = require('googleapis');
+        const { decrypt } = require('../utils/cryptoUtils');
+
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user || !user.youtubeAccessToken) throw new Error('User YouTube not connected');
+
+        const oauth2Client = new google.auth.OAuth2(
+            process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
+            process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET
+        );
+        oauth2Client.setCredentials({ access_token: decrypt(user.youtubeAccessToken) });
+        const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+
+        await youtube.videos.delete({ id: videoId });
+
+        logAdminAction(req.userId, 'ADMIN_DELETE_YOUTUBE_VIDEO', `${userId}:${videoId}`);
+        res.json({ success: true, message: 'Video deleted from YouTube' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete YouTube video', message: error.message });
+    }
+};
+
+const getYouTubeUserAnalytics = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { getChannelAnalytics } = require('./youtubeController');
+        const originalUserId = req.userId;
+        req.userId = userId;
+        await getChannelAnalytics(req, res);
+        req.userId = originalUserId;
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch user analytics', message: error.message });
+    }
+};
+
 module.exports = {
     getMetrics,
     getSystemMetrics,   // NEW: Phase 3 system observability
@@ -1504,4 +1581,8 @@ module.exports = {
     updateYouTubeRule,
     deleteYouTubeRule,
     getYouTubeComments,
+    toggleYouTubeFeature,
+    getYouTubeUserVideos,
+    adminDeleteYouTubeVideo,
+    getYouTubeUserAnalytics,
 };
