@@ -359,49 +359,51 @@ exports.getAnalytics = async (req, res) => {
 exports.getChannelAnalytics = async (req, res) => {
     try {
         const youtube = await getYoutubeClientForUser(req.userId);
-        const auth = youtube.context._options.auth;
-        const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth });
+        const client = youtube.context._options.auth; // The OAuth2Client instance
+        const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth: client });
 
         // Fetch channel metadata and lifetime stats
-        console.log('[YOUTUBE DEBUG] Fetching channel for userId:', req.userId);
+        console.log('[YOUTUBE DEBUG] Fetching channel info...');
         const channelRes = await youtube.channels.list({
             part: 'snippet,statistics,contentDetails',
             mine: true,
         }).catch(err => {
             console.error('[YOUTUBE DEBUG] channels.list failed:', err.response?.data || err.message);
-            throw err;
+            throw new Error(`YouTube Data API failed: ${err.message}`);
         });
 
-        if (!channelRes.data.items || channelRes.data.items.length === 0) {
-            console.warn('[YOUTUBE DEBUG] No channels found for this token');
+        const channels = channelRes.data.items || [];
+        if (channels.length === 0) {
+            console.warn('[YOUTUBE DEBUG] No channels found');
             return res.status(404).json({ error: 'No YouTube channel found' });
         }
 
-        const channel = channelRes.data.items[0];
+        // Auto-select the channel with content if multiple exist
+        const channel = channels.find(c => parseInt(c.statistics?.viewCount || '0') > 0) || channels[0];
         const channelId = channel.id;
         const stats = channel.statistics;
-        console.log('[YOUTUBE DEBUG] Found channel:', {
+
+        console.log('[YOUTUBE DEBUG] Using channel:', {
             id: channelId,
             title: channel.snippet?.title,
-            views: stats.viewCount,
-            subs: stats.subscriberCount
+            views: stats.viewCount
         });
 
-        // Set date ranges for Analytics
+        // Set date ranges
         const today = dayjs().format('YYYY-MM-DD');
         const minus28d = dayjs().subtract(28, 'day').format('YYYY-MM-DD');
         const minus90d = dayjs().subtract(90, 'day').format('YYYY-MM-DD');
+        const minus30d = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
 
-        // Fetch Analytics: 28-day views, 90-day views, and Top Videos
-        const [stats28d, stats90d, topContentRes] = await Promise.all([
+        // Fetch Analytics with safety wrappers
+        const [stats28d, stats90d, topContentRes, dailyViewsRes] = await Promise.all([
             youtubeAnalytics.reports.query({
                 ids: `channel==${channelId}`,
                 startDate: minus28d,
                 endDate: today,
                 metrics: 'views',
             }).catch(e => {
-                console.error('[YOUTUBE ANALYTICS] 28d query failed:', e.response?.data || e.message);
-                logger.warn('YOUTUBE', 'Analytics 28d error', e.message);
+                console.error('[YOUTUBE DEBUG] 28d query error:', e.response?.data || e.message);
                 return { data: { rows: [[0]] } };
             }),
             youtubeAnalytics.reports.query({
@@ -410,8 +412,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 endDate: today,
                 metrics: 'views',
             }).catch(e => {
-                console.error('[YOUTUBE ANALYTICS] 90d query failed:', e.response?.data || e.message);
-                logger.warn('YOUTUBE', 'Analytics 90d error', e.message);
+                console.error('[YOUTUBE DEBUG] 90d query error:', e.response?.data || e.message);
                 return { data: { rows: [[0]] } };
             }),
             youtubeAnalytics.reports.query({
@@ -423,91 +424,52 @@ exports.getChannelAnalytics = async (req, res) => {
                 maxResults: 5,
                 sort: '-views',
             }).catch(e => {
-                console.error('[YOUTUBE ANALYTICS] top content query failed:', e.response?.data || e.message);
-                logger.warn('YOUTUBE', 'Analytics top content error', e.message);
+                console.error('[YOUTUBE DEBUG] Top content error:', e.response?.data || e.message);
+                return { data: { rows: [] } };
+            }),
+            youtubeAnalytics.reports.query({
+                ids: `channel==${channelId}`,
+                startDate: minus30d,
+                endDate: today,
+                metrics: 'views',
+                dimensions: 'day',
+                sort: 'day',
+            }).catch(e => {
+                console.error('[YOUTUBE DEBUG] Daily views error:', e.response?.data || e.message);
                 return { data: { rows: [] } };
             })
         ]);
-
-        const views28d = parseInt(stats28d.data.rows?.[0]?.[0] || 0);
-        const views90d = parseInt(stats90d.data.rows?.[0]?.[0] || 0);
-
-        // Fetch Daily views (last 30 days) for the chart
-        const minus30d = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
-        const dailyViewsRes = await youtubeAnalytics.reports.query({
-            ids: `channel==${channelId}`,
-            startDate: minus30d,
-            endDate: today,
-            metrics: 'views',
-            dimensions: 'day',
-            sort: 'day',
-        }).catch(e => {
-            console.error('[YOUTUBE ANALYTICS] daily views query failed:', e.response?.data || e.message);
-            logger.warn('YOUTUBE', 'Daily views error', e.message);
-            return { data: { rows: [] } };
-        });
 
         const dailyViews = (dailyViewsRes.data.rows || []).map(row => ({
             date: row[0],
             views: parseInt(row[1] || 0)
         }));
 
-        // Fetch metadata for top videos found in Analytics
+        // Video meta for top content
         let topVideos = [];
         const topVideoIds = topContentRes.data.rows?.map(row => row[0]) || [];
-
         if (topVideoIds.length > 0) {
-            const videoMetaRes = await youtube.videos.list({
-                part: 'snippet,statistics',
-                id: topVideoIds.join(','),
-            });
-
-            // Map Analytics results to video metadata
-            topVideos = (videoMetaRes.data.items || []).map(v => {
-                const analyticsRow = topContentRes.data.rows.find(row => row[0] === v.id);
-                return {
-                    id: v.id,
-                    title: v.snippet.title,
-                    thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
-                    viewCount: parseInt(analyticsRow?.[1] || v.statistics?.viewCount || 0),
-                    likeCount: parseInt(analyticsRow?.[2] || v.statistics?.likeCount || 0),
-                    commentCount: parseInt(analyticsRow?.[3] || v.statistics?.commentCount || 0),
-                    publishedAt: v.snippet.publishedAt,
-                };
-            }).sort((a, b) => b.viewCount - a.viewCount);
+            try {
+                const videoMetaRes = await youtube.videos.list({
+                    part: 'snippet,statistics',
+                    id: topVideoIds.join(','),
+                });
+                topVideos = (videoMetaRes.data.items || []).map(v => {
+                    const row = topContentRes.data.rows.find(r => r[0] === v.id);
+                    return {
+                        id: v.id,
+                        title: v.snippet.title,
+                        thumbnail: v.snippet.thumbnails?.medium?.url,
+                        viewCount: parseInt(row?.[1] || v.statistics?.viewCount || 0),
+                        likeCount: parseInt(row?.[2] || v.statistics?.likeCount || 0),
+                        commentCount: parseInt(row?.[3] || v.statistics?.commentCount || 0),
+                        publishedAt: v.snippet.publishedAt,
+                    };
+                }).sort((a, b) => b.viewCount - a.viewCount);
+            } catch (e) { console.warn('[YOUTUBE DEBUG] Video meta fetch failed', e.message); }
         }
 
-        // Fallback: If Analytics didn't return videos, use the old method (last uploads)
-        if (topVideos.length === 0) {
-            const uploadsPlaylistId = channel.contentDetails?.relatedPlaylists?.uploads;
-            if (uploadsPlaylistId) {
-                const playlistRes = await youtube.playlistItems.list({
-                    part: 'contentDetails',
-                    playlistId: uploadsPlaylistId,
-                    maxResults: 10,
-                }).catch(() => ({ data: { items: [] } }));
-
-                const videoIds = playlistRes.data.items?.map(i => i.contentDetails.videoId).filter(Boolean) || [];
-                if (videoIds.length > 0) {
-                    const videoStatsRes = await youtube.videos.list({
-                        part: 'snippet,statistics',
-                        id: videoIds.join(','),
-                    });
-                    topVideos = (videoStatsRes.data.items || [])
-                        .sort((a, b) => parseInt(b.statistics?.viewCount || 0) - parseInt(a.statistics?.viewCount || 0))
-                        .slice(0, 5)
-                        .map(v => ({
-                            id: v.id,
-                            title: v.snippet.title,
-                            thumbnail: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url,
-                            viewCount: parseInt(v.statistics?.viewCount || 0),
-                            publishedAt: v.snippet.publishedAt,
-                        }));
-                }
-            }
-        }
-
-        // Update cached metrics on user (Lifetime stats)
+        // Update user stats in DB for cache
         await prisma.user.update({
             where: { id: req.userId },
             data: {
@@ -516,47 +478,45 @@ exports.getChannelAnalytics = async (req, res) => {
                 youtubeVideoCount: parseInt(stats.videoCount || 0),
                 youtubeLastSyncedAt: new Date(),
             }
-        });
+        }).catch(e => console.warn('Prisma update failed', e.message));
 
         res.json({
             success: true,
             channel: {
                 title: channel.snippet.title,
-                description: channel.snippet.description,
                 thumbnail: channel.snippet.thumbnails?.medium?.url,
                 customUrl: channel.snippet.customUrl,
             },
             stats: {
                 subscriberCount: parseInt(stats.subscriberCount || 0),
                 lifetimeViews: parseInt(stats.viewCount || 0),
-                views28d,
-                views90d,
+                views28d: parseInt(stats28d.data.rows?.[0]?.[0] || 0),
+                views90d: parseInt(stats90d.data.rows?.[0]?.[0] || 0),
                 videoCount: parseInt(stats.videoCount || 0),
-                dailyViews, // Added for the chart
+                dailyViews,
             },
             topVideos,
         });
-    } catch (error) {
-        console.error('[YOUTUBE DEBUG] getChannelAnalytics Full Error:', error.response?.data || error.message);
-        logger.error('YOUTUBE', 'getChannelAnalytics', error);
 
-        // Fallback to cached data from DB if YouTube API fails
+    } catch (error) {
+        console.error('[YOUTUBE CRITICAL ERROR]', error);
+        logger.error('YOUTUBE', 'getChannelAnalytics Full Fail', { error: error.message, stack: error.stack });
+
         try {
             const user = await prisma.user.findUnique({ where: { id: req.userId } });
-            console.log('[YOUTUBE DEBUG] Returning cached data due to error');
             res.json({
                 success: true,
                 cached: true,
-                channel: { title: 'Your Channel' },
+                channel: { title: 'Your Channel (Cache)' },
                 stats: {
                     subscriberCount: user?.youtubeSubscriberCount || 0,
-                    viewCount: user?.youtubeViewCount || 0,
+                    lifetimeViews: user?.youtubeViewCount || 0,
                     videoCount: user?.youtubeVideoCount || 0,
                 },
                 topVideos: [],
             });
         } catch {
-            res.status(500).json({ error: 'Error fetching channel analytics' });
+            res.status(500).json({ error: 'Failed to fetch analytics' });
         }
     }
 };
