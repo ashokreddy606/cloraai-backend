@@ -411,6 +411,22 @@ exports.getChannelAnalytics = async (req, res) => {
         const views28d = parseInt(stats28d.data.rows?.[0]?.[0] || 0);
         const views90d = parseInt(stats90d.data.rows?.[0]?.[0] || 0);
 
+        // Fetch Daily views (last 30 days) for the chart
+        const minus30d = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+        const dailyViewsRes = await youtubeAnalytics.reports.query({
+            ids: `channel==${channelId}`,
+            startDate: minus30d,
+            endDate: today,
+            metrics: 'views',
+            dimensions: 'day',
+            sort: 'day',
+        }).catch(e => { logger.warn('YOUTUBE', 'Daily views error', e.message); return { data: { rows: [] } }; });
+
+        const dailyViews = (dailyViewsRes.data.rows || []).map(row => ({
+            date: row[0],
+            views: parseInt(row[1] || 0)
+        }));
+
         // Fetch metadata for top videos found in Analytics
         let topVideos = [];
         const topVideoIds = topContentRes.data.rows?.map(row => row[0]) || [];
@@ -491,6 +507,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 views28d,
                 views90d,
                 videoCount: parseInt(stats.videoCount || 0),
+                dailyViews, // Added for the chart
             },
             topVideos,
         });
@@ -514,6 +531,80 @@ exports.getChannelAnalytics = async (req, res) => {
         } catch {
             res.status(500).json({ error: 'Error fetching channel analytics' });
         }
+    }
+};
+
+// ── Single Video Analytics ──────────────────────────────────────────────────
+
+exports.getVideoAnalytics = async (req, res) => {
+    try {
+        const { videoId } = req.params;
+        const youtube = await getYoutubeClientForUser(req.userId);
+        const auth = youtube.context._options.auth;
+        const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth });
+
+        // Basic meta
+        const videoRes = await youtube.videos.list({
+            part: 'snippet,statistics,contentDetails',
+            id: videoId,
+        });
+
+        if (!videoRes.data.items || videoRes.data.items.length === 0) {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const video = videoRes.data.items[0];
+        const publishedAt = video.snippet.publishedAt;
+        const startDate = dayjs(publishedAt).format('YYYY-MM-DD');
+        const endDate = dayjs().format('YYYY-MM-DD');
+
+        // Fetch channel ID for the analytics query
+        const channelRes = await youtube.channels.list({ part: 'id', mine: true });
+        const channelId = channelRes.data.items[0].id;
+
+        // Daily views for this specific video
+        const dailyStats = await youtubeAnalytics.reports.query({
+            ids: `channel==${channelId}`,
+            startDate: dayjs().subtract(90, 'day').isBefore(dayjs(publishedAt))
+                ? dayjs(publishedAt).format('YYYY-MM-DD')
+                : dayjs().subtract(90, 'day').format('YYYY-MM-DD'),
+            endDate,
+            metrics: 'views,estimatedMinutesWatched,averageViewDuration',
+            dimensions: 'day',
+            filters: `video==${videoId}`,
+            sort: 'day',
+        }).catch(e => {
+            logger.warn('YOUTUBE', 'Video daily stats error', e.message);
+            return { data: { rows: [] } };
+        });
+
+        const timeSeries = (dailyStats.data.rows || []).map(row => ({
+            date: row[0],
+            views: parseInt(row[1] || 0),
+            watchTime: parseFloat(row[2] || 0),
+            avgDuration: parseInt(row[3] || 0)
+        }));
+
+        res.json({
+            success: true,
+            video: {
+                id: video.id,
+                title: video.snippet.title,
+                thumbnail: video.snippet.thumbnails?.maxres?.url || video.snippet.thumbnails?.medium?.url,
+                viewCount: parseInt(video.statistics.viewCount || 0),
+                likeCount: parseInt(video.statistics.likeCount || 0),
+                commentCount: parseInt(video.statistics.commentCount || 0),
+                duration: video.contentDetails.duration,
+                publishedAt: video.snippet.publishedAt,
+            },
+            analytics: {
+                timeSeries,
+                totalLifetimeViews: parseInt(video.statistics.viewCount || 0),
+            }
+        });
+    } catch (error) {
+        logger.error('YOUTUBE', 'getVideoAnalytics', error);
+        res.status(500).json({ error: 'Error fetching video analytics' });
     }
 };
 

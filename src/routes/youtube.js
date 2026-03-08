@@ -44,4 +44,7 @@ router.put('/videos/:videoId', authenticate, youtubeController.updateVideo);
 // DELETE /api/youtube/videos/:videoId — delete a video
 router.delete('/videos/:videoId', authenticate, youtubeController.deleteVideo);
 
+// GET /api/youtube/videos/:videoId/analytics — detailed video analytics
+router.get('/videos/:videoId/analytics', authenticate, youtubeController.getVideoAnalytics);
+
 module.exports = router;
