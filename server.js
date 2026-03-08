@@ -177,11 +177,17 @@ if (process.env.FRONTEND_URL) {
 
 app.use(cors({
     origin: (origin, callback) => {
+        // [DEBUG] Log incoming origin for CORS troubleshooting
+        if (origin) logger.info('CORS', `Incoming request from origin: ${origin}`);
+        else logger.info('CORS', `Incoming request with no origin (mobile/curl)`);
+
         // Allow requests with no origin (mobile apps, curl, Postman)
         if (!origin) return callback(null, true);
         if (allowedOrigins.includes(origin)) return callback(null, true);
         // In development, allow everything
         if (process.env.NODE_ENV !== 'production') return callback(null, true);
+
+        logger.warn('CORS', `Origin ${origin} blocked by policy`);
         callback(new Error(`CORS: origin '${origin}' not allowed`));
     },
     credentials: true

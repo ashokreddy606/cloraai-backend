@@ -174,7 +174,10 @@ const login = async (req, res) => {
     const { password, deviceFingerprint } = req.body;
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
+    console.log(`[DEBUG] Login attempt received for: ${email} from IP: ${ipAddress}`);
+
     if (!email || !password) {
+      console.warn(`[DEBUG] Login failed: Missing email or password for ${email}`);
       return res.status(400).json({
         error: 'Invalid input',
         message: 'Email and password are required'
@@ -189,11 +192,13 @@ const login = async (req, res) => {
     const LOCKED_OUT = { error: 'Account locked', message: 'Too many failed login attempts. Please try again after 30 minutes.' };
 
     if (!user) {
+      console.warn(`[DEBUG] Login failed: User not found - ${email}`);
       return res.status(401).json(INVALID_CREDS);
     }
 
     // Check Lockout Status
     if (user.lockoutUntil && new Date(user.lockoutUntil) > new Date()) {
+      console.warn(`[DEBUG] Login failed: Account locked for ${email}`);
       return res.status(403).json(LOCKED_OUT);
     }
 
@@ -201,6 +206,7 @@ const login = async (req, res) => {
     const passwordValid = await verifyPassword(password, user.password);
 
     if (!passwordValid) {
+      console.warn(`[DEBUG] Login failed: Invalid password for ${email}`);
       // Increment failed attempts
       const newAttempts = user.failedLoginAttempts + 1;
       const lockoutUntil = newAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
