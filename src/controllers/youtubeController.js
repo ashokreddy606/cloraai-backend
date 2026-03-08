@@ -363,20 +363,29 @@ exports.getChannelAnalytics = async (req, res) => {
         const youtubeAnalytics = google.youtubeanalytics({ version: 'v2', auth });
 
         // Fetch channel metadata and lifetime stats
-        const channelRes = await youtubeBreaker.fire(() => youtube.channels.list({
+        console.log('[YOUTUBE DEBUG] Fetching channel for userId:', req.userId);
+        const channelRes = await youtube.channels.list({
             part: 'snippet,statistics,contentDetails',
             mine: true,
-        }));
-
-        if (channelRes.fallback) throw new Error("YouTube API Circuit Breaker Fallback");
+        }).catch(err => {
+            console.error('[YOUTUBE DEBUG] channels.list failed:', err.response?.data || err.message);
+            throw err;
+        });
 
         if (!channelRes.data.items || channelRes.data.items.length === 0) {
+            console.warn('[YOUTUBE DEBUG] No channels found for this token');
             return res.status(404).json({ error: 'No YouTube channel found' });
         }
 
         const channel = channelRes.data.items[0];
         const channelId = channel.id;
         const stats = channel.statistics;
+        console.log('[YOUTUBE DEBUG] Found channel:', {
+            id: channelId,
+            title: channel.snippet?.title,
+            views: stats.viewCount,
+            subs: stats.subscriberCount
+        });
 
         // Set date ranges for Analytics
         const today = dayjs().format('YYYY-MM-DD');
@@ -386,7 +395,7 @@ exports.getChannelAnalytics = async (req, res) => {
         // Fetch Analytics: 28-day views, 90-day views, and Top Videos
         const [stats28d, stats90d, topContentRes] = await Promise.all([
             youtubeAnalytics.reports.query({
-                ids: 'channel==MINE',
+                ids: `channel==${channelId}`,
                 startDate: minus28d,
                 endDate: today,
                 metrics: 'views',
@@ -396,7 +405,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 return { data: { rows: [[0]] } };
             }),
             youtubeAnalytics.reports.query({
-                ids: 'channel==MINE',
+                ids: `channel==${channelId}`,
                 startDate: minus90d,
                 endDate: today,
                 metrics: 'views',
@@ -406,7 +415,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 return { data: { rows: [[0]] } };
             }),
             youtubeAnalytics.reports.query({
-                ids: 'channel==MINE',
+                ids: `channel==${channelId}`,
                 startDate: minus28d,
                 endDate: today,
                 metrics: 'views,likes,comments',
@@ -528,11 +537,13 @@ exports.getChannelAnalytics = async (req, res) => {
             topVideos,
         });
     } catch (error) {
+        console.error('[YOUTUBE DEBUG] getChannelAnalytics Full Error:', error.response?.data || error.message);
         logger.error('YOUTUBE', 'getChannelAnalytics', error);
 
         // Fallback to cached data from DB if YouTube API fails
         try {
             const user = await prisma.user.findUnique({ where: { id: req.userId } });
+            console.log('[YOUTUBE DEBUG] Returning cached data due to error');
             res.json({
                 success: true,
                 cached: true,
