@@ -6,10 +6,28 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const redisClient = new Redis(REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
+    retryStrategy(times) {
+        const delay = Math.min(times * 50, 2000);
+        if (times % 10 === 0) {
+            logger.warn('REDIS', `Redis connection retry #${times} in ${delay}ms`);
+        }
+        return delay;
+    },
+    reconnectOnError(err) {
+        const targetError = 'READONLY';
+        if (err.message.includes(targetError)) {
+            return true;
+        }
+        return false;
+    }
 });
 
 redisClient.on('error', (err) => {
-    logger.error('REDIS', 'Redis connection error', { error: err.message });
+    if (err.code === 'EAI_AGAIN') {
+        logger.error('REDIS', 'DNS Lookup failed for Redis. Check if your REDIS_URL/Host is correct.', { host: err.hostname });
+    } else {
+        logger.error('REDIS', 'Redis connection error', { error: err.message, code: err.code });
+    }
 });
 
 redisClient.on('connect', () => {

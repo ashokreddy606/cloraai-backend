@@ -109,6 +109,8 @@ const runSubscriptionExpiry = async () => {
 // restarted at midnight and missed the cron window. Fully idempotent.
 (async () => {
     try {
+        if (process.env.NODE_ENV === 'test') return;
+
         logger.info('CRON:SUBSCRIPTIONS', 'Startup reconciliation: checking for expired subscriptions...');
         const count = await runSubscriptionExpiry();
         if (count > 0) {
@@ -117,7 +119,11 @@ const runSubscriptionExpiry = async () => {
             logger.info('CRON:SUBSCRIPTIONS', 'Startup reconciliation: no expired subscriptions found.');
         }
     } catch (e) {
-        logger.error('CRON:SUBSCRIPTIONS', 'Startup reconciliation failed', { error: e.message });
+        logger.error('CRON:SUBSCRIPTIONS', 'Startup reconciliation failed', {
+            error: e.message,
+            code: e.code,
+            host: os.hostname()
+        });
     }
 })();
 

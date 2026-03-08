@@ -3,6 +3,9 @@ const Redis = require('ioredis');
 // Use a separate connection for locks to avoid blocking on queue processing
 const redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
     maxRetriesPerRequest: null,
+    retryStrategy(times) {
+        return Math.min(times * 50, 2000);
+    }
 });
 
 /**

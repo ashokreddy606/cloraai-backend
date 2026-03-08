@@ -40,6 +40,12 @@ const validateEnv = () => {
 
     if (missingOptional.length > 0) {
         logger.warn('ENV_VALIDATOR', `Missing optional feature variables: ${missingOptional.join(', ')}. Some features will be disabled.`);
+        if (missingOptional.includes('REDIS_URL')) {
+            logger.info('ENV_VALIDATOR', 'TIP: REDIS_URL is missing. BullMQ and Caching will use localhost:6379.');
+        }
+        if (missingOptional.includes('TOKEN_ENCRYPTION_SECRET')) {
+            logger.warn('ENV_VALIDATOR', 'CRITICAL TIP: TOKEN_ENCRYPTION_SECRET is missing. OAuth tokens are at risk!');
+        }
     }
 
     // Specific validation for JWT_SECRET

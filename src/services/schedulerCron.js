@@ -115,7 +115,11 @@ const recoverOrphanedPosts = async () => {
             logger.increment('schedulerOrphansRecovered');
         }
     } catch (e) {
-        logger.error('CRON:RECOVERY', 'Failed to recover orphaned posts', { error: e.message });
+        logger.error('CRON:RECOVERY', 'Failed to recover orphaned posts', {
+            error: e.message,
+            stack: e.stack,
+            dbUrl: process.env.DATABASE_URL?.split('@')[1] // Log host only for privacy
+        });
     }
 };
 
