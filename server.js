@@ -163,12 +163,16 @@ app.use(hpp());
 // CORS — restrict in production
 const allowedOrigins = [
     'http://localhost:8081',   // Expo mobile dev
+    'http://localhost:19000',  // Legacy Expo dev
+    'http://localhost:19006',  // Expo web dev
     'http://localhost:5173',   // Vite admin dev (default)
     'http://localhost:5174',   // Vite admin dev (fallback port)
     'http://localhost:5175',   // Vite admin dev (tertiary fallback)
     'http://localhost:3000',   // Generic React/Node
     'http://127.0.0.1:5173',
     'http://127.0.0.1:5174',
+    'null',                     // Some mobile webviews
+    'file://',                  // Some mobile webviews
 ];
 
 if (process.env.FRONTEND_URL) {
@@ -178,19 +182,25 @@ if (process.env.FRONTEND_URL) {
 app.use(cors({
     origin: (origin, callback) => {
         // [DEBUG] Log incoming origin for CORS troubleshooting
-        if (origin) logger.info('CORS', `Incoming request from origin: ${origin}`);
-        else logger.info('CORS', `Incoming request with no origin (mobile/curl)`);
+        // if (origin) logger.info('CORS', `Incoming request from origin: ${origin}`);
 
         // Allow requests with no origin (mobile apps, curl, Postman)
         if (!origin) return callback(null, true);
+
+        // Allow common origins
         if (allowedOrigins.includes(origin)) return callback(null, true);
-        // In development, allow everything
-        if (process.env.NODE_ENV !== 'production') return callback(null, true);
+
+        // Broaden matching for Expo/Tunnel origins or development
+        if (process.env.NODE_ENV !== 'production' || origin.includes('expo.dev') || origin.includes('ngrok') || origin.includes('railway.app')) {
+            return callback(null, true);
+        }
 
         logger.warn('CORS', `Origin ${origin} blocked by policy`);
         callback(new Error(`CORS: origin '${origin}' not allowed`));
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Internal-Token']
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -265,7 +275,8 @@ app.get('/internal/metrics', async (req, res) => {
 });
 
 // Public App Config Endpoint - allows mobile app to load pricing and feature flags dynamically
-app.get('/api/config', (req, res) => {
+// Public App Config Endpoint - allows mobile app to load pricing and feature flags dynamically
+const getAppConfig = (req, res) => {
     const { appConfig } = require('./src/config');
     res.status(200).json({
         success: true,
@@ -283,7 +294,10 @@ app.get('/api/config', (req, res) => {
             }
         }
     });
-});
+};
+
+app.get('/api/config', getAppConfig);
+app.get('/api/v1/config', getAppConfig); // Alias for versioned compatibility
 
 const maintenanceMiddleware = require('./src/middleware/maintenance');
 
