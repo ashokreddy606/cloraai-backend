@@ -386,26 +386,38 @@ exports.getChannelAnalytics = async (req, res) => {
         // Fetch Analytics: 28-day views, 90-day views, and Top Videos
         const [stats28d, stats90d, topContentRes] = await Promise.all([
             youtubeAnalytics.reports.query({
-                ids: `channel==${channelId}`,
+                ids: 'channel==MINE',
                 startDate: minus28d,
                 endDate: today,
                 metrics: 'views',
-            }).catch(e => { logger.warn('YOUTUBE', 'Analytics 28d error', e.message); return { data: { rows: [[0]] } }; }),
+            }).catch(e => {
+                console.error('[YOUTUBE ANALYTICS] 28d query failed:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', 'Analytics 28d error', e.message);
+                return { data: { rows: [[0]] } };
+            }),
             youtubeAnalytics.reports.query({
-                ids: `channel==${channelId}`,
+                ids: 'channel==MINE',
                 startDate: minus90d,
                 endDate: today,
                 metrics: 'views',
-            }).catch(e => { logger.warn('YOUTUBE', 'Analytics 90d error', e.message); return { data: { rows: [[0]] } }; }),
+            }).catch(e => {
+                console.error('[YOUTUBE ANALYTICS] 90d query failed:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', 'Analytics 90d error', e.message);
+                return { data: { rows: [[0]] } };
+            }),
             youtubeAnalytics.reports.query({
-                ids: `channel==${channelId}`,
+                ids: 'channel==MINE',
                 startDate: minus28d,
                 endDate: today,
                 metrics: 'views,likes,comments',
                 dimensions: 'video',
                 maxResults: 5,
                 sort: '-views',
-            }).catch(e => { logger.warn('YOUTUBE', 'Analytics top content error', e.message); return { data: { rows: [] } }; })
+            }).catch(e => {
+                console.error('[YOUTUBE ANALYTICS] top content query failed:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', 'Analytics top content error', e.message);
+                return { data: { rows: [] } };
+            })
         ]);
 
         const views28d = parseInt(stats28d.data.rows?.[0]?.[0] || 0);
@@ -414,13 +426,17 @@ exports.getChannelAnalytics = async (req, res) => {
         // Fetch Daily views (last 30 days) for the chart
         const minus30d = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
         const dailyViewsRes = await youtubeAnalytics.reports.query({
-            ids: `channel==${channelId}`,
+            ids: 'channel==MINE',
             startDate: minus30d,
             endDate: today,
             metrics: 'views',
             dimensions: 'day',
             sort: 'day',
-        }).catch(e => { logger.warn('YOUTUBE', 'Daily views error', e.message); return { data: { rows: [] } }; });
+        }).catch(e => {
+            console.error('[YOUTUBE ANALYTICS] daily views query failed:', e.response?.data || e.message);
+            logger.warn('YOUTUBE', 'Daily views error', e.message);
+            return { data: { rows: [] } };
+        });
 
         const dailyViews = (dailyViewsRes.data.rows || []).map(row => ({
             date: row[0],
@@ -564,7 +580,7 @@ exports.getVideoAnalytics = async (req, res) => {
 
         // Daily views for this specific video
         const dailyStats = await youtubeAnalytics.reports.query({
-            ids: `channel==${channelId}`,
+            ids: 'channel==MINE',
             startDate: dayjs().subtract(90, 'day').isBefore(dayjs(publishedAt))
                 ? dayjs(publishedAt).format('YYYY-MM-DD')
                 : dayjs().subtract(90, 'day').format('YYYY-MM-DD'),
@@ -574,6 +590,7 @@ exports.getVideoAnalytics = async (req, res) => {
             filters: `video==${videoId}`,
             sort: 'day',
         }).catch(e => {
+            console.error('[YOUTUBE ANALYTICS] video daily stats failed:', e.response?.data || e.message);
             logger.warn('YOUTUBE', 'Video daily stats error', e.message);
             return { data: { rows: [] } };
         });
