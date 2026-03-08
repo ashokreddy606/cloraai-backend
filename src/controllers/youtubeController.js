@@ -481,7 +481,7 @@ exports.getChannelAnalytics = async (req, res) => {
             }
         }).catch(e => console.warn('Prisma update failed', e.message));
 
-        res.json({
+        const responsePayload = {
             success: true,
             channel: {
                 title: channel.snippet.title,
@@ -497,7 +497,15 @@ exports.getChannelAnalytics = async (req, res) => {
                 dailyViews,
             },
             topVideos,
+        };
+
+        console.log('[YOUTUBE DEBUG] Final Payload:', {
+            views28d: responsePayload.stats.views28d,
+            views90d: responsePayload.stats.views90d,
+            lifetime: responsePayload.stats.lifetimeViews
         });
+
+        res.json(responsePayload);
 
     } catch (error) {
         console.error('[YOUTUBE CRITICAL ERROR]', error);
