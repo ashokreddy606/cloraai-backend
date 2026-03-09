@@ -102,22 +102,26 @@ const sendInstagramMessage = async (recipientId, messageText, accessToken, retry
 // ROUTES: Hub Verification
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const verifyWebhook = (req, res) => {
+
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    if (mode && token) {
-        if (mode === 'subscribe' && token === META_WEBHOOK_VERIFY_TOKEN) {
-            console.log('WEBHOOK_VERIFIED');
-            return res.status(200).send(challenge);
-        } else {
-            logger.warn('WEBHOOK:VERIFY', 'Verification failed: Token mismatch or invalid mode', { mode, token });
-            return res.sendStatus(403);
-        }
+    // Meta verification handshake
+    if (mode === 'subscribe' && token === META_WEBHOOK_VERIFY_TOKEN) {
+        console.log('WEBHOOK_VERIFIED');
+        return res.status(200).send(challenge);
     }
-    return res.sendStatus(400);
-};
 
+    // Token mismatch
+    if (mode === 'subscribe') {
+        logger.warn('WEBHOOK:VERIFY', 'Invalid verify token', { token });
+        return res.sendStatus(403);
+    }
+
+    // If someone visits /webhook directly
+    return res.status(200).send("CloraAI Meta Webhook Endpoint");
+};
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ROUTES: Incoming Message Events
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
