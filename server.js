@@ -128,11 +128,17 @@ app.use(helmet({
     },
 }));
 
+// Configure Express to parse query parameters literally (not nested)
+// This is critical for Meta Webhooks which use dotted parameters like hub.mode
+app.set('query parser', 'simple');
+
 // Prevent Cross-Site Scripting (XSS)
 app.use(xss());
 
-// Prevent NoSQL Injection
-app.use(mongoSanitize());
+// Prevent NoSQL Injection - allow dots for Meta Webhook parameters
+app.use(mongoSanitize({
+    allowDots: true
+}));
 
 // Prevent HTTP Parameter Pollution
 app.use(

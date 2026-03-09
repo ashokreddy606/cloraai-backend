@@ -102,30 +102,28 @@ const sendInstagramMessage = async (recipientId, messageText, accessToken, retry
 // ROUTES: Hub Verification
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const verifyWebhook = (req, res) => {
+    // 1. Log all query params to help debug if Meta changes things
+    logger.info('WEBHOOK:VERIFY', 'Incoming Meta Handshake', { query: req.query });
 
     const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
 
-    const mode =
-        req.query["hub.mode"] ||
-        req.query["hub_mode"];
-
-    const token =
-        req.query["hub.verify_token"] ||
-        req.query["hub_verify_token"];
-
-    const challenge =
-        req.query["hub.challenge"] ||
-        req.query["hub_challenge"];
+    // Meta sends hub.mode, hub.verify_token, hub.challenge
+    // With 'simple' query parser, they are flat keys in req.query
+    // We also fallback to hub_mode if provided this way
+    const mode = req.query['hub.mode'] || req.query['hub_mode'];
+    const token = req.query['hub.verify_token'] || req.query['hub_verify_token'];
+    const challenge = req.query['hub.challenge'] || req.query['hub_challenge'];
 
     console.log("MODE:", mode);
     console.log("TOKEN FROM META:", token);
     console.log("TOKEN FROM ENV:", VERIFY_TOKEN);
 
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
-        console.log("Webhook verified successfully");
+        logger.info('WEBHOOK:VERIFY', 'Handshake Successful', { challenge });
         return res.status(200).send(challenge);
     }
 
+    logger.warn('WEBHOOK:VERIFY', 'Handshake Failed', { mode, tokenReceived: !!token });
     return res.sendStatus(403);
 };
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
