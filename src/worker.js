@@ -70,7 +70,7 @@ const processCaptionJob = async (job) => {
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.7,
             max_tokens: 400
-        });
+        }, { timeout: 20000 }); // ✨ 3. Add OpenAI Request Timeout (20s)
 
         const content = response.choices[0].message.content;
 
@@ -80,9 +80,9 @@ const processCaptionJob = async (job) => {
             if (!Array.isArray(captions)) throw new Error("Not an array");
         } catch (e) {
             // Fallback: If OpenAI failed to return valid JSON, split by newlines and clean up
-            captions = content.split('\\n')
+            captions = content.split('\n')
                 .filter(line => line.trim().length > 10)
-                .map(line => line.replace(/^\\d+\\.\\s*/, '').trim()) // remove numbering like "1. "
+                .map(line => line.replace(/^\d+\.\s*/, '').trim()) // remove numbering like "1. "
                 .slice(0, 5); // ensure max 5
         }
 
@@ -101,11 +101,14 @@ const processCaptionJob = async (job) => {
         return { source: 'openai', captions };
 
     } catch (error) {
-        logger.error('WORKER', `AI processing failed for job: ${jobId}`, { error: error.message });
-
         // 8. Robust Error Handling - Rethrow to trigger BullMQ's automatic retry
         // If attemptsMade < 3, BullMQ will retry due to the enqueue options set in queue.js.
-        throw new Error(`OpenAI API Error: ${error.message}`);
+        const errorMessage = error.name === 'AbortError' || error.name === 'TimeoutError'
+            ? `OpenAI Request Timeout (20s exceeded): ${error.message}`
+            : `OpenAI API Error: ${error.message}`;
+
+        logger.error('WORKER', errorMessage, { jobId, error: error.message, stack: error.stack });
+        throw new Error(errorMessage);
     }
 };
 
@@ -118,7 +121,7 @@ const aiWorker = new Worker(QUEUES.AI_TASKS, async (job) => {
     return await processCaptionJob(job);
 }, {
     connection,
-    concurrency: 10 // ✨ 1. Increase Worker Concurrency
+    concurrency: 30 // ✨ 1. Increase Worker Concurrency (Set to 30 for production scaling)
 });
 
 // 2. Webhook Processor

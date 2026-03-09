@@ -68,7 +68,7 @@ const generateCaption = async (req, res) => {
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
       max_tokens: maxTokens,
-    });
+    }, { timeout: 20000 }); // ✨ 3. Add OpenAI Request Timeout (20s)
 
     if (response.fallback) {
       return res.status(503).json({

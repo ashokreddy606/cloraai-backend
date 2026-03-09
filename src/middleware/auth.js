@@ -126,8 +126,7 @@ const rateLimit = (max = 200, windowMinutes = 15, keyGenerator = undefined) => {
     legacyHeaders: false,
     keyGenerator: keyGenerator || ((req) => req.ip || req.headers['x-forwarded-for'] || '127.0.0.1'),
     message: {
-      error: 'Too many requests',
-      message: `Rate limit exceeded. Please wait ${windowMinutes} minutes.`,
+      error: "Too many requests. Please try again later."
     },
     handler: (req, res, next, options) => {
       logger.warn('RATE_LIMIT', `Rate limit hit`, { ip: req.ip, path: req.path, limit: max });

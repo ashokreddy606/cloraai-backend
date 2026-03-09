@@ -14,8 +14,10 @@
  *   Expiry sweep:   00:05 UTC
  */
 
+const os = require('os');
 const cron = require('node-cron');
 const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
 const WORKER_ID = `${os.hostname()}-${process.pid}`;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — stale lock threshold
 
