@@ -54,6 +54,14 @@ const createRule = async (req, res) => {
       }
     }
 
+    // ── PLAY STORE COMPLIANCE: Anti-Spam Safety Check ──
+    if (autoReplyMessage.length < 5 || /http|www|\.com/i.test(autoReplyMessage)) {
+      return res.status(400).json({
+        error: 'Policy Violation',
+        message: 'Auto-reply messages must be meaningful and cannot contain external links to prevent spam flags.'
+      });
+    }
+
     const rule = await prisma.dMAutomation.create({
       data: {
         userId: req.userId,
