@@ -135,7 +135,11 @@ app.use(xss());
 app.use(mongoSanitize());
 
 // Prevent HTTP Parameter Pollution
-app.use(hpp());
+app.use(
+    hpp({
+        checkQuery: false
+    })
+);
 
 // CORS — restrict in production
 const allowedOrigins = [
