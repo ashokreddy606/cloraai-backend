@@ -242,6 +242,11 @@ model Caption {
   usedInPostId String?
   usedAt       DateTime?
 
+  // Compliance: AI Content Reporting
+  isReported   Boolean   @default(false)
+  reportReason String?
+  reportedAt   DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([userId])

@@ -205,8 +205,47 @@ const deleteCaption = async (req, res) => {
   }
 };
 
+// Report/Flag AI-generated Caption (Google Play Compliance)
+const reportCaption = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason = 'General concern' } = req.body;
+
+    const caption = await prisma.caption.findUnique({ where: { id } });
+    if (!caption) return res.status(404).json({ error: 'Caption not found' });
+
+    await prisma.caption.update({
+      where: { id },
+      data: {
+        isReported: true,
+        reportReason: reason,
+        reportedAt: new Date()
+      }
+    });
+
+    // Optionally log to AuditLog for admins
+    await prisma.auditLog.create({
+      data: {
+        adminId: 'system', // or logged in user if they are reporting it
+        targetId: id,
+        action: 'REPORT_CAPTION',
+        details: JSON.stringify({ userId: req.userId, reason })
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Thank you. The content has been flagged for human review.'
+    });
+  } catch (error) {
+    console.error('Report caption error:', error);
+    res.status(500).json({ error: 'Failed to report caption' });
+  }
+};
+
 module.exports = {
   generateCaption,
   getCaptions,
-  deleteCaption
+  deleteCaption,
+  reportCaption
 };

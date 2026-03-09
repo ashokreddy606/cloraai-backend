@@ -29,6 +29,7 @@ router.post('/generate',
 // Free tier: read-only history access
 router.get('/history', authenticate, captionController.getCaptions);
 router.delete('/:id', authenticate, captionController.deleteCaption);
+router.post('/:id/report', authenticate, captionController.reportCaption);
 
 module.exports = router;
 
