@@ -105,9 +105,17 @@ const verifyWebhook = (req, res) => {
 
     const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
 
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
+    const mode =
+        req.query["hub.mode"] ||
+        req.query["hub_mode"];
+
+    const token =
+        req.query["hub.verify_token"] ||
+        req.query["hub_verify_token"];
+
+    const challenge =
+        req.query["hub.challenge"] ||
+        req.query["hub_challenge"];
 
     console.log("MODE:", mode);
     console.log("TOKEN FROM META:", token);
