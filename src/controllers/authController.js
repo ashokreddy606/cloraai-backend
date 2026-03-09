@@ -772,6 +772,53 @@ const verify2FA = async (req, res) => {
   }
 };
 
+// Facebook OAuth Callback
+const facebookCallback = catchAsync(async (req, res, next) => {
+  const { code } = req.query;
+
+  if (!code) {
+    throw new AppError('No code provided from Facebook OAuth', 400);
+  }
+
+  const appId = process.env.FACEBOOK_APP_ID;
+  const appSecret = process.env.FACEBOOK_APP_SECRET;
+  const redirectUri = 'https://cloraai-backend-production.up.railway.app/auth/facebook/callback';
+
+  if (!appId || !appSecret) {
+    console.error('[AUTH] Facebook App ID or Secret missing in environment');
+    throw new AppError('Facebook authentication is not configured on this server', 500);
+  }
+
+  try {
+    // Exchange code for access token
+    const tokenResponse = await fetch(
+      `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&redirect_uri=${encodeURIComponent(redirectUri)}&code=${code}`
+    );
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenResponse.ok) {
+      console.error('[AUTH] Facebook token exchange failed:', tokenData);
+      throw new AppError(tokenData.error?.message || 'Failed to exchange code for access token', 401);
+    }
+
+    const { access_token } = tokenData;
+
+    if (!access_token) {
+      throw new AppError('No access token returned from Facebook', 401);
+    }
+
+    res.status(200).json({
+      success: true,
+      access_token: access_token
+    });
+  } catch (error) {
+    console.error('Facebook Callback error:', error);
+    if (error instanceof AppError) throw error;
+    throw new AppError('Facebook authentication failed. Internal server error.', 500);
+  }
+});
+
 module.exports = {
   register,
   login,
@@ -785,5 +832,6 @@ module.exports = {
   googleAuth,
   verifyEmail,
   setup2FA,
-  verify2FA
+  verify2FA,
+  facebookCallback
 };

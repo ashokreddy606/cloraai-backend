@@ -299,6 +299,7 @@ const maintenanceMiddleware = require('./src/middleware/maintenance');
 
 // API Routes (versioned under /api/v1/)
 app.use(maintenanceMiddleware); // Block non-essential routes if maintenance mode is ON
+app.use('/auth', authRoutes); // Root level auth for OAuth callbacks
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/instagram', instagramRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);

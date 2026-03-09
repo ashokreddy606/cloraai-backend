@@ -55,4 +55,7 @@ router.post('/make-admin',
 router.post('/setup-2fa', authenticate, authController.setup2FA);
 router.post('/verify-2fa', authenticate, authController.verify2FA);
 
+// Meta OAuth Callbacks
+router.get('/facebook/callback', authController.facebookCallback);
+
 module.exports = router;
