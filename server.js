@@ -192,7 +192,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const globalLimiter = rateLimit(100, 15);
 
 app.use((req, res, next) => {
-    if (req.path === "/health") return next();
+    // Skip rate limit for health check and external webhooks
+    if (req.path.startsWith("/webhook") || req.path === "/health") {
+        return next();
+    }
     return globalLimiter(req, res, next);
 });
 
