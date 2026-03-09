@@ -88,6 +88,13 @@ app.use('/api/webhook/instagram', express.json({
     }
 }));
 
+// NEW: Root Webhook path for Meta Verification
+app.use('/webhook', express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
+
 
 // Trust the first proxy (Nginx / AWS ALB / Cloud Run) so express-rate-limit
 // and IP-based logic see the real client IP from X-Forwarded-For, not the proxy.
@@ -297,6 +304,8 @@ app.use('/api/v1/upload', uploadRoutes);
 // Webhooks must remain at non-versioned paths because external services (Razorpay, Instagram)
 // send to fixed URLs that we cannot change after configuration.
 app.use('/api/webhook', webhookRoutes);
+app.use('/webhook', webhookRoutes); // Root level access for Meta verification
+console.log('YouTube routes mounted at /api/v1/youtube');
 console.log('YouTube routes mounted at /api/v1/youtube');
 
 // 404 handler (must come before error middleware)

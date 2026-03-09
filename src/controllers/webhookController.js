@@ -111,6 +111,7 @@ const verifyWebhook = (req, res) => {
             console.log('WEBHOOK_VERIFIED');
             return res.status(200).send(challenge);
         } else {
+            logger.warn('WEBHOOK:VERIFY', 'Verification failed: Token mismatch or invalid mode', { mode, token });
             return res.sendStatus(403);
         }
     }
@@ -121,6 +122,9 @@ const verifyWebhook = (req, res) => {
 // ROUTES: Incoming Message Events
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const handleWebhook = async (req, res) => {
+    // Log the incoming payload
+    logger.info('WEBHOOK:INCOMING', 'Received Meta Webhook Event', { body: JSON.stringify(req.body) });
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // SECURITY: Validate X-Hub-Signature-256 BEFORE doing anything
     // Must use the raw body (Buffer), not the parsed JSON object

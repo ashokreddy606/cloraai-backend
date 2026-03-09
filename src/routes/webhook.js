@@ -10,11 +10,15 @@ const router = express.Router();
 const webhookController = require('../controllers/webhookController');
 const { handleRazorpayWebhook } = require('../controllers/razorpayWebhookController');
 
-// ── Meta Instagram Webhook ────────────────────────────────────────────────────
+// ── Meta Instagram Webhook (Standard Paths) ───────────────────────────────────
 // Verification handshake (GET)
 router.get('/instagram', webhookController.verifyWebhook);
-// Incoming DM events (POST) — express.json() is fine here
+// Incoming DM events (POST)
 router.post('/instagram', webhookController.handleWebhook);
+
+// ── NEW: Root Meta Webhook (for direct /webhook access) ──────────────────────
+router.get('/', webhookController.verifyWebhook);
+router.post('/', webhookController.handleWebhook);
 
 // ── Razorpay Subscription Webhook ─────────────────────────────────────────────
 // Uses raw body captured in server.js for HMAC signature verification
