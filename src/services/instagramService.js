@@ -80,7 +80,7 @@ class InstagramService {
             const pages = pagesRes.data.data;
             if (!pages || pages.length === 0) throw new Error('No Facebook Pages found');
 
-            // 2. Find page with linked IG Business Account (usually the first one for simplicity here)
+            // 2. Find page with linked IG Business Account
             for (const page of pages) {
                 const igRes = await axios.get(`${GRAPH_API_URL}/${page.id}`, {
                     params: {
@@ -90,7 +90,10 @@ class InstagramService {
                 });
 
                 if (igRes.data.instagram_business_account) {
-                    return igRes.data.instagram_business_account.id;
+                    return {
+                        instagramBusinessAccountId: igRes.data.instagram_business_account.id,
+                        facebookPageId: page.id
+                    };
                 }
             }
 

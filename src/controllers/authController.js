@@ -774,48 +774,107 @@ const verify2FA = async (req, res) => {
 
 // Facebook OAuth Callback
 const facebookCallback = catchAsync(async (req, res, next) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
 
+  // 1. Validate inputs
   if (!code) {
     throw new AppError('No code provided from Facebook OAuth', 400);
   }
 
-  const appId = process.env.FACEBOOK_APP_ID;
-  const appSecret = process.env.FACEBOOK_APP_SECRET;
-  const redirectUri = 'https://cloraai-backend-production.up.railway.app/auth/facebook/callback';
-
-  if (!appId || !appSecret) {
-    console.error('[AUTH] Facebook App ID or Secret missing in environment');
-    throw new AppError('Facebook authentication is not configured on this server', 500);
+  let userId;
+  try {
+    if (state) {
+      const stateObj = JSON.parse(Buffer.from(state, 'base64').toString());
+      userId = stateObj.userId;
+    }
+  } catch (e) {
+    console.warn('Could not parse state from Facebook callback');
   }
 
+  // Fallback frontend URL from .env (handle commas if multiple)
+  const frontendUrlBase = (process.env.FRONTEND_URL || 'http://localhost:8081').split(',')[0].trim();
+  const successRedirect = `${frontendUrlBase}/dashboard?instagram_connected=true`;
+  const errorRedirect = `${frontendUrlBase}/dashboard?error=instagram_connection_failed`;
+
+  const instagramService = require('../services/instagramService');
+  const InstagramAccountMongoose = require('../../models/InstagramAccount');
+
   try {
-    // Exchange code for access token
-    const tokenResponse = await fetch(
-      `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&redirect_uri=${encodeURIComponent(redirectUri)}&code=${code}`
-    );
+    // 2. Exchange code for LONG-LIVED token (60 days)
+    // instagramService handles both steps: authorization_code -> short-lived -> fb_exchange_token -> long-lived
+    const tokenData = await instagramService.exchangeCodeForToken(code);
+    const { accessToken, expiresIn } = tokenData;
 
-    const tokenData = await tokenResponse.json();
-
-    if (!tokenResponse.ok) {
-      console.error('[AUTH] Facebook token exchange failed:', tokenData);
-      throw new AppError(tokenData.error?.message || 'Failed to exchange code for access token', 401);
-    }
-
-    const { access_token } = tokenData;
-
-    if (!access_token) {
+    if (!accessToken) {
       throw new AppError('No access token returned from Facebook', 401);
     }
 
-    res.status(200).json({
-      success: true,
-      access_token: access_token
-    });
+    // 3. Discover Instagram Business Account & Facebook Page ID
+    const { instagramBusinessAccountId, facebookPageId } = await instagramService.getBusinessAccount(accessToken);
+
+    // 4. Fetch basic profile info (username)
+    let username = 'Instagram User';
+    try {
+      const basicData = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v18.0'}/${instagramBusinessAccountId}?fields=username&access_token=${accessToken}`);
+      username = basicData.data.username;
+    } catch (err) {
+      console.warn('Could not fetch username during callback:', err.message);
+    }
+
+    // 5. Persistence
+    const expiresAt = new Date();
+    expiresAt.setSeconds(expiresAt.getSeconds() + expiresIn);
+
+    // 5a. Mongoose (Legacy/Parallel storage)
+    if (userId) {
+      await InstagramAccountMongoose.findOneAndUpdate(
+        { userId },
+        {
+          instagramUserId: instagramBusinessAccountId,
+          instagramBusinessAccountId,
+          facebookPageId,
+          accessToken,
+          username,
+          tokenExpiresAt: expiresAt,
+          connectedAt: new Date()
+        },
+        { upsert: true, new: true }
+      );
+
+      // 5b. Prisma (Primary storage)
+      await prisma.instagramAccount.upsert({
+        where: { userId },
+        update: {
+          instagramUserId: instagramBusinessAccountId,
+          instagramBusinessAccountId,
+          facebookPageId,
+          username,
+          accessToken,
+          accessTokenExpiry: expiresAt,
+          isConnected: true,
+          connectedAt: new Date()
+        },
+        create: {
+          userId,
+          instagramUserId: instagramBusinessAccountId,
+          instagramBusinessAccountId,
+          facebookPageId,
+          username,
+          accessToken,
+          accessTokenExpiry: expiresAt,
+          isConnected: true,
+          connectedAt: new Date()
+        }
+      });
+    }
+
+    // 6. Redirect to Frontend Dashboard
+    res.redirect(successRedirect);
+
   } catch (error) {
     console.error('Facebook Callback error:', error);
-    if (error instanceof AppError) throw error;
-    throw new AppError('Facebook authentication failed. Internal server error.', 500);
+    // Redirect with error param so frontend can show UI toast
+    res.redirect(errorRedirect);
   }
 });
 

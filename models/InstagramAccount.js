@@ -27,6 +27,14 @@ const InstagramAccountSchema = new mongoose.Schema({
     connectedAt: {
         type: Date,
         default: Date.now
+    },
+    facebookPageId: {
+        type: String,
+        required: false
+    },
+    instagramBusinessAccountId: {
+        type: String,
+        required: false
     }
 }, {
     timestamps: true
