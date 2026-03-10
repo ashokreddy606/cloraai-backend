@@ -104,7 +104,14 @@ const getDashboard = async (req, res) => {
     const automationDetection = automationStats.length > 0; // fallback: any automation exists
 
     // Fetch total comments
-    const totalComments = await prisma.comment.count({ where: { userId: req.userId } });
+    let totalComments = 0;
+    try {
+      if (prisma.comment && typeof prisma.comment.count === 'function') {
+        totalComments = await prisma.comment.count({ where: { userId: req.userId } });
+      }
+    } catch (e) {
+      totalComments = 0;
+    }
 
     // 30-day views and top video
     const thirtyDaysAgo = new Date();
