@@ -53,11 +53,21 @@ const handleOAuthCallback = async (req, res) => {
     const expiresAt = new Date();
     expiresAt.setSeconds(expiresAt.getSeconds() + expiresIn);
 
+    // Fetch basic details to store in Mongoose (for quick access without extra API calls)
+    let username = 'Instagram User';
+    try {
+      const basicData = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${igBusinessId}?fields=username&access_token=${accessToken}`);
+      username = basicData.data.username;
+    } catch (err) {
+      console.warn('Could not fetch username during callback:', err.message);
+    }
+
     await InstagramAccount.findOneAndUpdate(
       { userId },
       {
         instagramUserId: igBusinessId,
         accessToken,
+        username, // Store username for fallback
         tokenExpiresAt: expiresAt,
         connectedAt: new Date()
       },
@@ -76,11 +86,9 @@ const handleOAuthCallback = async (req, res) => {
 // Fetch Instagram Account Details
 const getAccountDetails = async (req, res) => {
   try {
-    const account = await prisma.instagramAccount.findUnique({
-      where: { userId: req.userId }
-    });
+    const account = await InstagramAccount.findOne({ userId: req.userId });
 
-    if (!account || !account.isConnected) {
+    if (!account) {
       return res.status(200).json({
         success: true,
         data: {
@@ -90,43 +98,42 @@ const getAccountDetails = async (req, res) => {
       });
     }
 
-    // Decrypt the token securely before making API calls
-    const decryptedToken = decryptToken(account.accessToken);
+    // Use the stored token
+    const accessToken = account.accessToken;
 
-    // Fetch latest data from Instagram API
+    // Fetch latest data from Instagram Business API (Facebooks Graph API for Bus accounts)
+    // Business accounts use different endpoint than basic display API
+    const igUserId = account.instagramUserId;
     const userData = await instagramBreaker.fire(
-      `https://graph.instagram.com/me?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count,biography,website&access_token=${decryptedToken}`
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${igUserId}?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count,biography,website&access_token=${accessToken}`
     );
 
     if (userData.fallback) {
-      return res.status(503).json({
-        error: 'Instagram API Unavailable',
-        message: 'Unable to fetch account details right now.'
+      // Return cached/stored data if API fails
+      return res.status(200).json({
+        success: true,
+        data: {
+          account: {
+            username: account.username || 'Connected User',
+            followersCount: 0,
+            isConnected: true
+          }
+        }
       });
     }
-
-    // Update database
-    await prisma.instagramAccount.update({
-      where: { userId: req.userId },
-      data: {
-        followers: userData.data.followers_count || account.followers,
-        following: userData.data.follows_count || account.following,
-        mediaCount: userData.data.media_count || account.mediaCount,
-        lastSyncedAt: new Date()
-      }
-    });
 
     res.status(200).json({
       success: true,
       data: {
         account: {
           username: userData.data.username,
-          followers: userData.data.followers_count,
-          following: userData.data.follows_count,
+          followersCount: userData.data.followers_count,
+          followsCount: userData.data.follows_count,
           mediaCount: userData.data.media_count,
           biography: userData.data.biography,
           website: userData.data.website,
-          profileImage: userData.data.profile_picture_url
+          profileImage: userData.data.profile_picture_url,
+          isConnected: true
         }
       }
     });
@@ -142,9 +149,7 @@ const getAccountDetails = async (req, res) => {
 // Disconnect Instagram Account
 const disconnectAccount = async (req, res) => {
   try {
-    await prisma.instagramAccount.delete({
-      where: { userId: req.userId }
-    });
+    await InstagramAccount.deleteOne({ userId: req.userId });
 
     res.status(200).json({
       success: true,
