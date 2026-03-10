@@ -42,16 +42,16 @@ const getDashboard = async (req, res) => {
 
     if (!latestSnapshot || latestSnapshot.date < startOfToday) {
       try {
-        const stats = await instagramService.getAccountStats(account.instagramUserId, account.accessToken);
+        const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
 
         // Fetch reach/impressions from top media for a "live" view if possible
-        const media = await instagramService.getUserMedia(account.instagramUserId, account.accessToken);
+        const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
         let totalImpressions = 0;
         let totalReach = 0;
 
         if (media && media.length > 0) {
           const topMedia = media.slice(0, 5);
-          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.accessToken, m.media_type)));
+          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
           totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
         }
@@ -73,7 +73,7 @@ const getDashboard = async (req, res) => {
     // ALWAYS fetch live summary stats for "real-time" dashboard feel
     let liveStats = { followers_count: 0, follows_count: 0, media_count: 0 };
     try {
-      liveStats = await instagramService.getAccountStats(account.instagramUserId, account.accessToken);
+      liveStats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
     } catch (e) {
       console.warn('Live stats fetch failed, falling back to snapshot:', e.message);
       liveStats = {
@@ -154,7 +154,7 @@ const getDashboard = async (req, res) => {
     let totalComments = 0;
     let reelsCount = 0;
     try {
-      const media = await instagramService.getUserMedia(account.instagramBusinessAccountId || account.instagramUserId, account.accessToken);
+      const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
       if (media && media.length > 0) {
         totalComments = media.reduce((sum, m) => sum + (m.comments_count || 0), 0);
         reelsCount = media.filter(m => m.media_type === 'VIDEO').length;
@@ -237,10 +237,10 @@ const recordSnapshot = async (req, res) => {
     }
 
     const { decryptToken } = require('../utils/cryptoUtils');
-    const decryptedToken = decryptToken(account.accessToken);
+    const decryptedToken = decryptToken(account.instagramAccessToken);
 
     const userData = await instagramBreaker.fire(
-      `https://graph.instagram.com/me?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`
+      `https://graph.facebook.com/v19.0/${account.instagramId}?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`
     );
 
     if (userData.fallback) {

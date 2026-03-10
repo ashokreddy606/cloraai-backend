@@ -161,6 +161,37 @@ const handleWebhook = async (req, res) => {
 
         // PART 5: Use `for...of` instead of `forEach` to prevent unbounded concurrency
         for (const entry of body.entry) {
+            // PART: Handle Comments
+            const changes = entry.changes || [];
+            for (const change of changes) {
+                if (change.field === 'comments') {
+                    const comment = change.value;
+                    const instagramId = entry.id || (comment.from ? comment.from.id : null);
+
+                    if (instagramId) {
+                        const instagramAccount = await prisma.instagramAccount.findFirst({
+                            where: { instagramId }
+                        });
+
+                        if (instagramAccount && instagramAccount.isConnected) {
+                            const { decryptToken } = require('../utils/cryptoUtils');
+                            const decryptedToken = decryptToken(instagramAccount.instagramAccessToken);
+
+                            const { enqueueJob, commentQueue } = require('../utils/queue');
+
+                            await enqueueJob(commentQueue, 'process-comment', {
+                                mediaId: comment.media?.id || comment.media_id,
+                                commentId: comment.id,
+                                commentText: comment.text,
+                                instagramId: instagramId,
+                                instagramAccessToken: decryptedToken
+                            });
+                            logger.info('WEBHOOK', `Enqueued comment ${comment.id} for processing`);
+                        }
+                    }
+                }
+            }
+
             const messagingEvents = entry.messaging || [];
 
             for (const event of messagingEvents) {
@@ -192,7 +223,7 @@ const handleWebhook = async (req, res) => {
                 const recipientId = event.recipient.id;
 
                 const instagramAccount = await prisma.instagramAccount.findFirst({
-                    where: { instagramUserId: recipientId },
+                    where: { instagramId: recipientId },
                     include: {
                         user: {
                             select: {
@@ -287,7 +318,7 @@ const handleWebhook = async (req, res) => {
                 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 // PART 5: Throttle — Add 100ms delay between outbound DM sends
                 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                const decryptedToken = decryptToken(instagramAccount.accessToken);
+                const decryptedToken = decryptToken(instagramAccount.instagramAccessToken);
                 await sendInstagramMessage(senderId, matchedRule.autoReplyMessage, decryptedToken);
                 await sleep(100);
                 logger.info('DM:SENT', `Auto-replied using rule "${matchedRule.keyword}" for user ${userId}`);

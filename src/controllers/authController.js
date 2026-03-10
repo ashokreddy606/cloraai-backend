@@ -827,41 +827,25 @@ const facebookCallback = catchAsync(async (req, res, next) => {
 
     // 5a. Mongoose (Legacy/Parallel storage)
     if (userId) {
-      await InstagramAccountMongoose.findOneAndUpdate(
-        { userId },
-        {
-          instagramUserId: instagramBusinessAccountId,
-          instagramBusinessAccountId,
-          facebookPageId,
-          accessToken,
-          username,
-          tokenExpiresAt: expiresAt,
-          connectedAt: new Date()
-        },
-        { upsert: true, new: true }
-      );
-
       // 5b. Prisma (Primary storage)
       await prisma.instagramAccount.upsert({
         where: { userId },
         update: {
-          instagramUserId: instagramBusinessAccountId,
-          instagramBusinessAccountId,
-          facebookPageId,
+          instagramId: instagramBusinessAccountId,
+          pageId: facebookPageId,
           username,
-          accessToken,
-          accessTokenExpiry: expiresAt,
+          instagramAccessToken: accessToken,
+          tokenExpiresAt: expiresAt,
           isConnected: true,
           connectedAt: new Date()
         },
         create: {
           userId,
-          instagramUserId: instagramBusinessAccountId,
-          instagramBusinessAccountId,
-          facebookPageId,
+          instagramId: instagramBusinessAccountId,
+          pageId: facebookPageId,
           username,
-          accessToken,
-          accessTokenExpiry: expiresAt,
+          instagramAccessToken: accessToken,
+          tokenExpiresAt: expiresAt,
           isConnected: true,
           connectedAt: new Date()
         }

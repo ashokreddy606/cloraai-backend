@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { encryptToken, decryptToken } = require('../src/utils/cryptoUtils');
 
 const InstagramAccountSchema = new mongoose.Schema({
     userId: {
@@ -7,7 +8,7 @@ const InstagramAccountSchema = new mongoose.Schema({
         unique: true,
         index: true
     },
-    instagramUserId: {
+    instagramId: {
         type: String,
         required: true,
         unique: true
@@ -16,28 +17,46 @@ const InstagramAccountSchema = new mongoose.Schema({
         type: String,
         required: false
     },
-    accessToken: {
+    pageId: {
         type: String,
-        required: true
+        required: false
+    },
+    pageAccessToken: {
+        type: String,
+        required: false,
+        set: encryptToken,
+        get: decryptToken
+    },
+    instagramAccessToken: {
+        type: String,
+        required: true,
+        set: encryptToken,
+        get: decryptToken
+    },
+    accountType: {
+        type: String,
+        required: false
+    },
+    mediaCount: {
+        type: Number,
+        default: 0
     },
     tokenExpiresAt: {
         type: Date,
         required: true
     },
+    isConnected: {
+        type: Boolean,
+        default: true
+    },
     connectedAt: {
         type: Date,
         default: Date.now
-    },
-    facebookPageId: {
-        type: String,
-        required: false
-    },
-    instagramBusinessAccountId: {
-        type: String,
-        required: false
     }
 }, {
-    timestamps: true
+    timestamps: true,
+    toJSON: { getters: true },
+    toObject: { getters: true }
 });
 
 module.exports = mongoose.model('InstagramAccount', InstagramAccountSchema);

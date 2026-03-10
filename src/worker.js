@@ -240,6 +240,10 @@ attachErrorHandlers(subscriptionWorker, 'Subscription');
 attachErrorHandlers(instagramWorker, 'Instagram');
 attachErrorHandlers(youtubeWorker, 'YouTube');
 
+// Initializing additional automation
+require('./workers/instagramAutomationWorker');
+require('./workers/refreshInstagramTokenWorker');
+
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 const gracefulShutdown = async (signal) => {
     logger.info('WORKER', `${signal} received. Shutting down worker gracefully...`);

@@ -23,12 +23,12 @@ const refreshTokens = async () => {
 
         for (const account of accountsToRefresh) {
             try {
-                const refreshData = await instagramService.refreshToken(account.accessToken);
+                const refreshData = await instagramService.refreshToken(account.instagramAccessToken);
 
                 const expiresInSeconds = parseInt(refreshData.expires_in) || 5184000; // Default 60 days
                 const newExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-                account.accessToken = refreshData.access_token;
+                account.instagramAccessToken = refreshData.access_token;
                 account.tokenExpiresAt = newExpiresAt;
                 await account.save();
 

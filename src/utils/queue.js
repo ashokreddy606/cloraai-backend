@@ -11,7 +11,9 @@ const QUEUES = {
     WEBHOOKS: 'webhooks',
     SUBSCRIPTIONS: 'subscriptions',
     INSTAGRAM: 'instagram-publish',
-    YOUTUBE: 'youtube-upload'
+    YOUTUBE: 'youtube-upload',
+    REPLY: 'reply-queue',
+    COMMENT: 'comment-queue'
 };
 
 const aiQueue = new Queue(QUEUES.AI_TASKS, { connection });
@@ -19,6 +21,8 @@ const webhookQueue = new Queue(QUEUES.WEBHOOKS, { connection });
 const subscriptionQueue = new Queue(QUEUES.SUBSCRIPTIONS, { connection });
 const instagramQueue = new Queue(QUEUES.INSTAGRAM, { connection });
 const youtubeQueue = new Queue(QUEUES.YOUTUBE, { connection });
+const replyQueue = new Queue(QUEUES.REPLY, { connection });
+const commentQueue = new Queue(QUEUES.COMMENT, { connection });
 
 // Helper function to add jobs
 const enqueueJob = async (queue, jobName, data, options = {}) => {
@@ -48,5 +52,7 @@ module.exports = {
     subscriptionQueue,
     instagramQueue,
     youtubeQueue,
+    replyQueue,
+    commentQueue,
     enqueueJob
 };

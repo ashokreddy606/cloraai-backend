@@ -36,12 +36,12 @@ const processScheduledPost = async (job) => {
 
     // 3. Get user's Instagram access token
     const account = await prisma.instagramAccount.findUnique({ where: { userId } });
-    if (!account || !account.accessToken) {
+    if (!account || !account.instagramAccessToken) {
         throw new Error('Instagram account not connected for this user');
     }
 
-    const { decrypt } = require('../utils/cryptoUtils');
-    const accessToken = decrypt(account.accessToken);
+    const { decryptToken } = require('../utils/cryptoUtils');
+    const accessToken = decryptToken(account.instagramAccessToken);
 
     // 4. Publish via Instagram Graph API
     // Step A: Create media container
@@ -49,7 +49,7 @@ const processScheduledPost = async (job) => {
     const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v18.0';
 
     const containerRes = await axios.post(
-        `https://graph.instagram.com/${META_GRAPH_VERSION}/${account.instagramUserId}/media`,
+        `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media`,
         null,
         {
             params: {
@@ -68,7 +68,7 @@ const processScheduledPost = async (job) => {
 
     // Step B: Publish the container
     await axios.post(
-        `https://graph.instagram.com/${META_GRAPH_VERSION}/${account.instagramUserId}/media_publish`,
+        `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media_publish`,
         null,
         {
             params: {

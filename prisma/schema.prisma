@@ -165,23 +165,18 @@ model InstagramAccount {
   userId String @unique @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  instagramUserId   String    @unique
-  username          String
-  profileImage      String?
-  followers         Int       @default(0)
-  following         Int       @default(0)
-  mediaCount        Int       @default(0)
-  bio               String?
-  accessToken       String
-  accessTokenExpiry DateTime?
-  refreshToken      String?
+  instagramId        String    @unique
+  username           String?
+  pageId             String?
+  pageAccessToken    String?
+  instagramAccessToken String
+  accountType        String?
+  mediaCount         Int       @default(0)
+  tokenExpiresAt     DateTime
 
   isConnected  Boolean   @default(true)
   connectedAt  DateTime  @default(now())
   lastSyncedAt DateTime?
-
-  facebookPageId             String?
-  instagramBusinessAccountId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
