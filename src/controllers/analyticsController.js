@@ -92,6 +92,37 @@ const getDashboard = async (req, res) => {
       }
     }).sort({ date: 1 });
 
+    // Real-time unfollow calculation (difference between snapshots)
+    const unfollowed = previousSnapshot && latestSnapshot ? Math.max(0, previousSnapshot.followers - latestSnapshot.followers) : 0;
+
+    // Fetch automation stats (example: replies sent, detection status)
+    const automationStats = await prisma.dMAutomation.findMany({
+      where: { userId: req.userId },
+      select: { repliesSent: true, detectionStatus: true }
+    });
+    const repliesSent = automationStats.reduce((sum, a) => sum + (a.repliesSent || 0), 0);
+    const automationDetection = automationStats.some(a => a.detectionStatus === 'active');
+
+    // Fetch total comments
+    const totalComments = await prisma.comment.count({ where: { userId: req.userId } });
+
+    // 30-day views and top video
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const mediaInsights = await prisma.analyticsSnapshot.findMany({
+      where: {
+        userId: req.userId,
+        snapshotDate: { $gte: thirtyDaysAgo }
+      },
+      select: { impressions: true, mediaId: true }
+    });
+    const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions || 0), 0);
+    let topVideo = null;
+    if (mediaInsights.length > 0) {
+      const sorted = mediaInsights.filter(m => m.mediaId).sort((a, b) => (b.impressions || 0) - (a.impressions || 0));
+      topVideo = sorted[0] || null;
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -99,10 +130,25 @@ const getDashboard = async (req, res) => {
           followers: latestSnapshot?.followers || account.followers || 0,
           posts: latestSnapshot?.posts || account.mediaCount || 0,
           engagementRate: latestSnapshot?.followers > 0 ? (latestSnapshot.posts / latestSnapshot.followers) * 100 : 0,
+          username: account.username || '',
         },
         growth: {
           followerGrowth,
-          period: 'daily'
+          period: 'daily',
+          unfollowed,
+        },
+        unfollowInsights: {
+          estimatedUnfollows: unfollowed,
+          unfollowRate: latestSnapshot?.followers > 0 ? (unfollowed / latestSnapshot.followers) * 100 : 0,
+        },
+        automation: {
+          detection: automationDetection,
+          repliesSent,
+          totalComments,
+        },
+        views: {
+          views30d,
+          topVideo,
         },
         totalViews: latestSnapshot?.impressions || 0,
         followerHistory: history.map(snap => snap.followers),
