@@ -819,6 +819,38 @@ const facebookCallback = catchAsync(async (req, res, next) => {
   }
 });
 
+// 2. Handle Instagram OAuth Redirect
+const instagramAuth = (req, res) => {
+  const authUrl =
+    `https://www.facebook.com/v18.0/dialog/oauth` +
+    `?client_id=${process.env.INSTAGRAM_APP_ID}` +
+    `&redirect_uri=${encodeURIComponent(process.env.INSTAGRAM_REDIRECT_URI)}` +
+    `&scope=instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement` +
+    `&response_type=code`;
+
+  res.redirect(authUrl);
+};
+
+// 3. Handle Instagram OAuth Callback
+const instagramCallback = async (req, res) => {
+  try {
+    const code = req.query.code;
+
+    if (!code) {
+      return res.status(400).json({ error: "Authorization code missing" });
+    }
+
+    console.log("Instagram OAuth code:", code);
+
+    // For now, per requirement:
+    res.send("Instagram authentication successful");
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "OAuth callback failed" });
+  }
+};
+
+
 module.exports = {
   register,
   login,
@@ -833,5 +865,7 @@ module.exports = {
   verifyEmail,
   setup2FA,
   verify2FA,
-  facebookCallback
+  facebookCallback,
+  instagramAuth,
+  instagramCallback
 };

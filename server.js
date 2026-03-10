@@ -5,9 +5,15 @@ const hpp = require('hpp');
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 const compression = require('compression');
+const mongoose = require('mongoose');
 require('dotenv').config();
 const validateEnv = require('./src/utils/envValidator');
 validateEnv();
+
+// Initialize Mongoose (requested for Instagram Analytics)
+mongoose.connect(process.env.DATABASE_URL)
+    .then(() => logger.info('SERVER', 'Mongoose connected successfully'))
+    .catch((err) => logger.error('SERVER', 'Mongoose connection error:', { error: err.message }));
 
 const { rateLimit } = require('./src/middleware/auth');
 const prisma = require('./src/lib/prisma');
@@ -355,6 +361,18 @@ if (process.env.NODE_ENV !== 'test') {
         logger.info('SERVER', 'Scheduled post worker initialized.');
     } catch (err) {
         logger.error('SERVER', 'Failed to initialize scheduled post worker:', { error: err.message });
+    }
+    try {
+        require('./src/workers/instagramAnalyticsWorker'); // Start Instagram daily analytics cron
+        logger.info('SERVER', 'Instagram analytics worker initialized.');
+    } catch (err) {
+        logger.error('SERVER', 'Failed to initialize Instagram analytics worker:', { error: err.message });
+    }
+    try {
+        require('./src/workers/refreshInstagramTokenWorker'); // Start Instagram token refresh cron
+        logger.info('SERVER', 'Instagram token refresh worker initialized.');
+    } catch (err) {
+        logger.error('SERVER', 'Failed to initialize Instagram token refresh worker:', { error: err.message });
     }
 }
 
