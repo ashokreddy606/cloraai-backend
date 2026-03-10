@@ -1,5 +1,8 @@
 const instagramService = require('../services/instagramService');
 const InstagramAccount = require('../../models/InstagramAccount');
+const prisma = require('../lib/prisma');
+
+console.log('--- analyticsController.js loaded (v2) ---');
 
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
@@ -85,7 +88,7 @@ const getDashboard = async (req, res) => {
     const history = await InstagramAnalytics.find({
       userId: req.userId,
       date: {
-        gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+        $gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
       }
     }).sort({ date: 1 });
 
@@ -185,7 +188,7 @@ const getMonthlyAnalytics = async (req, res) => {
     const snapshots = await prisma.analyticsSnapshot.findMany({
       where: {
         userId: req.userId,
-        snapshotDate: { gte: monthAgo }
+          snapshotDate: { $gte: monthAgo }
       },
       orderBy: { snapshotDate: 'asc' }
     });
