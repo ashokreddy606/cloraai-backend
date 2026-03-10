@@ -126,6 +126,7 @@ const runSubscriptionExpiry = async () => {
             code: e.code,
             host: os.hostname()
         });
+        console.error('PRISMA RECONCILIATION ERROR:', e);
     }
 })();
 

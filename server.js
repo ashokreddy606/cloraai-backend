@@ -34,11 +34,13 @@ if (process.env.SENTRY_DSN) {
 // ─── Process-Level Error Catchers ────────────────────────────────────────────
 // These log errors but NEVER terminate the process to keep Railway container alive.
 process.on('uncaughtException', (err) => {
-    logger.error('CRASH_PREVENTION', "UNCAUGHT EXCEPTION", { error: err.message, stack: err.stack });
+    logger.error('CRASH_PREVENTION', "UNCAUGHT EXCEPTION", { error: err?.message, stack: err?.stack });
+    console.error('FATAL UNCAUGHT EXCEPTION:', err);
 });
 
 process.on('unhandledRejection', (reason) => {
     logger.error('CRASH_PREVENTION', "UNHANDLED REJECTION", { reason });
+    console.error('FATAL UNHANDLED REJECTION:', reason);
 });
 
 // Import routes

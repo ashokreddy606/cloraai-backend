@@ -121,6 +121,7 @@ const recoverOrphanedPosts = async () => {
             stack: e.stack,
             dbUrl: process.env.DATABASE_URL?.split('@')[1] // Log host only for privacy
         });
+        console.error('PRISMA RECOVERY ERROR:', e);
     }
 };
 
