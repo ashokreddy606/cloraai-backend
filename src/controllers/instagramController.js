@@ -1,13 +1,13 @@
-const axios = require('axios');
-const { encryptToken, decryptToken } = require('../utils/cryptoUtils');
-const prisma = require('../lib/prisma');
-const instagramService = require('../services/instagramService');
-const InstagramAccount = require('../../models/InstagramAccount');
-const { cache } = require('../utils/cache');
-const { createBreaker } = require('../utils/circuitBreaker');
+const axios = require("axios");
+import { encryptToken, decryptToken } from '../utils/cryptoUtils';
+import prisma from '../lib/prisma';
+import { exchangeCodeForToken, getBusinessAccount, getAccountStats, getUserMedia, getMediaInsights } from '../services/instagramService';
+import { findOneAndUpdate, findOne, deleteOne } from '../../models/InstagramAccount';
+import { cache } from '../utils/cache';
+import { createBreaker } from '../utils/circuitBreaker';
 
 const instagramBreaker = createBreaker(async (url) => {
-  return await axios.get(url);
+  return await get(url);
 }, 'Instagram');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v18.0';
@@ -44,25 +44,25 @@ const handleOAuthCallback = async (req, res) => {
 
   try {
     // 1. Exchange code for long-lived token
-    const { accessToken, expiresIn, instagramUserId } = await instagramService.exchangeCodeForToken(code);
+    const { accessToken, expiresIn, instagramUserId } = await exchangeCodeForToken(code);
 
     // 2. Discover Instagram Business Account linked to FB Pages
-    const igBusinessId = await instagramService.getBusinessAccount(accessToken);
+    const igBusinessId = await getBusinessAccount(accessToken);
 
     // 3. Save/Update Mongoose InstagramAccount
-    const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + expiresIn);
+    const expiresInSeconds = parseInt(expiresIn) || 5184000; // Default 60 days
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
     // Fetch basic details to store in Mongoose (for quick access without extra API calls)
     let username = 'Instagram User';
     try {
-      const basicData = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${igBusinessId}?fields=username&access_token=${accessToken}`);
+      const basicData = await get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${igBusinessId}?fields=username&access_token=${accessToken}`);
       username = basicData.data.username;
     } catch (err) {
       console.warn('Could not fetch username during callback:', err.message);
     }
 
-    await InstagramAccount.findOneAndUpdate(
+    await findOneAndUpdate(
       { userId },
       {
         instagramUserId: igBusinessId,
@@ -86,7 +86,7 @@ const handleOAuthCallback = async (req, res) => {
 // Fetch Instagram Account Details
 const getAccountDetails = async (req, res) => {
   try {
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await findOne({ userId: req.userId });
 
     if (!account) {
       return res.status(200).json({
@@ -149,7 +149,7 @@ const getAccountDetails = async (req, res) => {
 // Disconnect Instagram Account
 const disconnectAccount = async (req, res) => {
   try {
-    await InstagramAccount.deleteOne({ userId: req.userId });
+    await deleteOne({ userId: req.userId });
 
     res.status(200).json({
       success: true,
@@ -171,10 +171,10 @@ const getStats = async (req, res) => {
     const cachedData = await cache.get(cacheKey);
     if (cachedData) return res.status(200).json({ success: true, data: cachedData });
 
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const stats = await instagramService.getAccountStats(account.instagramUserId, account.accessToken);
+    const stats = await getAccountStats(account.instagramUserId, account.accessToken);
 
     await cache.set(cacheKey, stats, 600); // 10 min TTL
 
@@ -192,15 +192,15 @@ const getPosts = async (req, res) => {
     const cachedData = await cache.get(cacheKey);
     if (cachedData) return res.status(200).json({ success: true, data: cachedData });
 
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const posts = await instagramService.getUserMedia(account.instagramUserId, account.accessToken);
+    const posts = await getUserMedia(account.instagramUserId, account.accessToken);
 
     // Enrich top 10 posts with reach/impressions
     const enrichedPosts = await Promise.all(posts.slice(0, 10).map(async (post) => {
       try {
-        const insights = await instagramService.getMediaInsights(post.id, account.accessToken, post.media_type);
+        const insights = await getMediaInsights(post.id, account.accessToken, post.media_type);
         return { ...post, ...insights };
       } catch (err) {
         return post;
@@ -219,10 +219,10 @@ const getPosts = async (req, res) => {
 const getPostInsights = async (req, res) => {
   try {
     const { mediaId } = req.params;
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const insights = await instagramService.getMediaInsights(mediaId, account.accessToken);
+    const insights = await getMediaInsights(mediaId, account.accessToken);
 
     res.status(200).json({
       success: true,
@@ -236,7 +236,7 @@ const getPostInsights = async (req, res) => {
   }
 };
 
-module.exports = {
+export default {
   initiateAuth,
   handleOAuthCallback,
   getAccountDetails,

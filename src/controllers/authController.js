@@ -822,8 +822,8 @@ const facebookCallback = catchAsync(async (req, res, next) => {
     }
 
     // 5. Persistence
-    const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + expiresIn);
+    const expiresInSeconds = parseInt(expiresIn) || 5184000; // Default 60 days
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
     // 5a. Mongoose (Legacy/Parallel storage)
     if (userId) {

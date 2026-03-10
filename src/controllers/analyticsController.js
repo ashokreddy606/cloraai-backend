@@ -40,7 +40,6 @@ const getDashboard = async (req, res) => {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    // If no snapshot today, or we just want to ensure we have the absolute latest for "real-time"
     if (!latestSnapshot || latestSnapshot.date < startOfToday) {
       try {
         const stats = await instagramService.getAccountStats(account.instagramUserId, account.accessToken);
@@ -61,109 +60,159 @@ const getDashboard = async (req, res) => {
           userId: req.userId,
           followers: stats.followers_count || 0,
           posts: stats.media_count || 0,
+          following: stats.follows_count || 0,
           impressions: totalImpressions,
           reach: totalReach,
           date: new Date()
         });
       } catch (e) {
-        console.warn('Real-time snapshot creation failed:', e.message);
+        console.warn('Daily snapshot creation failed:', e.message);
       }
+    }
+
+    // ALWAYS fetch live summary stats for "real-time" dashboard feel
+    let liveStats = { followers_count: 0, follows_count: 0, media_count: 0 };
+    try {
+      liveStats = await instagramService.getAccountStats(account.instagramUserId, account.accessToken);
+    } catch (e) {
+      console.warn('Live stats fetch failed, falling back to snapshot:', e.message);
+      liveStats = {
+        followers_count: latestSnapshot?.followers || 0,
+        follows_count: latestSnapshot?.following || 0,
+        media_count: latestSnapshot?.posts || 0
+      };
     }
 
     // Get previous snapshot for comparison (e.g. yesterday)
     const yesterday = new Date(startOfToday);
     yesterday.setDate(yesterday.getDate() - 1);
+    const startOfYesterday = new Date(yesterday);
+    startOfYesterday.setHours(0, 0, 0, 0);
 
     const previousSnapshot = await InstagramAnalytics.findOne({
+      userId: req.userId,
+      date: { $lt: startOfToday, $gte: startOfYesterday }
+    }).sort({ date: -1 }) || await InstagramAnalytics.findOne({
       userId: req.userId,
       date: { $lt: startOfToday }
     }).sort({ date: -1 });
 
     // Calculate growth
-    const followerGrowth = (latestSnapshot && previousSnapshot)
-      ? latestSnapshot.followers - previousSnapshot.followers
+    const followerGrowth = (liveStats.followers_count && previousSnapshot)
+      ? liveStats.followers_count - previousSnapshot.followers
       : 0;
 
-    // Get history (last 14 days)
+    // Growth last 30 days
+    const thirtyDaysAgo = new Date(startOfToday);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const snapshot30d = await InstagramAnalytics.findOne({
+      userId: req.userId,
+      date: { $gte: thirtyDaysAgo }
+    }).sort({ date: 1 });
+
+    const followerGrowth30d = (liveStats.followers_count && snapshot30d)
+      ? liveStats.followers_count - snapshot30d.followers
+      : 0;
+
+    // Get history (last 30 days)
     const history = await InstagramAnalytics.find({
       userId: req.userId,
       date: {
-        $gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+        $gte: thirtyDaysAgo
       }
     }).sort({ date: 1 });
 
     // Real-time unfollow calculation (difference between snapshots)
-    const unfollowed = previousSnapshot && latestSnapshot ? Math.max(0, previousSnapshot.followers - latestSnapshot.followers) : 0;
+    const unfollowed = previousSnapshot && liveStats ? Math.max(0, previousSnapshot.followers - liveStats.followers_count) : 0;
 
-    // Fetch automation stats (example: replies sent, detection status)
-    const automationStats = await prisma.dMAutomation.findMany({
+    // Fetch automation stats
+    const automationRules = await prisma.dMAutomation.findMany({
       where: { userId: req.userId }
     });
-    // Use available fields for stats
-    const repliesSent = automationStats.length; // fallback: count of automations
-    const automationDetection = automationStats.length > 0; // fallback: any automation exists
+    const anyActive = automationRules.some(r => r.isActive);
 
-    // Fetch total comments
-    let totalComments = 0;
-    try {
-      if (prisma.comment && typeof prisma.comment.count === 'function') {
-        totalComments = await prisma.comment.count({ where: { userId: req.userId } });
-      }
-    } catch (e) {
-      totalComments = 0;
-    }
+    // Total automated replies sent (sum of interactions)
+    const totalRepliesSent = await prisma.dmInteraction.count({
+      where: { userId: req.userId, status: 'sent' }
+    });
 
-    // 30-day views and top video
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const mediaInsights = await prisma.analyticsSnapshot.findMany({
+    // Replies sent today
+    const repliesSentToday = await prisma.dmInteraction.count({
       where: {
         userId: req.userId,
-          snapshotDate: { gte: thirtyDaysAgo }
-      },
-        select: { impressions: true }
+        status: 'sent',
+        createdAt: { gte: startOfToday }
+      }
+    });
+
+    // Total messages handled (any interaction status)
+    const totalMessagesHandled = await prisma.dmInteraction.count({
+      where: { userId: req.userId }
+    });
+
+    // Fetch total comments and reels count from media list
+    let totalComments = 0;
+    let reelsCount = 0;
+    try {
+      const media = await instagramService.getUserMedia(account.instagramBusinessAccountId || account.instagramUserId, account.accessToken);
+      if (media && media.length > 0) {
+        totalComments = media.reduce((sum, m) => sum + (m.comments_count || 0), 0);
+        reelsCount = media.filter(m => m.media_type === 'VIDEO').length;
+      }
+    } catch (e) {
+      console.warn('Media-based stats aggregation failed:', e.message);
+    }
+
+    // 30-day views
+    const mediaInsights = await InstagramAnalytics.find({
+      userId: req.userId,
+      date: { $gte: thirtyDaysAgo }
     });
     const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions || 0), 0);
-    let topVideo = null;
-      if (mediaInsights.length > 0) {
-        const sorted = mediaInsights.sort((a, b) => (b.impressions || 0) - (a.impressions || 0));
-        topVideo = sorted[0] || null;
-    }
+
+    // Final mapping
+    const followers = liveStats.followers_count;
+    const posts = liveStats.media_count;
+    const following = liveStats.follows_count;
 
     res.status(200).json({
       success: true,
       data: {
         current: {
-          followers: latestSnapshot?.followers || account.followers || 0,
-          posts: latestSnapshot?.posts || account.mediaCount || 0,
-          engagementRate: latestSnapshot?.followers > 0 ? (latestSnapshot.posts / latestSnapshot.followers) * 100 : 0,
-          username: account.username || '',
+          followers,
+          posts,
+          following,
+          reels: reelsCount,
+          engagementRate: followers > 0 ? (posts / followers) * 100 : 0,
+          username: account.instagramUsername || account.username || '',
+          profileImage: account.profileImage || '',
         },
         growth: {
           followerGrowth,
+          followerGrowth30d,
+          growthPercentage: previousSnapshot?.followers > 0 ? ((followers - previousSnapshot.followers) / previousSnapshot.followers) * 100 : 0,
           period: 'daily',
           unfollowed,
         },
-        unfollowInsights: {
-          estimatedUnfollows: unfollowed,
-          unfollowRate: latestSnapshot?.followers > 0 ? (unfollowed / latestSnapshot.followers) * 100 : 0,
-        },
         automation: {
-          detection: automationDetection,
-          repliesSent,
+          isActive: anyActive,
+          repliesSent: totalRepliesSent,
+          repliesSentToday,
+          totalMessagesHandled,
           totalComments,
         },
         views: {
           views30d,
-          topVideo,
         },
         totalViews: latestSnapshot?.impressions || 0,
         followerHistory: history.map(snap => snap.followers),
         viewsHistory: history.map(snap => snap.impressions),
+        activityHistory: history.map(snap => snap.reach || 0),
         weeklyData: history.map(snap => ({
           date: snap.date,
           followers: snap.followers,
-          impressions: snap.impressions
+          impressions: snap.impressions,
+          reach: snap.reach || 0
         }))
       }
     });
@@ -241,7 +290,7 @@ const getMonthlyAnalytics = async (req, res) => {
     const snapshots = await prisma.analyticsSnapshot.findMany({
       where: {
         userId: req.userId,
-           snapshotDate: { gte: monthAgo }
+        snapshotDate: { gte: monthAgo }
       },
       orderBy: { snapshotDate: 'asc' }
     });

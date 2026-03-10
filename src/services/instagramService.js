@@ -113,7 +113,7 @@ class InstagramService {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${igUserId}`, {
                 params: {
-                    fields: 'followers_count,media_count',
+                    fields: 'followers_count,follows_count,media_count',
                     access_token: accessToken
                 }
             });
