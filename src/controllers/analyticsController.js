@@ -1,18 +1,10 @@
-const prisma = require('../lib/prisma');
-const { cache } = require('../utils/cache');
-const { createBreaker } = require('../utils/circuitBreaker');
-const axios = require('axios');
-
-const instagramBreaker = createBreaker(async (url) => {
-  return await axios.get(url);
-}, 'Instagram');
+const instagramService = require('../services/instagramService');
+const InstagramAccount = require('../../models/InstagramAccount');
 
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
   try {
-    const account = await prisma.instagramAccount.findUnique({
-      where: { userId: req.userId }
-    });
+    const account = await InstagramAccount.findOne({ userId: req.userId });
 
     if (!account) {
       return res.status(200).json({
@@ -29,94 +21,93 @@ const getDashboard = async (req, res) => {
             followerGrowth: 0,
             period: 'daily'
           },
+          totalViews: 0,
+          followerHistory: [],
+          viewsHistory: [],
           weeklyData: []
         }
       });
     }
 
-    // Get latest analytics
-    let latestSnapshot = await prisma.analyticsSnapshot.findFirst({
-      where: { userId: req.userId },
-      orderBy: { snapshotDate: 'desc' }
-    });
+    // Get latest snapshot from mongo
+    const InstagramAnalytics = require('../../models/InstagramAnalytics');
+    let latestSnapshot = await InstagramAnalytics.findOne({ userId: req.userId }).sort({ date: -1 });
 
-    // Auto-record snapshot if none today
+    // Auto-record snapshot if none today or if user wants "real-time" data
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    if (!latestSnapshot || latestSnapshot.snapshotDate < startOfToday) {
-      if (account.isConnected) {
-        try {
-          const { decryptToken } = require('../utils/cryptoUtils');
-          const decryptedToken = decryptToken(account.accessToken);
+    // If no snapshot today, or we just want to ensure we have the absolute latest for "real-time"
+    if (!latestSnapshot || latestSnapshot.date < startOfToday) {
+      try {
+        const stats = await instagramService.getAccountStats(account.instagramUserId, account.accessToken);
 
-          const userData = await instagramBreaker.fire(`https://graph.instagram.com/me?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`);
+        // Fetch reach/impressions from top media for a "live" view if possible
+        const media = await instagramService.getUserMedia(account.instagramUserId, account.accessToken);
+        let totalImpressions = 0;
+        let totalReach = 0;
 
-          if (userData.fallback) throw new Error("Fallback response");
-
-          const followers = userData.data.followers_count || account.followers;
-          const following = userData.data.follows_count || account.following;
-          const mediaCount = userData.data.media_count || account.mediaCount;
-          const engagementRate = followers > 0 ? (mediaCount / followers) * 100 : 0;
-
-          latestSnapshot = await prisma.analyticsSnapshot.create({
-            data: {
-              userId: req.userId,
-              followers,
-              following,
-              mediaCount,
-              engagementRate,
-              topPostEngagement: 0,
-              snapshotDate: new Date()
-            }
-          });
-        } catch (e) {
-          console.warn('Silent snapshot creation failed:', e.message);
+        if (media && media.length > 0) {
+          const topMedia = media.slice(0, 5);
+          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.accessToken, m.media_type)));
+          totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
+          totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
         }
+
+        latestSnapshot = await InstagramAnalytics.create({
+          userId: req.userId,
+          followers: stats.followers_count || 0,
+          posts: stats.media_count || 0,
+          impressions: totalImpressions,
+          reach: totalReach,
+          date: new Date()
+        });
+      } catch (e) {
+        console.warn('Real-time snapshot creation failed:', e.message);
       }
     }
 
-    // Get previous snapshot for comparison
-    const previousSnapshot = await prisma.analyticsSnapshot.findFirst({
-      where: { userId: req.userId },
-      orderBy: { snapshotDate: 'desc' },
-      skip: 1
-    });
+    // Get previous snapshot for comparison (e.g. yesterday)
+    const yesterday = new Date(startOfToday);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const previousSnapshot = await InstagramAnalytics.findOne({
+      userId: req.userId,
+      date: { $lt: startOfToday }
+    }).sort({ date: -1 });
 
     // Calculate growth
-    const followerGrowth = latestSnapshot && previousSnapshot
+    const followerGrowth = (latestSnapshot && previousSnapshot)
       ? latestSnapshot.followers - previousSnapshot.followers
       : 0;
 
-    // Get weekly data
-    const weeklyData = await prisma.analyticsSnapshot.findMany({
-      where: {
-        userId: req.userId,
-        snapshotDate: {
-          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-        }
-      },
-      orderBy: { snapshotDate: 'asc' }
-    });
+    // Get history (last 14 days)
+    const history = await InstagramAnalytics.find({
+      userId: req.userId,
+      date: {
+        gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+      }
+    }).sort({ date: 1 });
 
     res.status(200).json({
       success: true,
       data: {
         current: {
-          followers: latestSnapshot?.followers || account.followers,
-          following: latestSnapshot?.following || account.following,
-          mediaCount: latestSnapshot?.mediaCount || account.mediaCount,
-          engagementRate: latestSnapshot?.engagementRate || 0,
-          topPostEngagement: latestSnapshot?.topPostEngagement || 0
+          followers: latestSnapshot?.followers || account.followers || 0,
+          posts: latestSnapshot?.posts || account.mediaCount || 0,
+          engagementRate: latestSnapshot?.followers > 0 ? (latestSnapshot.posts / latestSnapshot.followers) * 100 : 0,
         },
         growth: {
           followerGrowth,
           period: 'daily'
         },
-        weeklyData: weeklyData.map(snap => ({
-          date: snap.snapshotDate,
+        totalViews: latestSnapshot?.impressions || 0,
+        followerHistory: history.map(snap => snap.followers),
+        viewsHistory: history.map(snap => snap.impressions),
+        weeklyData: history.map(snap => ({
+          date: snap.date,
           followers: snap.followers,
-          engagement: snap.engagementRate
+          impressions: snap.impressions
         }))
       }
     });
