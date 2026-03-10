@@ -7,6 +7,7 @@ const prisma = require('./lib/prisma');
 const axios = require('axios');
 const { decryptToken } = require('./utils/cryptoUtils');
 const { createNotification } = require('./controllers/notificationController');
+const { cache } = require('./utils/cache');
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
@@ -135,6 +136,12 @@ const webhookWorker = new Worker(QUEUES.WEBHOOKS, async (job) => {
 
 // 3. Subscription Reconciliation Worker
 // Concurrency set to 2 to gently handle internal db updates
+const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
+    logger.info('WORKER', `Processing subscription: ${job.name}`, { jobId: job.id });
+}, {
+    connection,
+    concurrency: 2
+});
 // 4. Instagram Publishing Worker
 const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
     const { postId } = job.data;

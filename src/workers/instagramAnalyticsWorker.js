@@ -34,7 +34,7 @@ const performDailySnapshots = async () => {
                 let totalImpressions = 0;
 
                 for (const item of recentMedia) {
-                    const insights = await instagramService.getMediaInsights(item.id, decryptedToken, item.media_type);
+                    const insights = await instagramService.getMediaInsights(item.id, accessToken, item.media_type);
                     totalReach += insights.reach || 0;
                     totalImpressions += insights.impressions || 0;
                 }
