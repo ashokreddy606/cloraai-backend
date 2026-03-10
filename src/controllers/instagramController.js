@@ -1,18 +1,15 @@
-const axios = require("axios");
-import { encryptToken, decryptToken } from '../utils/cryptoUtils';
-import prisma from '../lib/prisma';
-import { exchangeCodeForToken, getBusinessAccount, getAccountStats, getUserMedia, getMediaInsights } from '../services/instagramService';
-import { findOneAndUpdate, findOne, deleteOne } from '../../models/InstagramAccount';
-import { cache } from '../utils/cache';
-import { createBreaker } from '../utils/circuitBreaker';
+const axios = require('axios');
+const InstagramAccount = require('../../models/InstagramAccount');
+const { cache } = require('../utils/cache');
+const { createBreaker } = require('../utils/circuitBreaker');
+const { exchangeCodeForToken, getBusinessAccount, getAccountStats, getUserMedia, getMediaInsights } = require('../services/instagramService');
 
 const instagramBreaker = createBreaker(async (url) => {
-  return await get(url);
+  const response = await axios.get(url);
+  return response;
 }, 'Instagram');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v18.0';
-const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID;
-const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
 
 // 1. Initiate Instagram OAuth (Redirect to Meta)
 const initiateAuth = (req, res) => {
@@ -56,18 +53,18 @@ const handleOAuthCallback = async (req, res) => {
     // Fetch basic details to store in Mongoose (for quick access without extra API calls)
     let username = 'Instagram User';
     try {
-      const basicData = await get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${igBusinessId}?fields=username&access_token=${accessToken}`);
+      const basicData = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${igBusinessId}?fields=username&access_token=${accessToken}`);
       username = basicData.data.username;
     } catch (err) {
       console.warn('Could not fetch username during callback:', err.message);
     }
 
-    await findOneAndUpdate(
+    await InstagramAccount.findOneAndUpdate(
       { userId },
       {
         instagramUserId: igBusinessId,
         accessToken,
-        username, // Store username for fallback
+        username,
         tokenExpiresAt: expiresAt,
         connectedAt: new Date()
       },
@@ -86,7 +83,7 @@ const handleOAuthCallback = async (req, res) => {
 // Fetch Instagram Account Details
 const getAccountDetails = async (req, res) => {
   try {
-    const account = await findOne({ userId: req.userId });
+    const account = await InstagramAccount.findOne({ userId: req.userId });
 
     if (!account) {
       return res.status(200).json({
@@ -98,18 +95,14 @@ const getAccountDetails = async (req, res) => {
       });
     }
 
-    // Use the stored token
     const accessToken = account.accessToken;
-
-    // Fetch latest data from Instagram Business API (Facebooks Graph API for Bus accounts)
-    // Business accounts use different endpoint than basic display API
     const igUserId = account.instagramUserId;
+
     const userData = await instagramBreaker.fire(
       `https://graph.facebook.com/${META_GRAPH_VERSION}/${igUserId}?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count,biography,website&access_token=${accessToken}`
     );
 
     if (userData.fallback) {
-      // Return cached/stored data if API fails
       return res.status(200).json({
         success: true,
         data: {
@@ -122,17 +115,18 @@ const getAccountDetails = async (req, res) => {
       });
     }
 
+    const d = userData.data;
     res.status(200).json({
       success: true,
       data: {
         account: {
-          username: userData.data.username,
-          followersCount: userData.data.followers_count,
-          followsCount: userData.data.follows_count,
-          mediaCount: userData.data.media_count,
-          biography: userData.data.biography,
-          website: userData.data.website,
-          profileImage: userData.data.profile_picture_url,
+          username: d.username,
+          followersCount: d.followers_count,
+          followsCount: d.follows_count,
+          mediaCount: d.media_count,
+          biography: d.biography,
+          website: d.website,
+          profileImage: d.profile_picture_url,
           isConnected: true
         }
       }
@@ -149,7 +143,7 @@ const getAccountDetails = async (req, res) => {
 // Disconnect Instagram Account
 const disconnectAccount = async (req, res) => {
   try {
-    await deleteOne({ userId: req.userId });
+    await InstagramAccount.deleteOne({ userId: req.userId });
 
     res.status(200).json({
       success: true,
@@ -163,7 +157,7 @@ const disconnectAccount = async (req, res) => {
   }
 };
 
-// Fetch Instagram Account Stats (requested with Redis caching)
+// Fetch Instagram Account Stats (with Redis caching)
 const getStats = async (req, res) => {
   const cacheKey = `instagram_stats_${req.userId}`;
 
@@ -171,7 +165,7 @@ const getStats = async (req, res) => {
     const cachedData = await cache.get(cacheKey);
     if (cachedData) return res.status(200).json({ success: true, data: cachedData });
 
-    const account = await findOne({ userId: req.userId });
+    const account = await InstagramAccount.findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
     const stats = await getAccountStats(account.instagramUserId, account.accessToken);
@@ -184,7 +178,7 @@ const getStats = async (req, res) => {
   }
 };
 
-// Fetch Instagram Recent Posts (requested with enriched insights and Redis caching)
+// Fetch Instagram Recent Posts (with enriched insights and Redis caching)
 const getPosts = async (req, res) => {
   const cacheKey = `instagram_media_enriched_${req.userId}`;
 
@@ -192,12 +186,11 @@ const getPosts = async (req, res) => {
     const cachedData = await cache.get(cacheKey);
     if (cachedData) return res.status(200).json({ success: true, data: cachedData });
 
-    const account = await findOne({ userId: req.userId });
+    const account = await InstagramAccount.findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
     const posts = await getUserMedia(account.instagramUserId, account.accessToken);
 
-    // Enrich top 10 posts with reach/impressions
     const enrichedPosts = await Promise.all(posts.slice(0, 10).map(async (post) => {
       try {
         const insights = await getMediaInsights(post.id, account.accessToken, post.media_type);
@@ -215,11 +208,11 @@ const getPosts = async (req, res) => {
   }
 };
 
-// Fetch Insights for a specific Post (requested)
+// Fetch Insights for a specific Post
 const getPostInsights = async (req, res) => {
   try {
     const { mediaId } = req.params;
-    const account = await findOne({ userId: req.userId });
+    const account = await InstagramAccount.findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
     const insights = await getMediaInsights(mediaId, account.accessToken);
@@ -236,7 +229,7 @@ const getPostInsights = async (req, res) => {
   }
 };
 
-export default {
+module.exports = {
   initiateAuth,
   handleOAuthCallback,
   getAccountDetails,
