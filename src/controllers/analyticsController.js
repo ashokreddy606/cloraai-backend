@@ -119,15 +119,15 @@ const getDashboard = async (req, res) => {
     const mediaInsights = await prisma.analyticsSnapshot.findMany({
       where: {
         userId: req.userId,
-        snapshotDate: { $gte: thirtyDaysAgo }
+          snapshotDate: { gte: thirtyDaysAgo }
       },
-      select: { impressions: true, mediaId: true }
+        select: { impressions: true }
     });
     const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions || 0), 0);
     let topVideo = null;
-    if (mediaInsights.length > 0) {
-      const sorted = mediaInsights.filter(m => m.mediaId).sort((a, b) => (b.impressions || 0) - (a.impressions || 0));
-      topVideo = sorted[0] || null;
+      if (mediaInsights.length > 0) {
+        const sorted = mediaInsights.sort((a, b) => (b.impressions || 0) - (a.impressions || 0));
+        topVideo = sorted[0] || null;
     }
 
     res.status(200).json({
@@ -241,7 +241,7 @@ const getMonthlyAnalytics = async (req, res) => {
     const snapshots = await prisma.analyticsSnapshot.findMany({
       where: {
         userId: req.userId,
-          snapshotDate: { $gte: monthAgo }
+           snapshotDate: { gte: monthAgo }
       },
       orderBy: { snapshotDate: 'asc' }
     });
