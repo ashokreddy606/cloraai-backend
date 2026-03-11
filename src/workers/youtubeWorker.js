@@ -111,16 +111,17 @@ async function processUser(user) {
         }
 
         for (const item of items) {
-            const topLevelComment = item.snippet?.topLevelComment?.snippet;
+            const topLevelComment = item.snippet?.topLevelComment;
             if (!topLevelComment) continue;
 
-            const commentId = item.id;
-            const videoId = topLevelComment.videoId;
-            const textDisplay = (topLevelComment.textDisplay || '').toLowerCase();
-            const authorDisplayName = topLevelComment.authorDisplayName;
+            const threadId = item.id;
+            const commentId = topLevelComment.id; // Use the actual comment ID, not the thread ID, to prevent duplicate processing
+            const videoId = topLevelComment.snippet?.videoId || item.snippet?.videoId;
+            const textDisplay = (topLevelComment.snippet?.textDisplay || '').toLowerCase();
+            const authorDisplayName = topLevelComment.snippet?.authorDisplayName;
 
             // Prevent replying to own comments
-            if (topLevelComment.authorChannelId?.value === user.youtubeChannelId) continue;
+            if (topLevelComment.snippet?.authorChannelId?.value === user.youtubeChannelId) continue;
 
             // 3. Deduplicate: check if we already processed this comment
             const existingRecord = await prisma.youtubeComment.findUnique({
@@ -143,7 +144,7 @@ async function processUser(user) {
                     userId: user.id,
                     channelId: user.youtubeChannelId,
                     videoId,
-                    commentId,
+                    commentId, // unique top-level comment ID for accurate deduplication
                     username: authorDisplayName || 'Unknown',
                     commentText: topLevelComment.textDisplay || '',
                     replied: shouldReply
@@ -189,10 +190,10 @@ async function processUser(user) {
 
             if (matchedRule.replyDelay > 0) {
                 setTimeout(() => {
-                    sendReply(youtube, commentId, finalMessage, user.id);
+                    sendReply(youtube, threadId, finalMessage, user.id);
                 }, matchedRule.replyDelay * 1000);
             } else {
-                await sendReply(youtube, commentId, finalMessage, user.id);
+                await sendReply(youtube, threadId, finalMessage, user.id);
             }
         }
     } catch (error) {
