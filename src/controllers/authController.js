@@ -774,92 +774,21 @@ const verify2FA = async (req, res) => {
 
 // Facebook OAuth Callback
 const facebookCallback = catchAsync(async (req, res, next) => {
-  const { code, state } = req.query;
+  const { code, state, error, error_description } = req.query;
+
+  if (error) {
+    return res.redirect(`cloraai://instagram-success?error=${error_description || 'access_denied'}`);
+  }
 
   // 1. Validate inputs
   if (!code) {
     throw new AppError('No code provided from Facebook OAuth', 400);
   }
 
-  let userId;
-  try {
-    if (state) {
-      const stateObj = JSON.parse(Buffer.from(state, 'base64').toString());
-      userId = stateObj.userId;
-    }
-  } catch (e) {
-    console.warn('Could not parse state from Facebook callback');
-  }
-
-  // Fallback frontend URL from .env (handle commas if multiple)
-  const frontendUrlBase = (process.env.FRONTEND_URL || 'http://localhost:8081').split(',')[0].trim();
-  const successRedirect = `${frontendUrlBase}/dashboard?instagram_connected=true`;
-  const errorRedirect = `${frontendUrlBase}/dashboard?error=instagram_connection_failed`;
-
-  const instagramService = require('../services/instagramService');
-  const InstagramAccountMongoose = require('../../models/InstagramAccount');
-
-  try {
-    // 2. Exchange code for LONG-LIVED token (60 days)
-    // instagramService handles both steps: authorization_code -> short-lived -> fb_exchange_token -> long-lived
-    const tokenData = await instagramService.exchangeCodeForToken(code);
-    const { accessToken, expiresIn } = tokenData;
-
-    if (!accessToken) {
-      throw new AppError('No access token returned from Facebook', 401);
-    }
-
-    // 3. Discover Instagram Business Account & Facebook Page ID
-    const { instagramBusinessAccountId, facebookPageId } = await instagramService.getBusinessAccount(accessToken);
-
-    // 4. Fetch basic profile info (username)
-    let username = 'Instagram User';
-    try {
-      const basicData = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v18.0'}/${instagramBusinessAccountId}?fields=username&access_token=${accessToken}`);
-      username = basicData.data.username;
-    } catch (err) {
-      console.warn('Could not fetch username during callback:', err.message);
-    }
-
-    // 5. Persistence
-    const expiresInSeconds = parseInt(expiresIn) || 5184000; // Default 60 days
-    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
-
-    // 5a. Mongoose (Legacy/Parallel storage)
-    if (userId) {
-      // 5b. Prisma (Primary storage)
-      await prisma.instagramAccount.upsert({
-        where: { userId },
-        update: {
-          instagramId: instagramBusinessAccountId,
-          pageId: facebookPageId,
-          username,
-          instagramAccessToken: accessToken,
-          tokenExpiresAt: expiresAt,
-          isConnected: true,
-          connectedAt: new Date()
-        },
-        create: {
-          userId,
-          instagramId: instagramBusinessAccountId,
-          pageId: facebookPageId,
-          username,
-          instagramAccessToken: accessToken,
-          tokenExpiresAt: expiresAt,
-          isConnected: true,
-          connectedAt: new Date()
-        }
-      });
-    }
-
-    // 6. Redirect to Frontend Dashboard
-    res.redirect(successRedirect);
-
-  } catch (error) {
-    console.error('Facebook Callback error:', error);
-    // Redirect with error param so frontend can show UI toast
-    res.redirect(errorRedirect);
-  }
+  // Support Mobile Deep Link Flow: 
+  // Simply redirect the unused authorization code to the frontend deep link scheme.
+  // The mobile app will then POST this code to /api/v1/instagram/callback.
+  res.redirect(`cloraai://instagram-success?code=${code}`);
 });
 
 // 2. Handle Instagram OAuth Redirect
