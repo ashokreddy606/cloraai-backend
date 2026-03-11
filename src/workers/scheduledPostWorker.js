@@ -53,8 +53,9 @@ const processScheduledPost = async (job) => {
         null,
         {
             params: {
-                image_url: post.mediaUrl,
+                video_url: post.mediaUrl,
                 caption: post.caption,
+                media_type: 'REELS',
                 access_token: accessToken
             }
         }

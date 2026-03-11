@@ -161,7 +161,7 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
 
     const containerRes = await axios.post(
         `https://graph.facebook.com/v18.0/${igAccount.instagramId}/media`,
-        { image_url: post.mediaUrl, caption: `${post.caption}`, access_token: decryptedToken },
+        { video_url: post.mediaUrl, caption: `${post.caption}`, media_type: 'REELS', access_token: decryptedToken },
         { timeout: 30000 }
     );
 
