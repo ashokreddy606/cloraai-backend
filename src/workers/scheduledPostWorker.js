@@ -164,7 +164,7 @@ scheduledPostWorker.on('failed', async (job, err) => {
         try {
             await prisma.scheduledPost.update({
                 where: { id: job.data.postId },
-                data: { status: 'FAILED', failureReason: err.message }
+                data: { status: 'FAILED', errorMessage: err.message }
             });
 
             // Send failure push notification

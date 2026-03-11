@@ -682,7 +682,7 @@ const getScheduledPosts = async (req, res) => {
             prisma.scheduledPost.findMany({
                 where,
                 include: { user: { select: { email: true, username: true } } },
-                orderBy: { scheduledTime: 'desc' },
+                orderBy: { scheduledAt: 'desc' },
                 skip,
                 take: parseInt(limit),
             }),

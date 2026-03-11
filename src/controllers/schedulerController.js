@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const axios = require('axios');
 const { appConfig } = require('../config');
+const { instagramQueue, youtubeQueue, enqueueJob } = require('../utils/queue');
 
 // Schedule Post
 const schedulePost = async (req, res) => {
@@ -70,20 +71,30 @@ const schedulePost = async (req, res) => {
       }
     }
 
+    const isInstant = !!publishInstantly;
+
     const scheduledPost = await prisma.scheduledPost.create({
       data: {
-        userId: req.userId,
+        user: { connect: { id: req.userId } },
         caption,
-        hashtags: hashtags || '',
         mediaUrl,
-        scheduledTime: scheduledDate,
-        status: 'scheduled',
+        scheduledAt: scheduledDate,
+        status: isInstant ? 'publishing' : 'scheduled',
         automationKeyword: automationKeyword || null,
         automationReply: automationReply || null,
         automationAppendLinks: automationAppendLinks || false,
         automationLinks: automationLinks ? JSON.stringify(automationLinks) : null
       }
     });
+
+    // If instant, add to queue immediately
+    if (isInstant) {
+      if (scheduledPost.platform === 'instagram') {
+        await enqueueJob(instagramQueue, 'publish', { postId: scheduledPost.id, userId: req.userId });
+      } else if (scheduledPost.platform === 'youtube') {
+        await enqueueJob(youtubeQueue, 'upload', { postId: scheduledPost.id, userId: req.userId });
+      }
+    }
 
     if (captionId) {
       await prisma.caption.update({
@@ -102,7 +113,7 @@ const schedulePost = async (req, res) => {
         post: {
           id: scheduledPost.id,
           status: scheduledPost.status,
-          scheduledTime: scheduledPost.scheduledTime
+          scheduledAt: scheduledPost.scheduledAt
         }
       }
     });
@@ -120,7 +131,7 @@ const getScheduledPosts = async (req, res) => {
   try {
     const posts = await prisma.scheduledPost.findMany({
       where: { userId: req.userId },
-      orderBy: { scheduledTime: 'asc' }
+      orderBy: { scheduledAt: 'asc' }
     });
 
     res.status(200).json({

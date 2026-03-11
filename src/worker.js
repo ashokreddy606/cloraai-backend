@@ -160,13 +160,13 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
     const decryptedToken = decryptToken(igAccount.accessToken);
 
     const containerRes = await axios.post(
-        `https://graph.facebook.com/v18.0/${igAccount.instagramUserId}/media`,
+        `https://graph.facebook.com/v18.0/${igAccount.instagramId}/media`,
         { image_url: post.mediaUrl, caption: `${post.caption}`, access_token: decryptedToken },
         { timeout: 30000 }
     );
 
     const publishRes = await axios.post(
-        `https://graph.facebook.com/v18.0/${igAccount.instagramUserId}/media_publish`,
+        `https://graph.facebook.com/v18.0/${igAccount.instagramId}/media_publish`,
         { creation_id: containerRes.data.id, access_token: decryptedToken },
         { timeout: 30000 }
     );
