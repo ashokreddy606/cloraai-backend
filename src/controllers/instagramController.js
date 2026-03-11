@@ -138,6 +138,18 @@ const getAccountDetails = async (req, res) => {
     });
   } catch (error) {
     console.error("Instagram API error:", error.response?.data || error.message);
+
+    // If token is invalid or request is malformed, return as disconnected gracefully
+    if (error.response?.status === 400 || error.response?.status === 401) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          account: null,
+          isConnected: false
+        }
+      });
+    }
+
     res.status(500).json({
       error: 'Failed to fetch account details',
       message: error.message
@@ -170,6 +182,19 @@ const getAnalytics = async (req, res) => {
     });
   } catch (error) {
     console.error("Instagram API error:", error.response?.data || error.message);
+    if (error.response?.status === 400 || error.response?.status === 401) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          followers: 0,
+          following: 0,
+          posts: 0,
+          comments: 0,
+          repliesSent: 0,
+          growthLast30Days: 0
+        }
+      });
+    }
     res.status(500).json({ error: 'Failed to fetch analytics', message: error.message });
   }
 };
@@ -201,6 +226,12 @@ const getPosts = async (req, res) => {
     res.status(200).json({ success: true, data: enrichedPosts });
   } catch (error) {
     console.error("Instagram API error:", error.response?.data || error.message);
+    if (error.response?.status === 400 || error.response?.status === 401) {
+      return res.status(200).json({
+        success: true,
+        data: []
+      });
+    }
     res.status(500).json({ error: 'Failed to fetch Instagram posts', message: error.message });
   }
 };
