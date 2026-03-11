@@ -240,7 +240,7 @@ exports.getRules = async (req, res) => {
 
 exports.createRule = async (req, res) => {
     try {
-        const { keyword, replyMessage, isActive, replyDelay, limitPerHour } = req.body;
+        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, appendLinks, link1, link2, link3, link4 } = req.body;
         if (!keyword || !replyMessage) {
             return res.status(400).json({ error: 'Keyword and replyMessage are required' });
         }
@@ -255,13 +255,19 @@ exports.createRule = async (req, res) => {
                 replyMessage,
                 isActive: isActive !== undefined ? isActive : true,
                 replyDelay: replyDelay || 0,
-                limitPerHour: limitPerHour || 20
+                limitPerHour: limitPerHour || 20,
+                videoId: videoId || null,
+                appendLinks: appendLinks || false,
+                link1: link1 || null,
+                link2: link2 || null,
+                link3: link3 || null,
+                link4: link4 || null
             }
         });
         res.status(201).json(rule);
     } catch (error) {
         if (error.code === 'P2002') {
-            return res.status(400).json({ error: 'Rule with this keyword already exists' });
+            return res.status(400).json({ error: 'Rule with this keyword already exists for this scope' });
         }
         logger.error('YOUTUBE', 'createRule error', error);
         res.status(500).json({ error: 'Error creating rule' });
@@ -271,7 +277,7 @@ exports.createRule = async (req, res) => {
 exports.updateRule = async (req, res) => {
     try {
         const { id } = req.params;
-        const { keyword, replyMessage, isActive, replyDelay, limitPerHour } = req.body;
+        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, appendLinks, link1, link2, link3, link4 } = req.body;
         const existing = await prisma.youtubeAutomationRule.findFirst({ where: { id, userId: req.userId } });
         if (!existing) return res.status(404).json({ error: 'Rule not found' });
         const updated = await prisma.youtubeAutomationRule.update({
@@ -281,7 +287,13 @@ exports.updateRule = async (req, res) => {
                 replyMessage: replyMessage !== undefined ? replyMessage : existing.replyMessage,
                 isActive: isActive !== undefined ? isActive : existing.isActive,
                 replyDelay: replyDelay !== undefined ? replyDelay : existing.replyDelay,
-                limitPerHour: limitPerHour !== undefined ? limitPerHour : existing.limitPerHour
+                limitPerHour: limitPerHour !== undefined ? limitPerHour : existing.limitPerHour,
+                videoId: videoId !== undefined ? (videoId || null) : existing.videoId,
+                appendLinks: appendLinks !== undefined ? appendLinks : existing.appendLinks,
+                link1: link1 !== undefined ? (link1 || null) : existing.link1,
+                link2: link2 !== undefined ? (link2 || null) : existing.link2,
+                link3: link3 !== undefined ? (link3 || null) : existing.link3,
+                link4: link4 !== undefined ? (link4 || null) : existing.link4
             }
         });
         res.json(updated);

@@ -129,12 +129,10 @@ async function processUser(user) {
 
             if (existingRecord) continue;
 
-            let matchedRule = null;
-            for (const rule of user.youtubeRules) {
-                if (textDisplay.includes(rule.keyword.toLowerCase())) {
-                    matchedRule = rule;
-                    break;
-                }
+            let matchedRule = user.youtubeRules.find(r => r.videoId === videoId && textDisplay.includes(r.keyword.toLowerCase()));
+
+            if (!matchedRule) {
+                matchedRule = user.youtubeRules.find(r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase()));
             }
 
             const shouldReply = matchedRule !== null;
@@ -181,12 +179,20 @@ async function processUser(user) {
                 continue;
             }
 
+            let finalMessage = matchedRule.replyMessage;
+            if (matchedRule.appendLinks) {
+                const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
+                if (links.length > 0) {
+                    finalMessage += '\n\n' + links.join('\n');
+                }
+            }
+
             if (matchedRule.replyDelay > 0) {
                 setTimeout(() => {
-                    sendReply(youtube, commentId, matchedRule.replyMessage, user.id);
+                    sendReply(youtube, commentId, finalMessage, user.id);
                 }, matchedRule.replyDelay * 1000);
             } else {
-                await sendReply(youtube, commentId, matchedRule.replyMessage, user.id);
+                await sendReply(youtube, commentId, finalMessage, user.id);
             }
         }
     } catch (error) {

@@ -498,10 +498,21 @@ model YoutubeAutomationRule {
   replyDelay   Int     @default(0) // Delay in seconds before replying
   limitPerHour Int     @default(20) // Max replies per hour for this rule
   channelId    String? // Link to specific YouTube channel
+  
+  videoId      String? // Optional: If a rule is bound to a specific video
+  appendLinks  Boolean @default(false)
+  link1        String?
+  link2        String?
+  link3        String?
+  link4        String?
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  @@unique([userId, keyword])
+  // A user can use the same keyword for different videos. Null videoId means global.
+  // Prisma unique constraint doesn't strictly work like "optional uniqueness" in MongoDB,
+  // but we can define the compound index.
+  @@unique([userId, keyword, videoId])
   @@index([userId])
 }
 
