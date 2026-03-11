@@ -67,7 +67,7 @@ const processScheduledPost = async (job) => {
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     // Step B: Publish the container
-    await axios.post(
+    const publishRes = await axios.post(
         `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media_publish`,
         null,
         {
@@ -78,11 +78,45 @@ const processScheduledPost = async (job) => {
         }
     );
 
+    const instagramPostId = publishRes.data.id;
+
     // 5. Mark post as PUBLISHED
     await prisma.scheduledPost.update({
         where: { id: postId },
-        data: { status: 'PUBLISHED', publishedAt: new Date() }
+        data: { status: 'PUBLISHED', publishedAt: new Date(), instagramPostId }
     });
+
+    // 5b. Create DM Automation rule if requested
+    if (post.automationKeyword && post.automationReply && instagramPostId) {
+        let links = [];
+        if (post.automationLinks) {
+            try {
+                links = JSON.parse(post.automationLinks);
+            } catch (e) {
+                logger.warn('WORKER', `Failed to parse automationLinks for post ${postId}`);
+            }
+        }
+        
+        try {
+            await prisma.dMAutomation.create({
+                data: {
+                    userId,
+                    keyword: post.automationKeyword,
+                    autoReplyMessage: post.automationReply,
+                    isActive: true,
+                    reelId: instagramPostId,
+                    appendLinks: post.automationAppendLinks || false,
+                    link1: links[0] || null,
+                    link2: links[1] || null,
+                    link3: links[2] || null,
+                    link4: links[3] || null,
+                }
+            });
+            logger.info('WORKER', `Created DM Automation rule for reel ${instagramPostId}`);
+        } catch (ruleErr) {
+            logger.error('WORKER', `Failed to create DM Automation rule for reel ${instagramPostId}`, { error: ruleErr.message });
+        }
+    }
 
     // 6. Send success push notification if user has push token
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });

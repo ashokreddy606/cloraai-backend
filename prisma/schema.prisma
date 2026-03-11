@@ -272,6 +272,11 @@ model ScheduledPost {
   instagramPostId String?
   errorMessage    String?
 
+  automationKeyword String?
+  automationReply   String?
+  automationAppendLinks Boolean @default(false)
+  automationLinks String? // Store as JSON string or comma-separated
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -324,10 +329,17 @@ model DMAutomation {
   autoReplyMessage String
   isActive         Boolean @default(true)
 
+  reelId           String? // Specific reel ID. If null, applies globally.
+  appendLinks      Boolean @default(false)
+  link1            String?
+  link2            String?
+  link3            String?
+  link4            String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([userId, keyword])
+  @@unique([userId, keyword, reelId])
   @@index([userId])
 }
 

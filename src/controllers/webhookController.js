@@ -184,6 +184,8 @@ const handleWebhook = async (req, res) => {
                                 commentId: comment.id,
                                 commentText: comment.text,
                                 instagramId: instagramId,
+                                senderId: comment.from ? comment.from.id : null,
+                                userId: instagramAccount.userId,
                                 instagramAccessToken: decryptedToken
                             });
                             logger.info('WEBHOOK', `Enqueued comment ${comment.id} for processing`);
@@ -279,7 +281,7 @@ const handleWebhook = async (req, res) => {
                 // Rules sorted: longest keyword DESC (specificity)
                 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 const rules = await prisma.dMAutomation.findMany({
-                    where: { userId, isActive: true },
+                    where: { userId, isActive: true, reelId: null },
                     orderBy: [{ keyword: 'desc' }] // Sort by keyword length in-app after fetch
                 });
 
@@ -318,8 +320,16 @@ const handleWebhook = async (req, res) => {
                 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 // PART 5: Throttle — Add 100ms delay between outbound DM sends
                 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                let finalMessage = matchedRule.autoReplyMessage;
+                if (matchedRule.appendLinks) {
+                    const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
+                    if (links.length > 0) {
+                        finalMessage += '\n\n' + links.join('\n');
+                    }
+                }
+
                 const decryptedToken = decryptToken(instagramAccount.instagramAccessToken);
-                await sendInstagramMessage(senderId, matchedRule.autoReplyMessage, decryptedToken);
+                await sendInstagramMessage(senderId, finalMessage, decryptedToken);
                 await sleep(100);
                 logger.info('DM:SENT', `Auto-replied using rule "${matchedRule.keyword}" for user ${userId}`);
                 logger.increment('dmSent');

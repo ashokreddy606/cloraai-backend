@@ -4,7 +4,7 @@ const { appConfig } = require('../config');
 // Create DM Automation Rule
 const createRule = async (req, res) => {
   try {
-    const { keyword, autoReplyMessage } = req.body;
+    const { keyword, autoReplyMessage, reelId, appendLinks, link1, link2, link3, link4 } = req.body;
 
     if (!appConfig.featureFlags.autoDMEnabled) {
       return res.status(403).json({
@@ -67,7 +67,13 @@ const createRule = async (req, res) => {
         userId: req.userId,
         keyword,
         autoReplyMessage,
-        isActive: true
+        isActive: true,
+        reelId: reelId || null,
+        appendLinks: appendLinks || false,
+        link1: link1 || null,
+        link2: link2 || null,
+        link3: link3 || null,
+        link4: link4 || null
       }
     });
 
@@ -111,7 +117,7 @@ const getRules = async (req, res) => {
 const updateRule = async (req, res) => {
   try {
     const { id } = req.params;
-    const { keyword, autoReplyMessage, isActive } = req.body;
+    const { keyword, autoReplyMessage, isActive, reelId, appendLinks, link1, link2, link3, link4 } = req.body;
 
     // Verify ownership
     const existingRule = await prisma.dMAutomation.findUnique({
@@ -136,7 +142,13 @@ const updateRule = async (req, res) => {
       data: {
         ...(keyword && { keyword }),
         ...(autoReplyMessage && { autoReplyMessage }),
-        ...(isActive !== undefined && { isActive })
+        ...(isActive !== undefined && { isActive }),
+        ...(reelId !== undefined && { reelId }),
+        ...(appendLinks !== undefined && { appendLinks }),
+        ...(link1 !== undefined && { link1 }),
+        ...(link2 !== undefined && { link2 }),
+        ...(link3 !== undefined && { link3 }),
+        ...(link4 !== undefined && { link4 })
       }
     });
 

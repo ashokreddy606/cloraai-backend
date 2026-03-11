@@ -5,7 +5,7 @@ const { appConfig } = require('../config');
 // Schedule Post
 const schedulePost = async (req, res) => {
   try {
-    const { caption, hashtags, scheduledTime, mediaUrl, captionId } = req.body;
+    const { caption, hashtags, scheduledTime, mediaUrl, captionId, publishInstantly, automationKeyword, automationReply, automationAppendLinks, automationLinks } = req.body;
 
     if (!appConfig.featureFlags.reelSchedulerEnabled) {
       return res.status(403).json({
@@ -14,12 +14,14 @@ const schedulePost = async (req, res) => {
       });
     }
 
-    if (!caption || !mediaUrl || !scheduledTime) {
+    if (!caption || !mediaUrl || (!scheduledTime && !publishInstantly)) {
       return res.status(400).json({
         error: 'Missing required fields',
-        message: 'caption, mediaUrl, and scheduledTime are required'
+        message: 'caption, mediaUrl, and scheduledTime (or publishInstantly) are required'
       });
     }
+
+    const scheduledDate = publishInstantly ? new Date() : new Date(scheduledTime);
 
     // Validate mediaUrl format (Must be a secure HTTP/HTTPS URL)
     const urlPattern = /^https?:\/\/.+/i;
@@ -74,8 +76,12 @@ const schedulePost = async (req, res) => {
         caption,
         hashtags: hashtags || '',
         mediaUrl,
-        scheduledTime: new Date(scheduledTime),
-        status: 'scheduled'
+        scheduledTime: scheduledDate,
+        status: 'scheduled',
+        automationKeyword: automationKeyword || null,
+        automationReply: automationReply || null,
+        automationAppendLinks: automationAppendLinks || false,
+        automationLinks: automationLinks ? JSON.stringify(automationLinks) : null
       }
     });
 

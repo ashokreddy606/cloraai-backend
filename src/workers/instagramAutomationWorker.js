@@ -5,10 +5,67 @@ const axios = require('axios');
 
 // Process comments from the queue
 const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
-    const { mediaId, commentText, instagramAccessToken } = job.data;
+    const { mediaId, commentId, commentText, instagramId, senderId, instagramAccessToken, userId } = job.data;
     logger.info('WORKER', `Processing comment for media ${mediaId}`);
     try {
-        // Here you would implement logic to read/store comments
+        if (!userId || !senderId || !commentText) return { skipped: true, reason: 'Missing data' };
+
+        const prisma = require('../lib/prisma');
+        
+        // Find existing rules for this user
+        const rules = await prisma.dMAutomation.findMany({
+            where: { userId, isActive: true }
+        });
+
+        const sortedRules = rules.sort((a, b) => b.keyword.length - a.keyword.length);
+        const incomingText = commentText.trim().toLowerCase().replace(/\s+/g, ' ');
+
+        const matchesKeyword = (text, keyword) => {
+            try {
+                const keywords = keyword.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+                return keywords.some(kw => {
+                    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+                    return regex.test(text);
+                });
+            } catch { return false; }
+        };
+
+        let matchedRule = null;
+        for (const rule of sortedRules) {
+            const isMatchReel = !rule.reelId || rule.reelId === mediaId;
+            if (isMatchReel && matchesKeyword(incomingText, rule.keyword)) {
+                matchedRule = rule;
+                break;
+            }
+        }
+
+        if (matchedRule) {
+            let finalMessage = matchedRule.autoReplyMessage;
+            if (matchedRule.appendLinks) {
+                const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
+                if (links.length > 0) {
+                    finalMessage += '\n\n' + links.join('\n');
+                }
+            }
+
+            const messageId = `comment_${commentId}`;
+            const existing = await prisma.dmInteraction.findUnique({ where: { messageId } });
+            
+            if (!existing) {
+                await prisma.dmInteraction.create({
+                    data: { userId, messageId, ruleId: matchedRule.id, status: 'sent' }
+                });
+                
+                const url = `https://graph.instagram.com/v18.0/me/messages?access_token=${instagramAccessToken}`;
+                await axios.post(url, {
+                    recipient: { id: senderId },
+                    message: { text: finalMessage }
+                });
+                logger.info('WORKER', `Sent DM reply for comment on reel ${mediaId}`);
+            }
+        }
+
         return { success: true };
     } catch (error) {
         logger.error('WORKER', `Comment processing failed:`, { error: error.message });
