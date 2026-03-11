@@ -8,7 +8,15 @@ const compression = require('compression');
 const mongoose = require('mongoose');
 require('dotenv').config();
 const validateEnv = require('./src/utils/envValidator');
+const fs = require('fs');
+const path = require('path');
 validateEnv();
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'public/uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 // Initialize Mongoose (requested for Instagram Analytics)
 mongoose.connect(process.env.DATABASE_URL)
@@ -198,8 +206,11 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Internal-Token']
 }));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Static files
+app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 // Global rate limiting (100 requests per 15 minutes per IP)
 // Global rate limiting (100 requests per 15 minutes per IP)

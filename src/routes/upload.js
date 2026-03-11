@@ -15,6 +15,7 @@ const uploadLimiter = (process.env.NODE_ENV === 'test')
         message: { error: 'Too many upload requests. Please try again later.' }
     });
 
-router.post('/presigned-url', authenticate, uploadLimiter, uploadController.generatePresignedUrl);
+// Direct file upload to local storage
+router.post('/local', authenticate, uploadLimiter, uploadController.uploadMiddleware, uploadController.localUpload);
 
 module.exports = router;
