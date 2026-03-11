@@ -885,8 +885,8 @@ const instagramCallback = async (req, res) => {
 
     console.log("Instagram OAuth code:", code);
 
-    // For now, per requirement:
-    res.send("Instagram authentication successful");
+    // Redirect back to the mobile app using the custom deep link scheme
+    res.redirect(`cloraai://instagram-success?code=${code}`);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "OAuth callback failed" });
