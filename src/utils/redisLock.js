@@ -1,4 +1,5 @@
 const Redis = require('ioredis');
+const logger = require('./logger');
 
 // Use a separate connection for locks to avoid blocking on queue processing
 const redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {

@@ -10,7 +10,7 @@ router.post('/callback', authenticate, instagramController.handleOAuthCallback);
 // Account & Analytics
 router.get('/account', authenticate, instagramController.getAccountDetails);
 router.post('/disconnect', authenticate, instagramController.disconnectAccount);
-router.get('/stats', authenticate, instagramController.getStats);
+router.get('/stats', authenticate, instagramController.getAnalytics);
 router.get('/media', authenticate, instagramController.getPosts);
 router.get('/media/:mediaId/insights', authenticate, instagramController.getPostInsights);
 // For historical trend data (stored in Mongoose)
