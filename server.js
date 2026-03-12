@@ -387,6 +387,12 @@ if (process.env.NODE_ENV !== 'test') {
         logger.error('SERVER', 'Failed to initialize Instagram analytics worker:', { error: err.message });
     }
     try {
+        require('./src/workers/instagramAutomationWorker'); // Start Instagram automation worker
+        logger.info('SERVER', 'Instagram automation worker initialized.');
+    } catch (err) {
+        logger.error('SERVER', 'Failed to initialize Instagram automation worker:', { error: err.message });
+    }
+    try {
         require('./src/workers/refreshInstagramTokenWorker'); // Start Instagram token refresh cron
         logger.info('SERVER', 'Instagram token refresh worker initialized.');
     } catch (err) {

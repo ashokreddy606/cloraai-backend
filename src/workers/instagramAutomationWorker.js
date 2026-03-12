@@ -50,49 +50,54 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
     const incomingText = isDM ? dmText : commentText;
 
     // STEP 1 & 6: Log full job data and worker start
-    console.log("COMMENT EVENT DATA:", job.data);
-    logger.info('WORKER:START', `Worker started for ${isDM ? 'DM' : 'comment'}: ${eventId}`);
+    logger.info('WORKER:START', `Worker picked up ${isDM ? 'DM' : 'comment'} job: ${eventId}`, { jobId: job.id, data: job.data });
 
     try {
         if (!userId || !senderId || !incomingText) {
+            logger.warn('WORKER:SKIP', `Missing payload data for job ${job.id}`, { userId, senderId, hasText: !!incomingText });
             return { skipped: true, reason: 'Missing payload data' };
         }
 
         // 1. Idempotency Check
         const existing = await prisma.dmInteraction.findUnique({ where: { messageId: eventId } });
         if (existing) {
-            logger.debug('WORKER:IDEMPOTENCY', `Event ${eventId} already processed. Skipping.`);
+            logger.info('WORKER:IDEMPOTENCY', `Event ${eventId} already processed. Skipping.`, { jobId: job.id });
             return { skipped: true, reason: 'Duplicate event' };
         }
 
         // 2. Resolve Automation Rules
-        // STEP 5: Load rules and log them
+        logger.info('WORKER:RULES', `Fetching rules for user ${userId}`, { jobId: job.id });
         const rules = await prisma.dMAutomation.findMany({
             where: { userId, isActive: true }
         });
-        console.log("Loaded rules:", rules);
+        
+        logger.debug('WORKER:RULES_LOADED', `Loaded ${rules.length} active rules`, { jobId: job.id });
 
         // Rules prioritized by keyword length (most specific first)
         const sortedRules = rules.sort((a, b) => b.keyword.length - a.keyword.length);
 
         let matchedRule = null;
-        console.log("Incoming text:", incomingText);
-
         for (const rule of sortedRules) {
             // STEP 4: Verify Reel Filtering with flexibility
             const isMatchReel = !rule.reelId || (mediaId && mediaId.includes(rule.reelId));
+            const isMatchKeyword = matchesKeyword(incomingText, rule.keyword);
             
-            console.log(`Checking rule: ${rule.keyword}, reelId filter: ${rule.reelId || 'GLOBAL'}, reelMatch: ${isMatchReel}`);
+            logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, { 
+                jobId: job.id, 
+                reelFilter: rule.reelId || 'GLOBAL', 
+                reelMatch: isMatchReel,
+                keywordMatch: isMatchKeyword
+            });
 
-            if (isMatchReel && matchesKeyword(incomingText, rule.keyword)) {
+            if (isMatchReel && isMatchKeyword) {
                 matchedRule = rule;
-                console.log("RULE MATCHED:", rule.keyword);
+                logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword}`, { jobId: job.id, ruleId: rule.id });
                 break;
             }
         }
 
         if (!matchedRule) {
-            logger.debug('WORKER:SKIPPED', `No matching rule for ${isDM ? 'DM' : 'comment'} ${eventId}`);
+            logger.info('WORKER:SKIPPED', `No matching rule for ${isDM ? 'DM' : 'comment'} ${eventId}`, { jobId: job.id, incomingText });
             return { success: true, matched: false };
         }
 
@@ -102,6 +107,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 data: { userId, messageId: eventId, ruleId: matchedRule.id, status: 'sent' }
             });
         } catch (err) {
+            logger.warn('WORKER:CONFLICT', `Event ${eventId} claimed by another worker`, { jobId: job.id });
             return { skipped: true, reason: 'Event claimed by another worker' };
         }
 
@@ -113,21 +119,30 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         // 5. Execute API Calls (Private Reply then Public Reply for comments)
-        // Link: https://developers.facebook.com/docs/messenger-platform/instagram/features/private-replies
         const dmUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${instagramAccessToken}`;
         const dmRecipient = isDM ? { id: senderId } : { comment_id: commentId };
 
         try {
-            console.log("Sending reply to:", isDM ? senderId : commentId);
+            logger.info('WORKER:API_DM', `Sending ${isDM ? 'DM' : 'Private'} reply for ${eventId}`, { 
+                recipient: dmRecipient,
+                jobId: job.id
+            });
             const response = await axios.post(dmUrl, {
                 recipient: dmRecipient,
                 message: { text: finalMessage }
             });
-            console.log("STEP 7: Meta API DM response:", response.data);
-            logger.info('WORKER:DM_SENT', `Direct message sent for ${eventId}`);
+            logger.info('WORKER:DM_SENT', `Direct message sent for ${eventId}`, { 
+                jobId: job.id,
+                metaResponse: response.data 
+            });
+            logger.increment('dmSent');
         } catch (err) {
             await handleMetaError(err, userId, instagramId);
-            logger.error('WORKER:ERROR', `DM failed for ${eventId}`, { error: err.response?.data || err.message });
+            logger.error('WORKER:ERROR_DM', `DM failed for ${eventId}`, { 
+                jobId: job.id,
+                error: err.response?.data || err.message 
+            });
+            logger.increment('dmFailed');
             throw err; // Retry
         }
 
@@ -137,24 +152,33 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
             const replyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${commentId}/replies`;
             try {
+                logger.info('WORKER:API_REPLY', `Sending public comment reply for ${commentId}`, { jobId: job.id });
                 const response = await axios.post(replyUrl, { message: finalMessage }, { params: { access_token: instagramAccessToken } });
-                console.log("STEP 7: Meta API Public Reply response:", response.data);
-                logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`);
+                logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`, { 
+                    jobId: job.id,
+                    metaResponse: response.data 
+                });
             } catch (err) {
                 await handleMetaError(err, userId, instagramId);
-                logger.error('WORKER:ERROR', `Public reply failed for ${commentId}`, { error: err.response?.data || err.message });
-                // We don't necessarily want to fail the whole job if the DM worked but the public reply failed (less critical)
+                logger.error('WORKER:ERROR_REPLY', `Public reply failed for ${commentId}`, { 
+                    jobId: job.id,
+                    error: err.response?.data || err.message 
+                });
             }
         }
 
-        logger.info('WORKER:SUCCESS', `Automation completed for ${eventId}`);
+        logger.info('WORKER:SUCCESS', `Automation completed for ${eventId}`, { jobId: job.id });
         return { success: true };
 
     } catch (error) {
-        logger.error('WORKER:ERROR', `Job failed for ${eventId}:`, { error: error.message });
+        logger.error('WORKER:JOB_FAILED', `Job failed for ${eventId}:`, { 
+            jobId: job.id,
+            error: error.message,
+            stack: error.stack
+        });
         throw error; // Triggers BullMQ retry
     }
-}, { connection, concurrency: 10 }); // Concurrency increased for scale
+}, { connection, concurrency: 10 });
 
 logger.info('WORKER', '✅ Instagram Automation Worker initialized');
 

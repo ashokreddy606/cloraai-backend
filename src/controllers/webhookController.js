@@ -156,7 +156,13 @@ const handleWebhook = async (req, res) => {
                             userId: account.userId,
                             instagramAccessToken: decryptedToken
                         });
-                        logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId}`);
+                        logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId} for user ${account.userId}`, { 
+                            commentId, 
+                            mediaId,
+                            senderId
+                        });
+                    } else {
+                        logger.warn('WEBHOOK:ACCOUNT_NOT_FOUND', `Could not resolve Instagram account for entry/page ${entry.id}`, { entryId: entry.id });
                     }
                 }
             }
@@ -171,7 +177,10 @@ const handleWebhook = async (req, res) => {
                 const recipientId = event.recipient.id;
 
                 const account = await findInstagramAccount(recipientId);
-                if (!account) continue;
+                if (!account) {
+                    logger.warn('WEBHOOK:ACCOUNT_NOT_FOUND', `Could not resolve Instagram account for recipient ${recipientId}`, { recipientId });
+                    continue;
+                }
 
                 // Prevent self-reply loops
                 if (senderId === account.instagramId) continue;
@@ -186,7 +195,10 @@ const handleWebhook = async (req, res) => {
                     userId: account.userId,
                     instagramAccessToken: decryptedToken
                 });
-                logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId}`);
+                logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId} for user ${account.userId}`, { 
+                    messageId, 
+                    senderId 
+                });
             }
         }
     } catch (error) {
