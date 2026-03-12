@@ -104,13 +104,19 @@ const handleWebhook = async (req, res) => {
 
     // 1. Signature Validation
     const signatureHeader = req.headers['x-hub-signature-256'];
-    if (!verifyInstagramSignature(req.rawBody, signatureHeader)) {
+    const isSignatureValid = verifyInstagramSignature(req.rawBody, signatureHeader);
+    console.log("WEBHOOK SIGNATURE VERIFICATION:", isSignatureValid ? "VALID" : "INVALID");
+
+    if (!isSignatureValid) {
         logger.warn('WEBHOOK:SECURITY', 'Invalid signature rejected', { ip: req.ip });
         return res.sendStatus(403);
     }
 
     // 2. Immediate Acknowledgment
     res.status(200).send('EVENT_RECEIVED');
+
+    console.log("WEBHOOK RECEIVED");
+    console.log("WEBHOOK COMMENT EVENT:", JSON.stringify(req.body,null,2));
 
     try {
         const { body } = req;
@@ -156,6 +162,7 @@ const handleWebhook = async (req, res) => {
                             userId: account.userId,
                             instagramAccessToken: decryptedToken
                         });
+                        console.log("QUEUE JOB CREATED");
                         logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId} for user ${account.userId}`, { 
                             commentId, 
                             mediaId,
@@ -195,6 +202,7 @@ const handleWebhook = async (req, res) => {
                     userId: account.userId,
                     instagramAccessToken: decryptedToken
                 });
+                console.log("QUEUE JOB CREATED");
                 logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId} for user ${account.userId}`, { 
                     messageId, 
                     senderId 

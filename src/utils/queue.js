@@ -13,7 +13,7 @@ const QUEUES = {
     INSTAGRAM: 'instagram-publish',
     YOUTUBE: 'youtube-upload',
     REPLY: 'reply-queue',
-    COMMENT: 'comment-queue'
+    COMMENT: 'instagramAutomationQueue'
 };
 
 const aiQueue = new Queue(QUEUES.AI_TASKS, { connection });

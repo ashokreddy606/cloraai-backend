@@ -50,6 +50,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
     const incomingText = isDM ? dmText : commentText;
 
     // STEP 1 & 6: Log full job data and worker start
+    console.log("WORKER RECEIVED JOB:", job.data);
     logger.info('WORKER:START', `Worker picked up ${isDM ? 'DM' : 'comment'} job: ${eventId}`, { jobId: job.id, data: job.data });
 
     try {
@@ -57,6 +58,8 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             logger.warn('WORKER:SKIP', `Missing payload data for job ${job.id}`, { userId, senderId, hasText: !!incomingText });
             return { skipped: true, reason: 'Missing payload data' };
         }
+
+        console.log("COMMENT TEXT:", incomingText);
 
         // 1. Idempotency Check
         const existing = await prisma.dmInteraction.findUnique({ where: { messageId: eventId } });
@@ -91,6 +94,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
             if (isMatchReel && isMatchKeyword) {
                 matchedRule = rule;
+                console.log("RULE MATCHED:", rule.keyword);
                 logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword}`, { jobId: job.id, ruleId: rule.id });
                 break;
             }
@@ -135,6 +139,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 jobId: job.id,
                 metaResponse: response.data 
             });
+            console.log("DM SENT");
             logger.increment('dmSent');
         } catch (err) {
             await handleMetaError(err, userId, instagramId);
@@ -158,6 +163,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     jobId: job.id,
                     metaResponse: response.data 
                 });
+                console.log("PUBLIC COMMENT SENT");
             } catch (err) {
                 await handleMetaError(err, userId, instagramId);
                 logger.error('WORKER:ERROR_REPLY', `Public reply failed for ${commentId}`, { 
