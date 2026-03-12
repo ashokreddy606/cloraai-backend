@@ -241,6 +241,17 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         title: 'Instagram Post Published!', body: 'Your scheduled reel was successfully published.'
     }).catch(e => logger.warn('WORKER:NOTIFY', e.message));
 
+    } catch (error) {
+        logger.error('WORKER:IG', 'Instagram worker job failed', { postId, error: error.message });
+        await prisma.scheduledPost.update({
+            where: { id: postId },
+            data: {
+                status: 'failed',
+                errorMessage: error.message
+            }
+        });
+        throw error;
+    }
 }, { connection, concurrency: 5 });
 
 // 5. YouTube Upload Worker
