@@ -13,6 +13,15 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         const prisma = require('../lib/prisma');
         
         // Find existing rules for this user
+        const instagramAccount = await prisma.instagramAccount.findFirst({
+            where: { userId, isConnected: true }
+        });
+
+        if (senderId === instagramAccount?.instagramId) {
+            logger.debug('WORKER', `Skipping comment ${commentId} — sender is the account itself.`);
+            return { skipped: true, reason: 'Self-comment' };
+        }
+
         const rules = await prisma.dMAutomation.findMany({
             where: { userId, isActive: true }
         });

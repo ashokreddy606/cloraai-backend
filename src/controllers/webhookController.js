@@ -76,7 +76,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const sendInstagramMessage = async (recipientId, messageText, accessToken, retryCount = 0) => {
     try {
-        const url = `https://graph.instagram.com/v18.0/me/messages?access_token=${accessToken}`;
+        const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${accessToken}`;
         await axios.post(url, {
             recipient: { id: recipientId },
             message: { text: messageText }
@@ -247,6 +247,12 @@ const handleWebhook = async (req, res) => {
                 });
 
                 if (!instagramAccount || !instagramAccount.isConnected) continue;
+
+                // Self-Reply Prevention: Don't reply if we are the sender
+                if (senderId === instagramAccount.instagramId) {
+                    logger.debug('DM:SELF', `Skipping message ${messageId} — sender is the account itself.`);
+                    continue;
+                }
 
                 const userId = instagramAccount.userId;
                 const user = instagramAccount.user;
