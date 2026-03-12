@@ -140,15 +140,15 @@ const updateRule = async (req, res) => {
     const rule = await prisma.dMAutomation.update({
       where: { id },
       data: {
-        ...(keyword && { keyword }),
-        ...(autoReplyMessage && { autoReplyMessage }),
+        ...(keyword !== undefined && { keyword }),
+        ...(autoReplyMessage !== undefined && { autoReplyMessage }),
         ...(isActive !== undefined && { isActive }),
-        ...(reelId !== undefined && { reelId }),
+        ...(reelId !== undefined && { reelId: reelId || null }),
         ...(appendLinks !== undefined && { appendLinks }),
-        ...(link1 !== undefined && { link1 }),
-        ...(link2 !== undefined && { link2 }),
-        ...(link3 !== undefined && { link3 }),
-        ...(link4 !== undefined && { link4 })
+        ...(link1 !== undefined && { link1: link1 || null }),
+        ...(link2 !== undefined && { link2: link2 || null }),
+        ...(link3 !== undefined && { link3: link3 || null }),
+        ...(link4 !== undefined && { link4: link4 || null })
       }
     });
 
@@ -189,9 +189,14 @@ const deleteRule = async (req, res) => {
       });
     }
 
-    await prisma.dMAutomation.delete({
-      where: { id }
-    });
+    try {
+      await prisma.dMAutomation.delete({
+        where: { id }
+      });
+    } catch (deleteError) {
+      // If already deleted or not found, we consider it a success for the user's intent
+      console.warn('Delete rule warning (possibly already deleted):', deleteError.message);
+    }
 
     res.status(200).json({
       success: true,

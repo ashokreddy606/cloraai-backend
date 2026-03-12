@@ -370,8 +370,9 @@ if (process.env.NODE_ENV !== 'test') {
         logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message });
     }
     try {
-        require('./src/workers/scheduledPostWorker'); // BullMQ — processes instagram-publish queue
-        logger.info('SERVER', 'Scheduled post worker initialized.');
+        // Redundant: src/worker.js now handles the instagram-publish queue
+        // require('./src/workers/scheduledPostWorker'); 
+        logger.info('SERVER', 'Scheduled post worker disabled (handled by dedicated worker service).');
     } catch (err) {
         logger.error('SERVER', 'Failed to initialize scheduled post worker:', { error: err.message });
     }

@@ -57,7 +57,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     data: { userId, messageId, ruleId: matchedRule.id, status: 'sent' }
                 });
                 
-                const url = `https://graph.instagram.com/v18.0/me/messages?access_token=${instagramAccessToken}`;
+                const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${instagramAccessToken}`;
                 await axios.post(url, {
                     recipient: { id: senderId },
                     message: { text: finalMessage }
