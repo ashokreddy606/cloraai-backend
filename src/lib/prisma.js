@@ -3,13 +3,21 @@ const { PrismaClient } = require('@prisma/client');
 let prisma;
 
 // Set connection pool limit explicitly for MongoDB
-const dbUrl = process.env.DATABASE_URL;
+const dbUrl = (process.env.DATABASE_URL || '').trim();
 let pooledDbUrl = dbUrl;
 
 if (dbUrl) {
     if (!dbUrl.includes('maxPoolSize')) {
         pooledDbUrl = `${dbUrl}${dbUrl.includes('?') ? '&' : '?'}maxPoolSize=50`;
     }
+} else {
+    console.error('[PRISMA_DEBUG] DATABASE_URL is missing or empty');
+}
+
+// Masked log for debugging
+if (pooledDbUrl) {
+    const isMongo = pooledDbUrl.startsWith('mongodb');
+    console.log(`[PRISMA_DEBUG] URL protocol check: ${isMongo ? 'OK (Starts with mongodb)' : 'FAIL (Starts with ' + pooledDbUrl.substring(0, 7) + ')'}`);
 }
 
 if (process.env.NODE_ENV === 'production') {
