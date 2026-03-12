@@ -6,11 +6,19 @@ const os = require('os');
 const { appConfig } = require('../config');
 
 // S3 Client Setup
+const awsAccessKeyId = (process.env.AWS_ACCESS_KEY_ID || 'dummy').trim();
+const awsSecretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || 'dummy').trim();
+const awsRegion = (process.env.AWS_REGION || 'us-east-1').trim();
+
+console.log('[DEBUG_S3] Region:', awsRegion);
+console.log('[DEBUG_S3] Access Key Loaded:', awsAccessKeyId !== 'dummy' ? 'YES (Starts with ' + awsAccessKeyId.substring(0, 4) + '...)' : 'NO (Dummy)');
+console.log('[DEBUG_S3] Secret Key Loaded:', awsSecretAccessKey !== 'dummy' ? 'YES' : 'NO (Dummy)');
+
 const s3 = new S3Client({
-    region: process.env.AWS_REGION || 'us-east-1',
+    region: awsRegion,
     credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'dummy',
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'dummy'
+        accessKeyId: awsAccessKeyId,
+        secretAccessKey: awsSecretAccessKey
     }
 });
 
