@@ -183,12 +183,29 @@ const getYoutubeClientForWorker = async (user) => {
 // 4. Instagram Publishing Worker
 const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
     const { postId } = job.data;
-    const post = await prisma.scheduledPost.findUnique({
-        where: { id: postId },
-        include: { user: { include: { instagramAccounts: true } } }
-    });
+    logger.info('WORKER:IG', `Processing Instagram job ${job.id}`, { postId, data: job.data });
 
-    if (!post || post.status !== 'publishing') return;
+    try {
+        const post = await prisma.scheduledPost.findUnique({
+            where: { id: postId },
+            include: { 
+                user: { 
+                    include: { 
+                        instagramAccounts: true 
+                    } 
+                } 
+            }
+        });
+
+        if (!post) {
+            logger.warn('WORKER:IG', `Post ${postId} not found in database.`);
+            return;
+        }
+
+        if (post.status !== 'publishing') {
+            logger.warn('WORKER:IG', `Post ${postId} status is ${post.status}, skipping publishing.`);
+            return;
+        }
 
     const igAccount = post.user.instagramAccounts[0];
     if (!igAccount || !igAccount.accessToken || !igAccount.isConnected) {
