@@ -49,7 +49,9 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
     const eventId = isDM ? dmMessageId : `comment_${commentId}`;
     const incomingText = isDM ? dmText : commentText;
 
-    logger.info('WORKER:START', `Processing ${isDM ? 'DM' : 'comment'} ${eventId}`);
+    // STEP 1 & 6: Log full job data and worker start
+    console.log("COMMENT EVENT DATA:", job.data);
+    logger.info('WORKER:START', `Worker started for ${isDM ? 'DM' : 'comment'}: ${eventId}`);
 
     try {
         if (!userId || !senderId || !incomingText) {
@@ -64,18 +66,27 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         // 2. Resolve Automation Rules
-        // For comments, we check reelId. For DMs, reelId is null.
+        // STEP 5: Load rules and log them
         const rules = await prisma.dMAutomation.findMany({
-            where: { userId, isActive: true, OR: [{ reelId: null }, { reelId: mediaId }] }
+            where: { userId, isActive: true }
         });
+        console.log("Loaded rules:", rules);
 
         // Rules prioritized by keyword length (most specific first)
         const sortedRules = rules.sort((a, b) => b.keyword.length - a.keyword.length);
 
         let matchedRule = null;
+        console.log("Incoming text:", incomingText);
+
         for (const rule of sortedRules) {
-            if (matchesKeyword(incomingText, rule.keyword)) {
+            // STEP 4: Verify Reel Filtering with flexibility
+            const isMatchReel = !rule.reelId || (mediaId && mediaId.includes(rule.reelId));
+            
+            console.log(`Checking rule: ${rule.keyword}, reelId filter: ${rule.reelId || 'GLOBAL'}, reelMatch: ${isMatchReel}`);
+
+            if (isMatchReel && matchesKeyword(incomingText, rule.keyword)) {
                 matchedRule = rule;
+                console.log("RULE MATCHED:", rule.keyword);
                 break;
             }
         }
@@ -107,10 +118,12 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         const dmRecipient = isDM ? { id: senderId } : { comment_id: commentId };
 
         try {
-            await axios.post(dmUrl, {
+            console.log("Sending reply to:", isDM ? senderId : commentId);
+            const response = await axios.post(dmUrl, {
                 recipient: dmRecipient,
                 message: { text: finalMessage }
             });
+            console.log("STEP 7: Meta API DM response:", response.data);
             logger.info('WORKER:DM_SENT', `Direct message sent for ${eventId}`);
         } catch (err) {
             await handleMetaError(err, userId, instagramId);
@@ -124,7 +137,8 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
             const replyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${commentId}/replies`;
             try {
-                await axios.post(replyUrl, { message: finalMessage }, { params: { access_token: instagramAccessToken } });
+                const response = await axios.post(replyUrl, { message: finalMessage }, { params: { access_token: instagramAccessToken } });
+                console.log("STEP 7: Meta API Public Reply response:", response.data);
                 logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`);
             } catch (err) {
                 await handleMetaError(err, userId, instagramId);

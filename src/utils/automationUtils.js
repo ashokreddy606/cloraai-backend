@@ -15,16 +15,18 @@ const matchesKeyword = (incomingText, keywordRule) => {
     if (!incomingText || !keywordRule) return false;
 
     try {
-        const text = incomingText.trim().toLowerCase().replace(/\s+/g, ' ');
+        // Clean text: lowercase and replace punctuation with spaces
+        const cleanText = incomingText.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, ' ');
+        
         // Support comma-separated multi-keyword rules
-        const keywords = keywordRule.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+        const keywords = keywordRule.split(',').map(k => {
+            // Also clean the keyword to match the text cleaning logic
+            return k.toLowerCase().replace(/[^\w\s]/g, " ").trim();
+        }).filter(Boolean);
         
         return keywords.some(kw => {
-            // Escape special regex chars, then use word boundaries
-            // This ensures "help" doesn't match "helping"
-            const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-            return regex.test(text);
+            // Check if the clean text contains the keyword
+            return cleanText.includes(kw);
         });
     } catch (error) {
         return false;
