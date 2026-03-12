@@ -4,6 +4,8 @@ const { appConfig } = require('../config');
 const { decryptToken } = require('../utils/cryptoUtils');
 const logger = require('../utils/logger');
 const { analyzeAndSaveBrandDeal } = require('./brandDealController');
+const { matchesKeyword } = require('../utils/automationUtils');
+const { enqueueJob, commentQueue } = require('../utils/queue');
 
 const prisma = require('../lib/prisma');
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
@@ -17,107 +19,49 @@ if (!INSTAGRAM_APP_SECRET) {
     console.error('[CRITICAL] INSTAGRAM_APP_SECRET is not set. Webhook signature validation will be skipped!');
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// SECURITY: Instagram POST Webhook Signature Validation
-// Meta signs every POST body with HMAC-SHA256 using your
-// App Secret and sends it in X-Hub-Signature-256 header.
-// Rejecting unsigned requests prevents anyone from posting
-// fake DM events that would trigger AI calls + DM replies.
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/**
+ * SECURITY: Validate X-Hub-Signature-256 header.
+ * Meta signs POST bodies with HMAC-SHA256 using the App Secret.
+ */
 const verifyInstagramSignature = (rawBody, signatureHeader) => {
     if (!INSTAGRAM_APP_SECRET) {
-        // If secret is missing, log loudly but do not crash in dev
         logger.warn('WEBHOOK:SECURITY', 'INSTAGRAM_APP_SECRET not set — skipping signature check!');
-        return process.env.NODE_ENV !== 'production'; // block in prod, allow in dev
+        return process.env.NODE_ENV !== 'production';
     }
     if (!signatureHeader || !signatureHeader.startsWith('sha256=')) {
         return false;
     }
+    if (!rawBody) {
+        logger.error('WEBHOOK:SECURITY', 'Signature verification failed: rawBody missing. Ensure middleware is correctly configured.');
+        return false;
+    }
+
     const receivedSig = signatureHeader.slice('sha256='.length);
     const expectedSig = crypto
         .createHmac('sha256', INSTAGRAM_APP_SECRET)
         .update(rawBody)
         .digest('hex');
-    // Constant-time comparison to prevent timing attacks
+
     try {
         return crypto.timingSafeEqual(
             Buffer.from(receivedSig, 'hex'),
             Buffer.from(expectedSig, 'hex')
         );
     } catch {
-        return false; // Buffer length mismatch = invalid signature
-    }
-};
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// PART 1: Keyword matching with word boundaries
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const matchesKeyword = (incomingText, keyword) => {
-    try {
-        // Support comma-separated multi-keyword rules
-        const keywords = keyword.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-        return keywords.some(kw => {
-            // Escape special regex chars, then use word boundaries
-            const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-            return regex.test(incomingText);
-        });
-    } catch {
         return false;
     }
 };
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// HELPER: sleep()
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// HELPER: Send message via Graph API with timeout
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const sendInstagramMessage = async (recipientId, messageText, accessToken, retryCount = 0) => {
-    try {
-        const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${accessToken}`;
-        await axios.post(url, {
-            recipient: { id: recipientId },
-            message: { text: messageText }
-        }, { timeout: 10000 }); // PART 6: 10s hard timeout
-    } catch (error) {
-        const statusCode = error.response?.status;
-        const errorCode = error.response?.data?.error?.code;
-
-        // PART 6: Safe retry — max 2 attempts only
-        if (retryCount < 2 && statusCode !== 429 && errorCode !== 190) {
-            logger.warn('DM:SEND', `Send failed. Retrying (${retryCount + 1}/2)...`);
-            await sleep(1000 * (retryCount + 1));
-            return sendInstagramMessage(recipientId, messageText, accessToken, retryCount + 1);
-        }
-        // Log & track but never expose the token
-        if (statusCode === 429) logger.increment('meta429Errors');
-        logger.error('DM:SEND', `Failed to send DM to recipient`, { statusCode, errorCode });
-        logger.increment('dmFailed');
-    }
-};
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ROUTES: Hub Verification
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/**
+ * ROUTES: Hub Verification (GET)
+ */
 const verifyWebhook = (req, res) => {
-    // 1. Log all query params to help debug if Meta changes things
     logger.info('WEBHOOK:VERIFY', 'Incoming Meta Handshake', { query: req.query });
 
     const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
-
-    // Meta sends hub.mode, hub.verify_token, hub.challenge
-    // With 'simple' query parser, they are flat keys in req.query
-    // We also fallback to hub_mode if provided this way
     const mode = req.query['hub.mode'] || req.query['hub_mode'];
     const token = req.query['hub.verify_token'] || req.query['hub_verify_token'];
     const challenge = req.query['hub.challenge'] || req.query['hub_challenge'];
-
-    console.log("MODE:", mode);
-    console.log("TOKEN FROM META:", token);
-    console.log("TOKEN FROM ENV:", VERIFY_TOKEN);
 
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
         logger.info('WEBHOOK:VERIFY', 'Handshake Successful', { challenge });
@@ -127,233 +71,129 @@ const verifyWebhook = (req, res) => {
     logger.warn('WEBHOOK:VERIFY', 'Handshake Failed', { mode, tokenReceived: !!token });
     return res.sendStatus(403);
 };
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ROUTES: Incoming Message Events
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const handleWebhook = async (req, res) => {
-    // Log the incoming payload
-    logger.info('WEBHOOK:INCOMING', 'Received Meta Webhook Event', { body: JSON.stringify(req.body) });
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // SECURITY: Validate X-Hub-Signature-256 BEFORE doing anything
-    // Must use the raw body (Buffer), not the parsed JSON object
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    const signatureHeader = req.headers['x-hub-signature-256'];
-    const rawBody = req.rawBody; // Attached by raw body capture middleware in server.js
+/**
+ * HELPER: Resolve Instagram Account from Entry ID or Page ID
+ */
+const findInstagramAccount = async (id) => {
+    if (!id) return null;
+    
+    // 1. Try matching by instagramId (direct Business Account ID)
+    let account = await prisma.instagramAccount.findFirst({
+        where: { instagramId: id, isConnected: true }
+    });
 
-    if (!verifyInstagramSignature(rawBody || JSON.stringify(req.body), signatureHeader)) {
-        logger.warn('WEBHOOK:SECURITY', 'Invalid Instagram webhook signature — request rejected', {
-            ip: req.ip,
-            hasHeader: !!signatureHeader,
+    // 2. Try matching by pageId (Meta often sends Page ID in entry.id for feed webhooks)
+    if (!account) {
+        account = await prisma.instagramAccount.findFirst({
+            where: { pageId: id, isConnected: true }
         });
-        logger.increment('webhookSignatureRejected');
+    }
+
+    return account;
+};
+
+/**
+ * ROUTES: Handle Webhook Events (POST)
+ */
+const handleWebhook = async (req, res) => {
+    logger.info('WEBHOOK:RECEIVED', 'Meta Webhook Event Received', { 
+        object: req.body.object,
+        entryCount: req.body.entry?.length 
+    });
+
+    // 1. Signature Validation
+    const signatureHeader = req.headers['x-hub-signature-256'];
+    if (!verifyInstagramSignature(req.rawBody, signatureHeader)) {
+        logger.warn('WEBHOOK:SECURITY', 'Invalid signature rejected', { ip: req.ip });
         return res.sendStatus(403);
     }
 
-    // Acknowledge Meta IMMEDIATELY to prevent retries from a slow response
+    // 2. Immediate Acknowledgment
     res.status(200).send('EVENT_RECEIVED');
-
 
     try {
         const { body } = req;
-
-        if (body.object !== 'instagram') return;
         if (!appConfig.featureFlags.autoDMEnabled) return;
 
-        // PART 5: Use `for...of` instead of `forEach` to prevent unbounded concurrency
+        // Supported objects: 'instagram' (for DMs/Direct Comments) and 'page' (for Page Feed Comments)
+        if (body.object !== 'instagram' && body.object !== 'page') return;
+
         for (const entry of body.entry) {
-            // PART: Handle Comments
+            // A. Handle Comments (Direct Instagram OR Page Feed)
             const changes = entry.changes || [];
             for (const change of changes) {
-                if (change.field === 'comments') {
+                const isInstagramComment = change.field === 'comments';
+                const isPageFeedComment = change.field === 'feed' && change.value?.item === 'comment' && change.value.verb === 'add';
+
+                if (isInstagramComment || isPageFeedComment) {
                     const comment = change.value;
-                    const instagramId = entry.id || (comment.from ? comment.from.id : null);
+                    const commentId = comment.id || comment.comment_id;
+                    const mediaId = comment.media?.id || comment.media_id || comment.post_id;
+                    const senderId = comment.from?.id;
 
-                    if (instagramId) {
-                        let instagramAccount = await prisma.instagramAccount.findFirst({
-                            where: { instagramId }
+                    logger.info('COMMENT:DETECTED', `New comment found`, { commentId, mediaId, senderId });
+
+                    if (!senderId || !commentId) continue;
+
+                    // Resolve account: Resolve by entry.id (Account ID) or senderId (fallback)
+                    const account = await findInstagramAccount(entry.id);
+                    
+                    if (account) {
+                        // Prevent self-reply loops
+                        if (senderId === account.instagramId) {
+                            logger.debug('COMMENT:SELF', `Skipping self-comment ${commentId}`);
+                            continue;
+                        }
+
+                        const decryptedToken = decryptToken(account.instagramAccessToken);
+                        await enqueueJob(commentQueue, 'process-comment', {
+                            mediaId,
+                            commentId,
+                            commentText: comment.text || comment.message,
+                            instagramId: account.instagramId,
+                            senderId,
+                            userId: account.userId,
+                            instagramAccessToken: decryptedToken
                         });
-
-                        // Fallback: If not found by instagramId, search by pageId
-                        // Meta often sends the Page ID in the entry.id for some events
-                        if (!instagramAccount) {
-                            instagramAccount = await prisma.instagramAccount.findFirst({
-                                where: { pageId: instagramId }
-                            });
-                        }
-
-                        if (instagramAccount && instagramAccount.isConnected) {
-                            const { decryptToken } = require('../utils/cryptoUtils');
-                            const decryptedToken = decryptToken(instagramAccount.instagramAccessToken);
-
-                            const { enqueueJob, commentQueue } = require('../utils/queue');
-
-                            await enqueueJob(commentQueue, 'process-comment', {
-                                mediaId: comment.media?.id || comment.media_id,
-                                commentId: comment.id,
-                                commentText: comment.text,
-                                instagramId: instagramId,
-                                senderId: comment.from ? comment.from.id : null,
-                                userId: instagramAccount.userId,
-                                instagramAccessToken: decryptedToken
-                            });
-                            logger.info('WEBHOOK', `Enqueued comment ${comment.id} for processing`);
-                        }
+                        logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId}`);
                     }
                 }
             }
 
+            // B. Handle Messaging (Direct Messages)
             const messagingEvents = entry.messaging || [];
-
             for (const event of messagingEvents) {
-                if (!event.message || !event.message.text || !event.message.mid) continue;
+                if (!event.message?.text || !event.message?.mid) continue;
 
                 const messageId = event.message.mid;
-                const eventTimestampMs = event.timestamp * 1000;
-
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                // PART 4: Meta 24-Hour Compliance Enforcement
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-                if (Date.now() - eventTimestampMs > TWENTY_FOUR_HOURS_MS) {
-                    logger.info('DM:COMPLIANCE', `Skipping message ${messageId} — outside 24-hour Meta policy window.`);
-                    continue;
-                }
-
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                // PART 2: Idempotency — Skip duplicates
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                const existing = await prisma.dmInteraction.findUnique({ where: { messageId } });
-                if (existing) {
-                    logger.debug('DM:IDEMPOTENCY', `Message ${messageId} already processed. Skipping.`);
-                    logger.increment('dmSkippedIdempotent');
-                    continue;
-                }
-
                 const senderId = event.sender.id;
                 const recipientId = event.recipient.id;
 
-                const instagramAccount = await prisma.instagramAccount.findFirst({
-                    where: { instagramId: recipientId },
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                plan: true,
-                                subscriptionStatus: true,
-                                planEndDate: true,
-                            }
-                        }
-                    }
+                const account = await findInstagramAccount(recipientId);
+                if (!account) continue;
+
+                // Prevent self-reply loops
+                if (senderId === account.instagramId) continue;
+
+                // Enqueue DM processing
+                const decryptedToken = decryptToken(account.instagramAccessToken);
+                await enqueueJob(commentQueue, 'process-dm', {
+                    messageId,
+                    text: event.message.text,
+                    senderId,
+                    instagramId: account.instagramId,
+                    userId: account.userId,
+                    instagramAccessToken: decryptedToken
                 });
-
-                if (!instagramAccount || !instagramAccount.isConnected) continue;
-
-                // Self-Reply Prevention: Don't reply if we are the sender
-                if (senderId === instagramAccount.instagramId) {
-                    logger.debug('DM:SELF', `Skipping message ${messageId} — sender is the account itself.`);
-                    continue;
-                }
-
-                const userId = instagramAccount.userId;
-                const user = instagramAccount.user;
-
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                // PART 3: Daily DM Limit Enforcement (Rolling 24hr)
-                // Source of truth: User.plan + subscriptionStatus + planEndDate
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                const hasActiveSub =
-                    (user.plan === 'LIFETIME') ||
-                    (
-                        user.plan === 'PRO' &&
-                        user.subscriptionStatus === 'ACTIVE' &&
-                        user.planEndDate &&
-                        new Date(user.planEndDate) > new Date()
-                    );
-
-                const dailyDmLimit = hasActiveSub
-                    ? (appConfig.aiLimits?.proDailyDMs ?? 500)
-                    : (appConfig.aiLimits?.freeDailyDMs ?? 50);
-                const windowStart = new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
-
-                const sentToday = await prisma.dmInteraction.count({
-                    where: {
-                        userId,
-                        createdAt: { gte: windowStart },
-                        status: 'sent'
-                    }
-                });
-
-                if (sentToday >= dailyDmLimit) {
-                    logger.warn('DM:LIMIT', `User ${userId} reached daily DM limit (${dailyDmLimit}). Skipping.`);
-                    logger.increment('dmSkippedLimit');
-                    await prisma.dmInteraction.create({ data: { userId, messageId, status: 'skipped' } }).catch(() => { });
-                    continue;
-                }
-
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                // PART 1: Keyword Matching with Rule Priority
-                // Rules sorted: longest keyword DESC (specificity)
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                const rules = await prisma.dMAutomation.findMany({
-                    where: { userId, isActive: true, reelId: null },
-                    orderBy: [{ keyword: 'desc' }] // Sort by keyword length in-app after fetch
-                });
-
-                // Sort in memory: longest keyword first for correct specificity priority
-                const sortedRules = rules.sort((a, b) => b.keyword.length - a.keyword.length);
-
-                const incomingText = event.message.text.trim().toLowerCase().replace(/\s+/g, ' ');
-
-                let matchedRule = null;
-                for (const rule of sortedRules) {
-                    if (matchesKeyword(incomingText, rule.keyword)) {
-                        matchedRule = rule;
-                        break; // Only ONE rule fires per message
-                    }
-                }
-
-                // Async AI Brand Deal Analysis (fire-and-forget to not block webhook response times)
-                analyzeAndSaveBrandDeal(event.message.text, senderId, userId).catch(() => { });
-
-                if (!matchedRule) continue;
-
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                // PART 2 (cont): Reserve this messageId atomically BEFORE sending
-                // This handles the race condition where two workers see the same event
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                try {
-                    await prisma.dmInteraction.create({
-                        data: { userId, messageId, ruleId: matchedRule.id, status: 'sent' }
-                    });
-                } catch (uniqueError) {
-                    logger.debug('DM:RACE', `Message ${messageId} was claimed by a concurrent worker. Skipping.`);
-                    logger.increment('dmSkippedIdempotent');
-                    continue;
-                }
-
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                // PART 5: Throttle — Add 100ms delay between outbound DM sends
-                // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                let finalMessage = matchedRule.autoReplyMessage;
-                if (matchedRule.appendLinks) {
-                    const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
-                    if (links.length > 0) {
-                        finalMessage += '\n\n' + links.join('\n');
-                    }
-                }
-
-                const decryptedToken = decryptToken(instagramAccount.instagramAccessToken);
-                await sendInstagramMessage(senderId, finalMessage, decryptedToken);
-                await sleep(100);
-                logger.info('DM:SENT', `Auto-replied using rule "${matchedRule.keyword}" for user ${userId}`);
-                logger.increment('dmSent');
+                logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId}`);
             }
         }
     } catch (error) {
-        logger.error('WEBHOOK', 'Unhandled processing error', { error: error.message });
-        logger.increment('webhookProcessingErrors');
+        logger.error('WEBHOOK:ERROR', 'Error processing webhook', { error: error.message });
     }
 };
+
+module.exports = { verifyWebhook, handleWebhook };
 
 module.exports = { verifyWebhook, handleWebhook };

@@ -98,18 +98,22 @@ app.use('/api/webhook/razorpay', express.raw({ type: 'application/json' }));
 
 // Raw body capture for Instagram webhook signature verification (X-Hub-Signature-256)
 // Uses express.json() with a verify callback to attach rawBody to req before JSON parsing.
-app.use('/api/webhook/instagram', express.json({
+// Registered for both versioned and root webhook paths.
+const webhookJsonMiddleware = express.json({
     verify: (req, res, buf) => {
-        req.rawBody = buf; // Buffer — used by verifyInstagramSignature()
-    }
-}));
+        if (req.originalUrl.includes('/webhook')) {
+            req.rawBody = buf; // Buffer — used by verifyInstagramSignature()
+        }
+    },
+    limit: '50mb'
+});
 
-// NEW: Root Webhook path for Meta Verification
-app.use('/webhook', express.json({
-    verify: (req, res, buf) => {
-        req.rawBody = buf;
-    }
-}));
+app.use('/api/webhook', webhookJsonMiddleware);
+app.use('/webhook', webhookJsonMiddleware);
+
+// Configure Express to parse query parameters literally (not nested)
+// This is critical for Meta Webhooks which use dotted parameters like hub.mode
+app.set('query parser', 'simple');
 
 
 // Trust the first proxy (Nginx / AWS ALB / Cloud Run) so express-rate-limit

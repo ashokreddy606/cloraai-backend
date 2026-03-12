@@ -38,7 +38,7 @@ const enqueueJob = async (queue, jobName, data, options = {}) => {
             ...options
         };
         await queue.add(jobName, data, defaultOptions);
-        logger.debug('QUEUE', `Enqueued ${jobName} job into ${queue.name}`);
+        logger.info('QUEUE:JOB_CREATED', `Enqueued ${jobName} job into ${queue.name}`);
     } catch (err) {
         logger.error('QUEUE', `Failed to enqueue ${jobName} job`, { error: err.message });
     }
