@@ -145,6 +145,26 @@ const getDashboard = async (req, res) => {
       }
     });
 
+    // Automation Activity (Last 30 days)
+    const automationActivity = await Promise.all(
+      Array.from({ length: 30 }).map(async (_, i) => {
+        const d = new Date(startOfToday);
+        d.setDate(d.getDate() - (29 - i));
+        const start = new Date(d);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(d);
+        end.setHours(23, 59, 59, 999);
+        
+        return prisma.dmInteraction.count({
+          where: {
+            userId: req.userId,
+            status: 'sent',
+            createdAt: { gte: start, lte: end }
+          }
+        });
+      })
+    );
+
     // Total messages handled (any interaction status)
     const totalMessagesHandled = await prisma.dmInteraction.count({
       where: { userId: req.userId }
@@ -208,6 +228,7 @@ const getDashboard = async (req, res) => {
         followerHistory: history.map(snap => snap.followers),
         viewsHistory: history.map(snap => snap.impressions),
         activityHistory: history.map(snap => snap.reach || 0),
+        automationActivity,
         weeklyData: history.map(snap => ({
           date: snap.date,
           followers: snap.followers,

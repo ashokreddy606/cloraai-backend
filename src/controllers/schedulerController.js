@@ -83,7 +83,8 @@ const schedulePost = async (req, res) => {
         automationKeyword: automationKeyword || null,
         automationReply: automationReply || null,
         automationAppendLinks: automationAppendLinks || false,
-        automationLinks: automationLinks ? JSON.stringify(automationLinks) : null
+        automationLinks: automationLinks ? JSON.stringify(automationLinks) : null,
+        platform: 'instagram' // Default to instagram for this controller
       }
     });
 
