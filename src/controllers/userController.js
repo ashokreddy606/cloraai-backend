@@ -53,7 +53,7 @@ const deleteAccount = async (req, res) => {
         if (user.profileImage && user.profileImage.includes('amazonaws.com')) {
             const key = user.profileImage.split('.com/')[1];
             if (key) {
-                await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET_NAME, Key: key })).catch(e => { });
+                await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME, Key: key })).catch(e => { });
             }
         }
 

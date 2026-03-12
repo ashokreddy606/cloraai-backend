@@ -9,8 +9,10 @@ const { appConfig } = require('../config');
 const awsAccessKeyId = (process.env.AWS_ACCESS_KEY_ID || 'dummy').trim();
 const awsSecretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || 'dummy').trim();
 const awsRegion = (process.env.AWS_REGION || 'us-east-1').trim();
+const awsBucketName = (process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets').trim();
 
 console.log('[DEBUG_S3] Region:', awsRegion);
+console.log('[DEBUG_S3] Bucket:', awsBucketName);
 console.log('[DEBUG_S3] Access Key Loaded:', awsAccessKeyId !== 'dummy' ? 'YES (Starts with ' + awsAccessKeyId.substring(0, 4) + '...)' : 'NO (Dummy)');
 console.log('[DEBUG_S3] Secret Key Loaded:', awsSecretAccessKey !== 'dummy' ? 'YES' : 'NO (Dummy)');
 
@@ -33,7 +35,7 @@ const sanitizeFileName = (originalname) => {
 
 const getS3Storage = (folder) => multerS3({
     s3: s3,
-    bucket: process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets',
+    bucket: awsBucketName,
     contentType: multerS3.AUTO_CONTENT_TYPE,
     metadata: function (req, file, cb) {
         cb(null, { fieldName: file.fieldname });
