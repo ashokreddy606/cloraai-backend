@@ -8,6 +8,11 @@ const axios = require('axios');
 const { decryptToken } = require('./utils/cryptoUtils');
 const { createNotification } = require('./controllers/notificationController');
 const { cache } = require('./utils/cache');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { google } = require('googleapis');
+const { decrypt, encrypt } = require('./utils/cryptoUtils');
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
@@ -142,6 +147,39 @@ const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
     connection,
     concurrency: 2
 });
+
+// Helper for YouTube Client in Worker
+const getYoutubeClientForWorker = async (user) => {
+    const client = new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
+        process.env.YOUTUBE_REDIRECT_URI
+    );
+
+    const credentials = {
+        access_token: decrypt(user.youtubeAccessToken)
+    };
+
+    if (user.youtubeRefreshToken) {
+        credentials.refresh_token = decrypt(user.youtubeRefreshToken);
+    }
+
+    client.setCredentials(credentials);
+
+    try {
+        const { token } = await client.getAccessToken();
+        if (token && token !== credentials.access_token) {
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { youtubeAccessToken: encrypt(token) }
+            });
+        }
+    } catch (err) {
+        logger.error('WORKER:YT', 'Token refresh failed', { userId: user.id, error: err.message });
+    }
+
+    return google.youtube({ version: 'v3', auth: client });
+};
 // 4. Instagram Publishing Worker
 const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
     const { postId } = job.data;
@@ -202,22 +240,87 @@ const youtubeWorker = new Worker(QUEUES.YOUTUBE, async (job) => {
         throw new Error('YouTube account not connected.');
     }
 
-    // Direct upload logic or service call
-    // For now, simulating success as specific YouTube upload logic depends on their API
-    await prisma.scheduledPost.update({
-        where: { id: post.id },
-        data: {
-            status: 'published',
-            publishedAt: new Date(),
-            errorMessage: null
+    let tempFilePath = null;
+    try {
+        const youtube = await getYoutubeClientForWorker(post.user);
+        
+        // 1. Download video from S3 URL to temp file
+        const tempDir = path.join(os.tmpdir(), 'cloraai-worker-uploads');
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+        
+        const fileName = `post_${post.id}_${Date.now()}.mp4`;
+        tempFilePath = path.join(tempDir, fileName);
+        
+        logger.info('WORKER:YT', `Downloading video from ${post.mediaUrl} to ${tempFilePath}`);
+        const response = await axios({
+            method: 'get',
+            url: post.mediaUrl,
+            responseType: 'stream'
+        });
+
+        const writer = fs.createWriteStream(tempFilePath);
+        response.data.pipe(writer);
+
+        await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+        });
+
+        // 2. Upload to YouTube
+        logger.info('WORKER:YT', `Uploading to YouTube for user ${post.userId}`);
+        const uploadRes = await youtube.videos.insert({
+            part: 'snippet,status',
+            requestBody: {
+                snippet: {
+                    title: post.title || post.caption.substring(0, 100),
+                    description: post.caption,
+                    categoryId: '22',
+                },
+                status: {
+                    privacyStatus: 'public', // Default to public for scheduled posts
+                },
+            },
+            media: {
+                body: fs.createReadStream(tempFilePath),
+            },
+        });
+
+        // 3. Update DB
+        await prisma.scheduledPost.update({
+            where: { id: post.id },
+            data: {
+                status: 'published',
+                publishedAt: new Date(),
+                youtubeVideoId: uploadRes.data.id,
+                errorMessage: null
+            }
+        });
+
+        await createNotification(post.userId, {
+            type: 'success', icon: 'logo-youtube', color: '#FF0000',
+            title: 'YouTube Short Uploaded!', body: 'Your scheduled short was successfully uploaded.'
+        }).catch(e => logger.warn('WORKER:NOTIFY', e.message));
+
+    } catch (error) {
+        logger.error('WORKER:YT', 'YouTube worker job failed', { postId, error: error.message });
+        
+        await prisma.scheduledPost.update({
+            where: { id: post.id },
+            data: {
+                status: 'failed',
+                errorMessage: error.message
+            }
+        });
+        
+        throw error;
+    } finally {
+        // Clean up temp file
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            fs.unlink(tempFilePath, (err) => {
+                if (err) logger.warn('WORKER:YT', 'Failed to delete temp file', { tempFilePath, error: err.message });
+            });
         }
-    });
-
-    await createNotification(post.userId, {
-        type: 'success', icon: 'logo-youtube', color: '#FF0000',
-        title: 'YouTube Short Uploaded!', body: 'Your scheduled short was successfully uploaded.'
-    }).catch(e => logger.warn('WORKER:NOTIFY', e.message));
-
+    }
 }, { connection, concurrency: 3 });
 
 // Worker Error Event Listeners

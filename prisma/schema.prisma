@@ -270,6 +270,7 @@ model ScheduledPost {
   retryCount  Int       @default(0) // tracks failed attempts
 
   instagramPostId String?
+  youtubeVideoId   String?
   errorMessage    String?
 
   automationKeyword String?

@@ -707,11 +707,39 @@ exports.uploadVideo = async (req, res) => {
         if (!title) {
             return res.status(400).json({ error: 'Title is required' });
         }
-        if (!req.file) {
-            return res.status(400).json({ error: 'Video file is required' });
+        tempFilePath = req.file?.path;
+        const s3Url = req.body.videoUrl; // In case they send an S3 URL directly
+
+        if (!tempFilePath && !s3Url) {
+            return res.status(400).json({ error: 'Video file or videoUrl is required' });
         }
 
-        tempFilePath = req.file.path;
+        // If it's an S3 URL, we need to download it first (YouTube API needs a stream/file)
+        if (s3Url && !tempFilePath) {
+            const fs = require('fs');
+            const path = require('path');
+            const os = require('os');
+            const axios = require('axios');
+            
+            const tempDir = path.join(os.tmpdir(), 'cloraai-uploads');
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+            
+            tempFilePath = path.join(tempDir, `yt_upload_${Date.now()}.mp4`);
+            
+            const response = await axios({
+                method: 'get',
+                url: s3Url,
+                responseType: 'stream'
+            });
+
+            const writer = fs.createWriteStream(tempFilePath);
+            response.data.pipe(writer);
+
+            await new Promise((resolve, reject) => {
+                writer.on('finish', resolve);
+                writer.on('error', reject);
+            });
+        }
 
         // Parse tags if sent as a JSON string from FormData
         let parsedTags = tags;

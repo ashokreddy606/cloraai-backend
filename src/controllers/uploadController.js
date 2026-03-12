@@ -70,7 +70,39 @@ const localUpload = async (req, res) => {
     }
 };
 
+/**
+ * Handle file upload to S3
+ */
+const s3Upload = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        logger.info('UPLOAD', `File uploaded to S3 by user ${req.userId}`, { 
+            location: req.file.location,
+            key: req.file.key,
+            size: req.file.size
+        });
+
+        res.json({
+            success: true,
+            data: {
+                publicUrl: req.file.location, // multer-s3 provides 'location' as the public URL
+                key: req.file.key,
+                filename: req.file.originalname,
+                mimetype: req.file.mimetype,
+                size: req.file.size
+            }
+        });
+    } catch (error) {
+        logger.error('UPLOAD', 'S3 upload failure:', error);
+        res.status(500).json({ error: 'Failed to upload file to S3', message: error.message });
+    }
+};
+
 module.exports = { 
     localUpload,
+    s3Upload,
     uploadMiddleware: upload.single('file')
 };

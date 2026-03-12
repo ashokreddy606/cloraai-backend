@@ -26,7 +26,7 @@ const sanitizeFileName = (originalname) => {
 const getS3Storage = (folder) => multerS3({
     s3: s3,
     bucket: process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets',
-    acl: 'private', // Enforce private buckets by default
+    acl: 'public-read', // MUST BE public-read for Instagram/YouTube to access the URL
     contentType: multerS3.AUTO_CONTENT_TYPE,
     metadata: function (req, file, cb) {
         cb(null, { fieldName: file.fieldname });
