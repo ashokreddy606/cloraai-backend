@@ -26,6 +26,10 @@ const InstagramAnalyticsSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    unfollowed: {
+        type: Number,
+        default: 0
+    },
     date: {
         type: Date,
         default: Date.now,

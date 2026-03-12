@@ -190,6 +190,13 @@ const getDashboard = async (req, res) => {
     });
     const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions || 0), 0);
 
+    // Fetch latest 5 automation interactions for real-time feed
+    const latestInteractions = await prisma.dmInteraction.findMany({
+      where: { userId: req.userId, status: 'sent' },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    });
+
     // Final mapping
     const followers = liveStats.followers_count;
     const posts = liveStats.media_count;
@@ -229,11 +236,14 @@ const getDashboard = async (req, res) => {
         viewsHistory: history.map(snap => snap.impressions),
         activityHistory: history.map(snap => snap.reach || 0),
         automationActivity,
+        latestInteractions,
+        unfollowedHistory: history.map(snap => snap.unfollowed || 0), // Future-proofing
         weeklyData: history.map(snap => ({
           date: snap.date,
           followers: snap.followers,
           impressions: snap.impressions,
-          reach: snap.reach || 0
+          reach: snap.reach || 0,
+          unfollowed: snap.unfollowed || 0
         }))
       }
     });

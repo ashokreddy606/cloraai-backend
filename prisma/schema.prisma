@@ -309,6 +309,7 @@ model AnalyticsSnapshot {
   engagementRate    Float   @default(0)
   impressions       Int     @default(0)
   reach             Int     @default(0)
+  unfollowed        Int     @default(0)
   topPostId         String?
   topPostEngagement Float   @default(0)
 
