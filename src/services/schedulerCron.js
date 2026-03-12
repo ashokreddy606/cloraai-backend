@@ -142,12 +142,12 @@ cron.schedule('0 0 * * *', async () => {
     try {
         const thresholdDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         const expiringAccounts = await prisma.instagramAccount.findMany({
-            where: { isConnected: true, accessTokenExpiry: { lte: thresholdDate, gt: new Date() } }
+            where: { isConnected: true, tokenExpiresAt: { lte: thresholdDate, gt: new Date() } }
         });
 
         for (const account of expiringAccounts) {
             try {
-                const decryptedToken = decryptToken(account.accessToken);
+                const decryptedToken = decryptToken(account.instagramAccessToken);
                 const response = await axios.get(
                     `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${decryptedToken}`,
                     { timeout: 10000 }
@@ -158,7 +158,7 @@ cron.schedule('0 0 * * *', async () => {
 
                 await prisma.instagramAccount.update({
                     where: { id: account.id },
-                    data: { accessToken: encryptToken(newToken), accessTokenExpiry: expiryDate }
+                    data: { instagramAccessToken: encryptToken(newToken), tokenExpiresAt: expiryDate }
                 });
                 logger.info('CRON:TOKEN-REFRESH', `Token refreshed for user ${account.userId}`);
                 logger.increment('tokenRefreshSuccess');

@@ -281,5 +281,6 @@ module.exports = {
   disconnectAccount,
   getAnalytics,
   getPosts,
-  getPostInsights
+  getPostInsights,
+  instagramBreaker
 };

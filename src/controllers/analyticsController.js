@@ -1,8 +1,11 @@
 const instagramService = require('../services/instagramService');
 const InstagramAccount = require('../../models/InstagramAccount');
+const InstagramAnalytics = require('../../models/InstagramAnalytics');
 const prisma = require('../lib/prisma');
+const { cache } = require('../utils/cache');
+const { instagramBreaker } = require('./instagramController');
 
-console.log('--- analyticsController.js loaded (v2) ---');
+console.log('--- analyticsController.js loaded (v3) ---');
 
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
@@ -33,7 +36,6 @@ const getDashboard = async (req, res) => {
     }
 
     // Get latest snapshot from mongo
-    const InstagramAnalytics = require('../../models/InstagramAnalytics');
     let latestSnapshot = await InstagramAnalytics.findOne({ userId: req.userId }).sort({ date: -1 });
 
     // Auto-record snapshot if none today or if user wants "real-time" data

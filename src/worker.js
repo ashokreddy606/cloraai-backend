@@ -208,11 +208,11 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         }
 
         const igAccount = post.user.instagramAccounts[0];
-        if (!igAccount || !igAccount.accessToken || !igAccount.isConnected) {
+        if (!igAccount || !igAccount.instagramAccessToken || !igAccount.isConnected) {
             throw new Error('Instagram account not connected.');
         }
 
-        const decryptedToken = decryptToken(igAccount.accessToken);
+        const decryptedToken = decryptToken(igAccount.instagramAccessToken);
 
         const containerRes = await axios.post(
             `https://graph.facebook.com/v18.0/${igAccount.instagramId}/media`,
