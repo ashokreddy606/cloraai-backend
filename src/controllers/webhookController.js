@@ -169,9 +169,17 @@ const handleWebhook = async (req, res) => {
                     const instagramId = entry.id || (comment.from ? comment.from.id : null);
 
                     if (instagramId) {
-                        const instagramAccount = await prisma.instagramAccount.findFirst({
+                        let instagramAccount = await prisma.instagramAccount.findFirst({
                             where: { instagramId }
                         });
+
+                        // Fallback: If not found by instagramId, search by pageId
+                        // Meta often sends the Page ID in the entry.id for some events
+                        if (!instagramAccount) {
+                            instagramAccount = await prisma.instagramAccount.findFirst({
+                                where: { pageId: instagramId }
+                            });
+                        }
 
                         if (instagramAccount && instagramAccount.isConnected) {
                             const { decryptToken } = require('../utils/cryptoUtils');

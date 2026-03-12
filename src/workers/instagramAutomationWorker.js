@@ -59,7 +59,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 
                 const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${instagramAccessToken}`;
                 await axios.post(url, {
-                    recipient: { id: senderId },
+                    recipient: { comment_id: commentId },
                     message: { text: finalMessage }
                 });
                 logger.info('WORKER', `Sent DM reply for comment on reel ${mediaId}`);
