@@ -8,6 +8,7 @@ const { analyzeAndSaveBrandDeal } = require('./brandDealController');
 const prisma = require('../lib/prisma');
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
 const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
+const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
 if (!META_WEBHOOK_VERIFY_TOKEN) {
     console.error('[CRITICAL] META_WEBHOOK_VERIFY_TOKEN is not set. Webhooks will be rejected.');
@@ -76,7 +77,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const sendInstagramMessage = async (recipientId, messageText, accessToken, retryCount = 0) => {
     try {
-        const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${accessToken}`;
+        const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${accessToken}`;
         await axios.post(url, {
             recipient: { id: recipientId },
             message: { text: messageText }

@@ -1,7 +1,8 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 
-const GRAPH_API_URL = 'https://graph.facebook.com/v19.0';
+const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
+const GRAPH_API_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const APP_ID = process.env.INSTAGRAM_APP_ID;
 const APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
 const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
@@ -178,7 +179,10 @@ class InstagramService {
      */
     async getMediaInsights(mediaId, accessToken, mediaType) {
         try {
-            const metrics = (mediaType === 'VIDEO') ? 'reach,impressions,saved,video_views' : 'reach,impressions,saved';
+            // For Reels (VIDEO), 'impressions' is deprecated in favor of 'plays' in Graph API v22.0+
+            const metrics = (mediaType === 'VIDEO') 
+                ? 'reach,saved,plays' // Removed impressions and video_views, added plays
+                : 'reach,impressions,saved';
 
             const response = await axios.get(`${GRAPH_API_URL}/${mediaId}/insights`, {
                 params: {
@@ -194,6 +198,11 @@ class InstagramService {
                         insights[item.name] = item.values[0].value;
                     }
                 });
+            }
+
+            // Normalize: Map 'plays' to 'impressions' for Reels to maintain dashboard compatibility
+            if (mediaType === 'VIDEO' && insights.plays !== undefined) {
+                insights.impressions = insights.plays;
             }
 
             return insights;

@@ -2,6 +2,7 @@ const { Worker } = require('bullmq');
 const { connection, QUEUES } = require('../utils/queue');
 const logger = require('../utils/logger');
 const axios = require('axios');
+const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
 // Process comments from the queue
 const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
@@ -66,7 +67,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     data: { userId, messageId, ruleId: matchedRule.id, status: 'sent' }
                 });
                 
-                const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${instagramAccessToken}`;
+                const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${instagramAccessToken}`;
                 await axios.post(url, {
                     recipient: { comment_id: commentId },
                     message: { text: finalMessage }
@@ -87,7 +88,7 @@ const replyWorker = new Worker(QUEUES.REPLY, async (job) => {
     const { commentId, replyText, instagramAccessToken } = job.data;
     logger.info('WORKER', `Sending reply for comment ${commentId}`);
     try {
-        const response = await axios.post(`https://graph.facebook.com/v19.0/${commentId}/replies`, {
+        const response = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${commentId}/replies`, {
             message: replyText
         }, {
             params: { access_token: instagramAccessToken }

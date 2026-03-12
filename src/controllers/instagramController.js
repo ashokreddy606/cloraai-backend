@@ -5,7 +5,7 @@ const { createBreaker } = require('../utils/circuitBreaker');
 const instagramService = require('../services/instagramService');
 const logger = require('../utils/logger');
 
-const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v19.0';
+const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 const instagramBreaker = createBreaker(async (url) => {
@@ -23,7 +23,7 @@ const initiateAuth = (req, res) => {
     // Use state for CSRF protection and to pass userId
     const state = Buffer.from(JSON.stringify({ userId: req.userId })).toString('base64');
 
-    const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
+    const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
 
     res.status(200).json({
       success: true,

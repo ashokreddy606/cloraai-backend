@@ -4,6 +4,7 @@ const InstagramAnalytics = require('../../models/InstagramAnalytics');
 const prisma = require('../lib/prisma');
 const { cache } = require('../utils/cache');
 const { instagramBreaker } = require('./instagramController');
+const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
 console.log('--- analyticsController.js loaded (v3) ---');
 
@@ -273,7 +274,7 @@ const recordSnapshot = async (req, res) => {
     const decryptedToken = decryptToken(account.instagramAccessToken);
 
     const userData = await instagramBreaker.fire(
-      `https://graph.facebook.com/v19.0/${account.instagramId}?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`
     );
 
     if (userData.fallback) {
