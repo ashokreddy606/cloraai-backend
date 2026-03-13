@@ -12,7 +12,9 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { google } = require('googleapis');
-const { decrypt, encrypt } = require('./utils/cryptoUtils');
+const { decrypt, encrypt, decryptToken } = require('./utils/cryptoUtils');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
@@ -183,7 +185,7 @@ const getYoutubeClientForWorker = async (user) => {
 // 4. Instagram Publishing Worker
 const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
     const { postId } = job.data;
-    logger.info('WORKER:IG', `Processing Instagram job ${job.id}`, { postId, data: job.data });
+    logger.info('WORKER:IG', `Processing Instagram job ${job.id}`, { postId });
 
     try {
         const post = await prisma.scheduledPost.findUnique({
@@ -202,8 +204,9 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
             return;
         }
 
-        if (post.status !== 'publishing') {
-            logger.warn('WORKER:IG', `Post ${postId} status is ${post.status}, skipping publishing.`);
+        // Handle both 'publishing' and 'IN_PROGRESS' statuses for compatibility
+        if (post.status !== 'publishing' && post.status !== 'IN_PROGRESS') {
+            logger.warn('WORKER:IG', `Post ${postId} status is ${post.status}, skipping.`);
             return;
         }
 
@@ -212,26 +215,86 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
             throw new Error('Instagram account not connected.');
         }
 
-        const decryptedToken = decryptToken(igAccount.instagramAccessToken);
+        const accessToken = decryptToken(igAccount.instagramAccessToken);
+        const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
-        const containerRes = await axios.post(
-            `https://graph.facebook.com/v18.0/${igAccount.instagramId}/media`,
-            { video_url: post.mediaUrl, caption: `${post.caption}`, media_type: 'REELS', access_token: decryptedToken },
-            { timeout: 30000 }
-        );
+        // 4a. Generate pre-signed URL for S3 content
+        let mediaUrlForInstagram = post.mediaUrl;
+        if (post.mediaUrl.includes('amazonaws.com')) {
+            try {
+                const s3Client = new S3Client({
+                    region: process.env.AWS_REGION || 'ap-south-2',
+                    credentials: {
+                        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+                    }
+                });
+                const urlParts = new URL(post.mediaUrl);
+                const key = urlParts.pathname.substring(1);
+                const bucket = urlParts.hostname.split('.')[0];
+                const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+                mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+                logger.info('WORKER:IG_S3', 'Generated pre-signed URL');
+            } catch (s3Err) {
+                logger.error('WORKER:IG_S3', 'Failed signed URL generation', { error: s3Err.message });
+            }
+        }
 
-        const publishRes = await axios.post(
-            `https://graph.facebook.com/v18.0/${igAccount.instagramId}/media_publish`,
-            { creation_id: containerRes.data.id, access_token: decryptedToken },
-            { timeout: 30000 }
-        );
+        logger.info('WORKER:IG_META', 'Step A: Creating Media Container');
+        // Step A: Create Media Container
+        let containerRes;
+        try {
+            containerRes = await axios.post(
+                `https://graph.facebook.com/${META_GRAPH_VERSION}/${igAccount.instagramId}/media`,
+                {
+                    video_url: mediaUrlForInstagram,
+                    caption: post.caption,
+                    media_type: 'REELS'
+                },
+                {
+                    params: { access_token: accessToken },
+                    timeout: 45000
+                }
+            );
+        } catch (apiErr) {
+            const errorData = apiErr.response?.data || apiErr.message;
+            logger.error('WORKER:IG_STEP_A_FAILED', 'Container creation failed', { error: errorData });
+            throw new Error(`Instagram Step A Failed: ${JSON.stringify(errorData)}`);
+        }
+
+        const containerId = containerRes.data.id;
+        logger.info('WORKER:IG_META', `Step A Success: ${containerId}. Waiting 30s for processing...`);
+
+        // Step B: Wait for processing
+        await new Promise(resolve => setTimeout(resolve, 30000));
+
+        // Step C: Publish the container
+        logger.info('WORKER:IG_META', `Step C: Publishing container ${containerId}`);
+        let publishRes;
+        try {
+            publishRes = await axios.post(
+                `https://graph.facebook.com/${META_GRAPH_VERSION}/${igAccount.instagramId}/media_publish`,
+                { creation_id: containerId },
+                {
+                    params: { access_token: accessToken },
+                    timeout: 45000
+                }
+            );
+        } catch (apiErr) {
+            const errorData = apiErr.response?.data || apiErr.message;
+            logger.error('WORKER:IG_STEP_C_FAILED', 'Publication failed', { error: errorData });
+            throw new Error(`Instagram Step C Failed: ${JSON.stringify(errorData)}`);
+        }
+
+        const instagramPostId = publishRes.data.id;
+        logger.info('WORKER:IG_SUCCESS', `Published! IG Post ID: ${instagramPostId}`);
 
         await prisma.scheduledPost.update({
             where: { id: post.id },
             data: {
-                status: 'published',
+                status: 'PUBLISHED',
                 publishedAt: new Date(),
-                instagramPostId: publishRes.data.id,
+                instagramPostId: instagramPostId,
                 errorMessage: null
             }
         });
@@ -250,7 +313,7 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
                     status: 'failed',
                     errorMessage: error.message
                 }
-            }).catch(e => logger.error('WORKER:IG', 'Failed to update post status in catch block', { error: e.message }));
+            }).catch(e => logger.error('WORKER:IG', 'Failed to update post status', { error: e.message }));
         }
         throw error;
     }

@@ -43,6 +43,10 @@ const processScheduledPost = async (job) => {
     const { decryptToken } = require('../utils/cryptoUtils');
     const accessToken = decryptToken(account.instagramAccessToken);
 
+    if (!accessToken) {
+        throw new Error('Failed to decrypt Instagram access token');
+    }
+
     // 4. Publish via Instagram Graph API
     const axios = require('axios');
     const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -79,28 +83,42 @@ const processScheduledPost = async (job) => {
         }
     }
 
-    logger.info('WORKER:META_API', `Creating media container for post ${postId}`, { original_url: post.mediaUrl });
+    logger.info('WORKER:META_API_START', `Creating media container for post ${postId}`, { 
+        mediaUrl: mediaUrlForInstagram.substring(0, 100) + '...',
+        instagramId: account.instagramId,
+        accessTokenPrefix: accessToken.substring(0, 10)
+    });
     
     // Step A: Create media container
-    const containerRes = await axios.post(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media`,
-        {
-            video_url: mediaUrlForInstagram,
-            caption: post.caption,
-            media_type: 'REELS'
-        },
-        {
-            params: { access_token: accessToken }
-        }
-    );
+    let containerRes;
+    try {
+        containerRes = await axios.post(
+            `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media`,
+            {
+                video_url: mediaUrlForInstagram,
+                caption: post.caption,
+                media_type: 'REELS'
+            },
+            {
+                params: { access_token: accessToken }
+            }
+        );
+    } catch (apiErr) {
+        const errorData = apiErr.response?.data || apiErr.message;
+        logger.error('WORKER:META_API_A_FAILED', 'Step A: Container creation failed', { 
+            error: errorData,
+            status: apiErr.response?.status
+        });
+        throw new Error(`Instagram Step A Failed: ${JSON.stringify(errorData)}`);
+    }
 
     const containerId = containerRes.data.id;
     if (!containerId) {
-        logger.error('WORKER:META_API_ERROR', 'Failed to create media container', { response: containerRes.data });
-        throw new Error('Failed to create Instagram media container');
+        logger.error('WORKER:META_API_A_EMPTY', 'Step A: No container ID returned', { response: containerRes.data });
+        throw new Error('Failed to create Instagram media container (No ID)');
     }
 
-    logger.info('WORKER:META_API', `Container created: ${containerId}. Waiting for processing...`);
+    logger.info('WORKER:META_API_A_SUCCESS', `Container created: ${containerId}. Waiting for processing...`);
 
     // Step B: Poll for container status or wait 
     // Reels take time to process. Let's wait longer or poll.
@@ -108,21 +126,31 @@ const processScheduledPost = async (job) => {
     await new Promise(resolve => setTimeout(resolve, 30000)); // Increase to 30s for Reels
 
     // Step C: Publish the container
-    logger.info('WORKER:META_API', `Publishing container ${containerId}`);
-    const publishRes = await axios.post(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media_publish`,
-        {
-            creation_id: containerId
-        },
-        {
-            params: { access_token: accessToken }
-        }
-    );
+    logger.info('WORKER:META_API_C_START', `Publishing container ${containerId}`);
+    let publishRes;
+    try {
+        publishRes = await axios.post(
+            `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media_publish`,
+            {
+                creation_id: containerId
+            },
+            {
+                params: { access_token: accessToken }
+            }
+        );
+    } catch (apiErr) {
+        const errorData = apiErr.response?.data || apiErr.message;
+        logger.error('WORKER:META_API_C_FAILED', 'Step C: Publication failed', { 
+            error: errorData,
+            status: apiErr.response?.status
+        });
+        throw new Error(`Instagram Step C Failed: ${JSON.stringify(errorData)}`);
+    }
 
     const instagramPostId = publishRes.data.id;
     if (!instagramPostId) {
-        logger.error('WORKER:META_API_ERROR', 'Failed to publish container', { response: publishRes.data });
-        throw new Error('Failed to publish Instagram media container');
+        logger.error('WORKER:META_API_C_EMPTY', 'Step C: No post ID returned', { response: publishRes.data });
+        throw new Error('Failed to publish Instagram media container (No ID)');
     }
 
     // 5. Mark post as PUBLISHED

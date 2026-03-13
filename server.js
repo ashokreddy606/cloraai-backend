@@ -346,7 +346,6 @@ app.use('/api/v1/upload', uploadRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/webhook', webhookRoutes); // Root level access for Meta verification
 console.log('YouTube routes mounted at /api/v1/youtube');
-console.log('YouTube routes mounted at /api/v1/youtube');
 
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {
