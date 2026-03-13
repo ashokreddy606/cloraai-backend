@@ -240,7 +240,7 @@ exports.getRules = async (req, res) => {
 
 exports.createRule = async (req, res) => {
     try {
-        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, appendLinks, link1, link2, link3, link4 } = req.body;
+        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, subscriberOnly, appendLinks, link1, link2, link3, link4 } = req.body;
         if (!keyword || !replyMessage) {
             return res.status(400).json({ error: 'Keyword and replyMessage are required' });
         }
@@ -257,6 +257,7 @@ exports.createRule = async (req, res) => {
                 replyDelay: replyDelay || 0,
                 limitPerHour: limitPerHour || 20,
                 videoId: videoId || null,
+                subscriberOnly: subscriberOnly || false,
                 appendLinks: appendLinks || false,
                 link1: link1 || null,
                 link2: link2 || null,
@@ -277,7 +278,7 @@ exports.createRule = async (req, res) => {
 exports.updateRule = async (req, res) => {
     try {
         const { id } = req.params;
-        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, appendLinks, link1, link2, link3, link4 } = req.body;
+        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, subscriberOnly, appendLinks, link1, link2, link3, link4 } = req.body;
         const existing = await prisma.youtubeAutomationRule.findFirst({ where: { id, userId: req.userId } });
         if (!existing) return res.status(404).json({ error: 'Rule not found' });
         const updated = await prisma.youtubeAutomationRule.update({
@@ -289,6 +290,7 @@ exports.updateRule = async (req, res) => {
                 replyDelay: replyDelay !== undefined ? replyDelay : existing.replyDelay,
                 limitPerHour: limitPerHour !== undefined ? limitPerHour : existing.limitPerHour,
                 videoId: videoId !== undefined ? (videoId || null) : existing.videoId,
+                subscriberOnly: subscriberOnly !== undefined ? subscriberOnly : existing.subscriberOnly,
                 appendLinks: appendLinks !== undefined ? appendLinks : existing.appendLinks,
                 link1: link1 !== undefined ? (link1 || null) : existing.link1,
                 link2: link2 !== undefined ? (link2 || null) : existing.link2,

@@ -514,6 +514,7 @@ model YoutubeAutomationRule {
   channelId    String? // Link to specific YouTube channel
   
   videoId      String? // Optional: If a rule is bound to a specific video
+  subscriberOnly Boolean @default(false)
   appendLinks  Boolean @default(false)
   link1        String?
   link2        String?

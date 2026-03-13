@@ -137,6 +137,34 @@ async function processUser(user) {
             }
 
             const shouldReply = matchedRule !== null;
+            let finalShouldReply = shouldReply;
+
+            // If matched a rule that requires subscriber status, check it
+            if (shouldReply && matchedRule.subscriberOnly) {
+                try {
+                    const authorChannelId = topLevelComment.snippet?.authorChannelId?.value;
+                    if (authorChannelId) {
+                        const subRes = await youtube.subscriptions.list({
+                            part: 'id',
+                            mine: true,
+                            forChannelId: authorChannelId
+                        });
+                        
+                        const isSubscribed = (subRes.data.items || []).length > 0;
+                        if (!isSubscribed) {
+                            logger.info('YOUTUBE_WORKER', `User ${authorChannelId} is not subscribed. Skipping reply for rule ${matchedRule.keyword}`);
+                            finalShouldReply = false;
+                        }
+                    } else {
+                        logger.warn('YOUTUBE_WORKER', `Could not find authorChannelId for comment ${commentId}. Skipping potentially restricted reply.`);
+                        finalShouldReply = false;
+                    }
+                } catch (subError) {
+                    logger.error('YOUTUBE_WORKER', 'Error checking subscription status', { error: subError.message });
+                    // Default to false if we can't verify and rule is subscriberOnly
+                    finalShouldReply = false;
+                }
+            }
 
             // Save comment
             await prisma.youtubeComment.create({
@@ -147,12 +175,16 @@ async function processUser(user) {
                     commentId, // unique top-level comment ID for accurate deduplication
                     username: authorDisplayName || 'Unknown',
                     commentText: topLevelComment.textDisplay || '',
-                    replied: shouldReply
+                    replied: finalShouldReply
                 }
             });
 
-            if (!shouldReply) {
-                logger.debug('YOUTUBE_WORKER', `Comment ${commentId} did not match any rules`);
+            if (!finalShouldReply) {
+                if (shouldReply && matchedRule.subscriberOnly) {
+                    logger.debug('YOUTUBE_WORKER', `Comment ${commentId} skipped because user is not a subscriber`);
+                } else {
+                    logger.debug('YOUTUBE_WORKER', `Comment ${commentId} did not match any rules`);
+                }
                 continue;
             }
 
