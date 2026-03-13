@@ -46,40 +46,54 @@ const processScheduledPost = async (job) => {
     // 4. Publish via Instagram Graph API
     // Step A: Create media container
     const axios = require('axios');
-    const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v18.0';
+    const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
+    logger.info('WORKER:META_API', `Creating media container for post ${postId}`, { video_url: post.mediaUrl });
+    
+    // Step A: Create media container
+    // According to Meta docs, video_url and caption should be in the body, but access_token can be a param
     const containerRes = await axios.post(
         `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media`,
-        null,
         {
-            params: {
-                video_url: post.mediaUrl,
-                caption: post.caption,
-                media_type: 'REELS',
-                access_token: accessToken
-            }
+            video_url: post.mediaUrl,
+            caption: post.caption,
+            media_type: 'REELS'
+        },
+        {
+            params: { access_token: accessToken }
         }
     );
 
     const containerId = containerRes.data.id;
-    if (!containerId) throw new Error('Failed to create Instagram media container');
+    if (!containerId) {
+        logger.error('WORKER:META_API_ERROR', 'Failed to create media container', { response: containerRes.data });
+        throw new Error('Failed to create Instagram media container');
+    }
 
-    // Optional: wait for container to be ready (Instagram recommends polling)
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    logger.info('WORKER:META_API', `Container created: ${containerId}. Waiting for processing...`);
 
-    // Step B: Publish the container
+    // Step B: Poll for container status or wait 
+    // Reels take time to process. Let's wait longer or poll.
+    // Simple approach: longer wait + retry logic (worker does 3 retries)
+    await new Promise(resolve => setTimeout(resolve, 30000)); // Increase to 30s for Reels
+
+    // Step C: Publish the container
+    logger.info('WORKER:META_API', `Publishing container ${containerId}`);
     const publishRes = await axios.post(
         `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media_publish`,
-        null,
         {
-            params: {
-                creation_id: containerId,
-                access_token: accessToken
-            }
+            creation_id: containerId
+        },
+        {
+            params: { access_token: accessToken }
         }
     );
 
     const instagramPostId = publishRes.data.id;
+    if (!instagramPostId) {
+        logger.error('WORKER:META_API_ERROR', 'Failed to publish container', { response: publishRes.data });
+        throw new Error('Failed to publish Instagram media container');
+    }
 
     // 5. Mark post as PUBLISHED
     await prisma.scheduledPost.update({
