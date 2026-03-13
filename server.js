@@ -148,6 +148,14 @@ app.use(helmet({
     },
 }));
 
+// Enforce HTTPS Redirection in Production (Google Play Compliance)
+app.use((req, res, next) => {
+    if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+        return res.redirect(301, `https://${req.hostname}${req.url}`);
+    }
+    next();
+});
+
 // Configure Express to parse query parameters literally (not nested)
 // This is critical for Meta Webhooks which use dotted parameters like hub.mode
 app.set('query parser', 'simple');

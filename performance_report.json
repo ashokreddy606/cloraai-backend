@@ -1,0 +1,18 @@
+{
+    "Overall Rating": "1/10",
+    "Average Response Time": "46878.77 ms",
+    "95th Percentile": "92000.00 ms",
+    "Requests Per Second": "20.70",
+    "Error Rate": "18.40%",
+    "Estimated Max Capacity": "Around 100 concurrent users",
+    "Bottleneck Analysis": [
+        "System is failing under load. Check backend logs and database connection pool.",
+        "High tail latency detect. Possible database indexing issues or synchronous blocking operations."
+    ],
+    "Recommendations": [
+        "Enable horizontal scaling for the Express backend on Railway.",
+        "Implement Redis caching for dashboard and analytics endpoints.",
+        "Optimize MongoDB indexes for frequently queried fields.",
+        "Offload AI generation and post scheduling to background workers if not already fully decoupled."
+    ]
+}
