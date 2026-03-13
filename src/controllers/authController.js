@@ -518,20 +518,103 @@ const resetPassword = async (req, res) => {
 const deleteAccount = async (req, res) => {
   try {
     const userId = req.userId;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { scheduledPosts: true }
+    });
 
-    // Prisma cascade deletes will handle related records
-    // (CalendarTask, Notification, Caption, ScheduledPost, etc. all have onDelete: Cascade)
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    console.log(`[PRIVACY] Initiating robust account deletion for user: ${userId}`);
+
+    // 1. Revoke OAuth Tokens (YouTube)
+    if (user.youtubeRefreshToken) {
+      try {
+        const { decrypt } = require('../utils/cryptoUtils');
+        const oAuth2Client = new OAuth2Client(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
+        await oAuth2Client.revokeToken(decrypt(user.youtubeRefreshToken));
+        console.log('[PRIVACY] YouTube token revoked.');
+      } catch (e) {
+        console.warn('[PRIVACY] Failed to revoke YouTube token:', e.message);
+      }
+    }
+
+    // 2. Cancel Razorpay Subscriptions
+    if (user.activeRazorpaySubscriptionId && (user.subscriptionStatus === 'ACTIVE' || user.subscriptionStatus === 'PAST_DUE')) {
+      try {
+        const Razorpay = require('razorpay');
+        const rzp = new Razorpay({
+          key_id: process.env.RAZORPAY_KEY_ID,
+          key_secret: process.env.RAZORPAY_KEY_SECRET,
+        });
+        await rzp.subscriptions.cancel(user.activeRazorpaySubscriptionId);
+        console.log('[PRIVACY] Razorpay subscription cancelled.');
+      } catch (e) {
+        console.warn('[PRIVACY] Failed to cancel Razorpay subscription:', e.message);
+      }
+    }
+
+    // 3. Remove S3 Media
+    const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+    const s3 = new S3Client({
+      region: process.env.AWS_REGION || 'ap-south-1',
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      }
+    });
+
+    const bucketName = process.env.AWS_S3_BUCKET_NAME || process.env.S3_BUCKET_NAME;
+
+    if (bucketName) {
+      // Profile Image
+      if (user.profileImage && user.profileImage.includes('amazonaws.com')) {
+        const key = user.profileImage.split('.com/')[1];
+        if (key) await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key })).catch(() => { });
+      }
+
+      // Scheduled Posts Media
+      for (const post of user.scheduledPosts) {
+        if (post.mediaUrl && post.mediaUrl.includes('amazonaws.com')) {
+          const key = post.mediaUrl.split('.com/')[1];
+          if (key) await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key })).catch(() => { });
+        }
+      }
+    }
+
+    // 4. Anonymize Analytics (Preserve aggregate data, remove personal link)
+    let anonUser = await prisma.user.findUnique({ where: { email: 'anonymized@cloraai.internal' } });
+    if (!anonUser) {
+      anonUser = await prisma.user.create({
+        data: {
+          email: 'anonymized@cloraai.internal',
+          password: 'CLEARED_FOR_PRIVACY',
+          username: 'Anonymized User',
+          role: 'USER',
+          referralCode: 'ANON' + Date.now()
+        }
+      });
+    }
+
+    await prisma.analyticsSnapshot.updateMany({
+      where: { userId: user.id },
+      data: { userId: anonUser.id }
+    });
+
+    // 5. Hard Delete User Record (Cascades Instagram accounts, tokens, schedules)
     await prisma.user.delete({
       where: { id: userId }
     });
+
+    console.log(`[PRIVACY] Account ${userId} successfully deleted and data scrubbed.`);
 
     res.status(200).json({
       success: true,
       message: 'Your account and all associated data have been permanently deleted.'
     });
   } catch (error) {
-    console.error('Delete account error:', error);
-    res.status(500).json({ error: 'Failed to delete account' });
+    console.error('Robust delete account error:', error);
+    res.status(500).json({ error: 'Failed to delete account securely' });
   }
 };
 
