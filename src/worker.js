@@ -31,12 +31,16 @@ process.on('unhandledRejection', (reason) => {
 // ─── Start Cron Jobs ─────────────────────────────────────────────────────────
 logger.info('WORKER', 'Starting background cron jobs...');
 
-try {
-    require('./services/subscriptionCron');
-    logger.info('WORKER', "Subscription cron started successfully");
-} catch (err) {
-    logger.error('WORKER', "Subscription cron failed:", { error: err.message });
-}
+// ─── S3 Environment Sync Check ───────────────────────────────────────────────
+logger.info('WORKER:S3_DEBUG', 'Verifying AWS S3 Configuration', {
+    region: process.env.AWS_REGION || 'NOT_SET',
+    bucket: process.env.AWS_S3_BUCKET_NAME || 'NOT_SET',
+    hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
+    hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY
+});
+
+// ─── Initializing Redis queue processors...
+console.log("🚀 CloraAI Worker running [Production Mode]");
 
 const { schedulerTasks, releaseLock } = require('./services/schedulerCron');
 logger.info('WORKER', "Scheduler cron configured successfully");
@@ -203,7 +207,6 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
             return;
         }
 
-        // Handle both 'publishing' and 'IN_PROGRESS' statuses for compatibility
         if (post.status !== 'publishing' && post.status !== 'IN_PROGRESS') {
             logger.warn('WORKER:IG', `Post ${postId} status is ${post.status}, skipping.`);
             return;
@@ -217,9 +220,9 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         const accessToken = decryptToken(igAccount.instagramAccessToken);
         const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
-        // 4a. Generate pre-signed URL for S3 content
+        // 4a. Robust S3 URL Signed Generation
         let mediaUrlForInstagram = post.mediaUrl;
-        if (post.mediaUrl.includes('amazonaws.com')) {
+        if (post.mediaUrl.includes('amazonaws.com') || (post.mediaUrl.includes('s3') && post.mediaUrl.includes('ap-south-2'))) {
             try {
                 const s3Client = new S3Client({
                     region: process.env.AWS_REGION || 'ap-south-2',
@@ -228,19 +231,26 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
                         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
                     }
                 });
-                const urlParts = new URL(post.mediaUrl);
-                const key = urlParts.pathname.substring(1);
-                const bucket = urlParts.hostname.split('.')[0];
-                const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+                
+                const url = new URL(post.mediaUrl);
+                // Extract key more robustly
+                const bucketName = process.env.AWS_S3_BUCKET_NAME || url.hostname.split('.')[0];
+                const key = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
+                
+                logger.info('WORKER:IG_S3', `Generating signed URL for bucket: ${bucketName}, key: ${key}`);
+                
+                const command = new GetObjectCommand({ Bucket: bucketName, Key: key });
                 mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-                logger.info('WORKER:IG_S3', 'Generated pre-signed URL');
+                logger.info('WORKER:IG_S3', 'Generated pre-signed URL successfully');
             } catch (s3Err) {
-                logger.error('WORKER:IG_S3', 'Failed signed URL generation', { error: s3Err.message });
+                logger.error('WORKER:IG_S3', `Failed signed URL generation: ${s3Err.message}`, { 
+                    url: post.mediaUrl,
+                    hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID
+                });
             }
         }
 
         logger.info('WORKER:IG_META', 'Step A: Creating Media Container');
-        // Step A: Create Media Container
         let containerRes;
         try {
             containerRes = await axios.post(
@@ -262,10 +272,46 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         }
 
         const containerId = containerRes.data.id;
-        logger.info('WORKER:IG_META', `Step A Success: ${containerId}. Waiting 30s for processing...`);
+        logger.info('WORKER:IG_META', `Step A Success: ${containerId}. Polling for status...`);
 
-        // Step B: Wait for processing
-        await new Promise(resolve => setTimeout(resolve, 30000));
+        // Step B: Polling for container status
+        let isReady = false;
+        let attempts = 0;
+        const maxAttempts = 15; // 15 attempts * 10s = 150s (2.5 minutes)
+        
+        while (!isReady && attempts < maxAttempts) {
+            attempts++;
+            await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10s
+            
+            try {
+                const statusRes = await axios.get(
+                    `https://graph.facebook.com/${META_GRAPH_VERSION}/${containerId}`,
+                    {
+                        params: { 
+                            fields: 'status_code,status',
+                            access_token: accessToken 
+                        }
+                    }
+                );
+                
+                const status = statusRes.data.status_code;
+                logger.info('WORKER:IG_POLL', `Attempt ${attempts}: Status is ${status}`);
+                
+                if (status === 'FINISHED') {
+                    isReady = true;
+                } else if (status === 'ERROR') {
+                    const statusDetail = statusRes.data.status || 'Unknown error';
+                    logger.error('WORKER:IG_POLL_ERROR', `Container failed processing: ${statusDetail}`);
+                    throw new Error(`Instagram processing failed: ${statusDetail}`);
+                }
+            } catch (pollErr) {
+                logger.warn('WORKER:IG_POLL_WARN', `Polling attempt ${attempts} failed: ${pollErr.message}`);
+            }
+        }
+
+        if (!isReady) {
+            throw new Error('Instagram container timed out after 150s of processing.');
+        }
 
         // Step C: Publish the container
         logger.info('WORKER:IG_META', `Step C: Publishing container ${containerId}`);
