@@ -32,12 +32,17 @@ process.on('unhandledRejection', (reason) => {
 logger.info('WORKER', 'Starting background cron jobs...');
 
 // ─── S3 Environment Sync Check ───────────────────────────────────────────────
-logger.info('WORKER:S3_DEBUG', 'Verifying AWS S3 Configuration', {
-    region: process.env.AWS_REGION || 'NOT_SET',
+const s3ConfigData = {
+    region: process.env.AWS_REGION || 'ap-south-2',
     bucket: process.env.AWS_S3_BUCKET_NAME || 'NOT_SET',
     hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
     hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY
-});
+};
+logger.info('WORKER:S3_DEBUG', 'Verifying AWS S3 Configuration', s3ConfigData);
+
+if (!s3ConfigData.hasAccessKey || !s3ConfigData.hasSecretKey) {
+    logger.warn('WORKER:S3_WARNING', 'AWS credentials are missing. Pre-signed URLs will fail.');
+}
 
 // ─── Initializing Redis queue processors...
 console.log("🚀 CloraAI Worker running [Production Mode]");
@@ -224,29 +229,30 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         let mediaUrlForInstagram = post.mediaUrl;
         if (post.mediaUrl.includes('amazonaws.com') || (post.mediaUrl.includes('s3') && post.mediaUrl.includes('ap-south-2'))) {
             try {
-                const s3Client = new S3Client({
-                    region: process.env.AWS_REGION || 'ap-south-2',
-                    credentials: {
+                const s3Config = {
+                    region: process.env.AWS_REGION || 'ap-south-2'
+                };
+
+                if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+                    s3Config.credentials = {
                         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
                         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-                    }
-                });
+                    };
+                }
+
+                const s3Client = new S3Client(s3Config);
                 
                 const url = new URL(post.mediaUrl);
-                // Extract key more robustly
                 const bucketName = process.env.AWS_S3_BUCKET_NAME || url.hostname.split('.')[0];
                 const key = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
                 
-                logger.info('WORKER:IG_S3', `Generating signed URL for bucket: ${bucketName}, key: ${key}`);
+                logger.info('WORKER:IG_S3', `Attempting signed URL: ${bucketName}/${key}`);
                 
                 const command = new GetObjectCommand({ Bucket: bucketName, Key: key });
                 mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
                 logger.info('WORKER:IG_S3', 'Generated pre-signed URL successfully');
             } catch (s3Err) {
-                logger.error('WORKER:IG_S3', `Failed signed URL generation: ${s3Err.message}`, { 
-                    url: post.mediaUrl,
-                    hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID
-                });
+                logger.error('WORKER:IG_S3_FAIL', `S3 Signing Error: ${s3Err.message}`, { url: post.mediaUrl });
             }
         }
 
@@ -277,11 +283,12 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         // Step B: Polling for container status
         let isReady = false;
         let attempts = 0;
-        const maxAttempts = 15; // 15 attempts * 10s = 150s (2.5 minutes)
+        const maxAttempts = 20; // 20 attempts * 10s = 200s (3.3 minutes)
         
         while (!isReady && attempts < maxAttempts) {
             attempts++;
-            await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10s
+            logger.info('WORKER:IG_POLL', `Attempt ${attempts} for ${containerId}: Waiting 10s...`);
+            await new Promise(resolve => setTimeout(resolve, 10000));
             
             try {
                 const statusRes = await axios.get(
@@ -295,17 +302,18 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
                 );
                 
                 const status = statusRes.data.status_code;
-                logger.info('WORKER:IG_POLL', `Attempt ${attempts}: Status is ${status}`);
+                logger.info('WORKER:IG_POLL', `Attempt ${attempts} result: ${status}`, { containerId });
                 
                 if (status === 'FINISHED') {
                     isReady = true;
                 } else if (status === 'ERROR') {
                     const statusDetail = statusRes.data.status || 'Unknown error';
-                    logger.error('WORKER:IG_POLL_ERROR', `Container failed processing: ${statusDetail}`);
-                    throw new Error(`Instagram processing failed: ${statusDetail}`);
+                    logger.error('WORKER:IG_POLL_ERROR', `Container failed: ${statusDetail}`, { containerId });
+                    throw new Error(`Instagram processing failed (ERROR): ${statusDetail}`);
                 }
             } catch (pollErr) {
-                logger.warn('WORKER:IG_POLL_WARN', `Polling attempt ${attempts} failed: ${pollErr.message}`);
+                const errDetail = pollErr.response?.data || pollErr.message;
+                logger.warn('WORKER:IG_POLL_WARN', `Polling error: ${JSON.stringify(errDetail)}`);
             }
         }
 
@@ -516,6 +524,4 @@ const gracefulShutdown = async (signal) => {
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-console.log("🚀 CloraAI Worker running [Production Mode]");
-console.log("Environment:", process.env.NODE_ENV);
-console.log("AI Concurrency: 10 | Webhook Concurrency: 5");
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
