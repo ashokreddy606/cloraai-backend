@@ -44,18 +44,48 @@ const processScheduledPost = async (job) => {
     const accessToken = decryptToken(account.instagramAccessToken);
 
     // 4. Publish via Instagram Graph API
-    // Step A: Create media container
     const axios = require('axios');
+    const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
     const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
-    logger.info('WORKER:META_API', `Creating media container for post ${postId}`, { video_url: post.mediaUrl });
+    // 4a. Generate a temporary pre-signed URL so Instagram can access the private S3 file
+    let mediaUrlForInstagram = post.mediaUrl;
+    
+    if (post.mediaUrl.includes('amazonaws.com')) {
+        try {
+            const s3Client = new S3Client({
+                region: process.env.AWS_REGION || 'ap-south-2',
+                credentials: {
+                    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+                }
+            });
+
+            // Extract key from URL: https://bucket.s3.region.amazonaws.com/key
+            const urlParts = new URL(post.mediaUrl);
+            const key = urlParts.pathname.substring(1); // Remove leading slash
+            const bucket = urlParts.hostname.split('.')[0];
+
+            logger.info('WORKER:S3_SIGNED_URL', `Generating signed URL for key: ${key} in bucket: ${bucket}`);
+            
+            const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+            mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 hour
+            
+            logger.info('WORKER:S3_SIGNED_URL_SUCCESS', 'Generated pre-signed URL for Instagram');
+        } catch (s3Err) {
+            logger.error('WORKER:S3_SIGNED_URL_ERROR', 'Failed to generate signed URL', { error: s3Err.message });
+            // Fallback to original URL
+        }
+    }
+
+    logger.info('WORKER:META_API', `Creating media container for post ${postId}`, { original_url: post.mediaUrl });
     
     // Step A: Create media container
-    // According to Meta docs, video_url and caption should be in the body, but access_token can be a param
     const containerRes = await axios.post(
         `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media`,
         {
-            video_url: post.mediaUrl,
+            video_url: mediaUrlForInstagram,
             caption: post.caption,
             media_type: 'REELS'
         },
