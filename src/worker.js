@@ -5,14 +5,13 @@ const { connection, QUEUES } = require('./utils/queue');
 const logger = require('./utils/logger');
 const prisma = require('./lib/prisma');
 const axios = require('axios');
-const { decryptToken } = require('./utils/cryptoUtils');
+const { decryptToken, decrypt, encrypt } = require('./utils/cryptoUtils');
 const { createNotification } = require('./controllers/notificationController');
 const { cache } = require('./utils/cache');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { google } = require('googleapis');
-const { decrypt, encrypt, decryptToken } = require('./utils/cryptoUtils');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
