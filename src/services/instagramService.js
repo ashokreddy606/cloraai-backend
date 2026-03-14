@@ -114,11 +114,25 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        const metricSets = [
-            'impressions,reach,profile_views,follower_count',
-            'email_contacts,get_directions_clicks,text_message_clicks,website_clicks',
-            'video_views,reach' // Fallback for some accounts
+        const dailyOnly = ['profile_views', 'follower_count'];
+        const periodSupported = [
+            'impressions', 'reach', 'email_contacts', 'get_directions_clicks', 
+            'text_message_clicks', 'website_clicks'
         ];
+
+        let metricSets = [];
+        if (period === 'day') {
+            metricSets = [
+                'impressions,reach,profile_views,follower_count',
+                'email_contacts,get_directions_clicks,text_message_clicks,website_clicks'
+            ];
+        } else {
+            // Only request metrics that support longer periods
+            metricSets = [
+                periodSupported.join(','),
+                'video_views,reach' // Fallback
+            ];
+        }
 
         let combinedInsights = {};
 
@@ -134,14 +148,13 @@ class InstagramService {
 
                 if (response.data && response.data.data) {
                     response.data.data.forEach(item => {
-                        // Store the latest value for the given period
                         if (item.values && item.values.length > 0) {
                             combinedInsights[item.name] = item.values[item.values.length - 1].value;
                         }
                     });
                 }
             } catch (error) {
-                logger.debug('INSTAGRAM_SERVICE', `Account insights fetch failed for metrics: ${metrics}`, { 
+                logger.debug('INSTAGRAM_SERVICE', `Account insights [${period}] failed for metrics: ${metrics}`, { 
                     error: error.response?.data?.error?.message || error.message 
                 });
             }
@@ -180,18 +193,19 @@ class InstagramService {
         }
     }
 
-    // Fetch video_views for a single VIDEO/REEL media item directly
+    // Fetch video_views or plays for a single VIDEO/REEL media item directly
     async getVideoViewCount(mediaId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${mediaId}`, {
                 params: {
-                    fields: 'id,video_views',
+                    fields: 'id,video_views,plays',
                     access_token: accessToken
                 }
             });
-            return response.data.video_views || 0;
+            // Try video_views first, then plays
+            return response.data.video_views || response.data.plays || 0;
         } catch (error) {
-            logger.debug('INSTAGRAM_SERVICE', `video_views fetch failed for ${mediaId}`, { error: error.response?.data?.error?.message || error.message });
+            logger.debug('INSTAGRAM_SERVICE', `video_views/plays fetch failed for ${mediaId}`, { error: error.response?.data?.error?.message || error.message });
             return 0;
         }
     }
