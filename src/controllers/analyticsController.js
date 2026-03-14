@@ -63,15 +63,19 @@ const getDashboard = async (req, res) => {
         totalImpressions = accountInsights.impressions || 0;
         totalReach = accountInsights.reach || 0;
 
-        // If account-level insights are zero, fallback to media aggregation
-        if (totalImpressions === 0) {
-          const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
-          if (media && media.length > 0) {
-            const topMedia = media.slice(0, 30); 
-            const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
-            totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
-            totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
-          }
+        // Always fetch media insights for a "live" feel and aggregate them
+        const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+        if (media && media.length > 0) {
+          const topMedia = media.slice(0, 30); 
+          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
+          
+          const mediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
+          const mediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
+          const mediaEngagement = insights.reduce((sum, ins) => sum + (ins.engagement || 0), 0);
+
+          // Take the highest value to be safe (account vs media sum)
+          totalImpressions = Math.max(totalImpressions, mediaImpressions, mediaEngagement);
+          totalReach = Math.max(totalReach, mediaReach);
         }
 
         // Create or Update snapshot

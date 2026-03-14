@@ -10,11 +10,9 @@ const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
 class InstagramService {
     /**
      * Exchange OAuth code for a short-lived, then long-lived access token
-     * @param {string} code 
      */
     async exchangeCodeForToken(code) {
         try {
-            // 1. Short-lived token
             const shortLivedRes = await axios.get(`${GRAPH_API_URL}/oauth/access_token`, {
                 params: {
                     client_id: APP_ID,
@@ -27,7 +25,6 @@ class InstagramService {
 
             const shortLivedToken = shortLivedRes.data.access_token;
 
-            // 2. Exchange for long-lived token (60 days)
             const longLivedRes = await axios.get(`${GRAPH_API_URL}/oauth/access_token`, {
                 params: {
                     grant_type: 'fb_exchange_token',
@@ -48,13 +45,8 @@ class InstagramService {
         }
     }
 
-    /**
-     * Refresh a long-lived token
-     * @param {string} oldToken 
-     */
     async refreshToken(oldToken) {
         try {
-            // Meta recommends refreshing page access tokens through fb_exchange_token for long-lived user tokens
             const response = await axios.get(`${GRAPH_API_URL}/oauth/access_token`, {
                 params: {
                     grant_type: 'fb_exchange_token',
@@ -73,13 +65,8 @@ class InstagramService {
         }
     }
 
-    /**
-     * Find the Instagram Business Account linked to the user's FB Pages
-     * @param {string} accessToken 
-     */
     async getBusinessAccount(accessToken) {
         try {
-            // 1. Get user's pages
             const pagesRes = await axios.get(`${GRAPH_API_URL}/me/accounts`, {
                 params: { access_token: accessToken }
             });
@@ -87,7 +74,6 @@ class InstagramService {
             const pages = pagesRes.data.data;
             if (!pages || pages.length === 0) throw new Error('No Facebook Pages found');
 
-            // 2. Find page with linked IG Business Account
             for (const page of pages) {
                 const igRes = await axios.get(`${GRAPH_API_URL}/${page.id}`, {
                     params: {
@@ -107,17 +93,11 @@ class InstagramService {
 
             throw new Error('No Instagram Business Account linked to your Facebook Pages');
         } catch (error) {
-            console.error(error.response?.data);
             logger.error('INSTAGRAM_SERVICE', 'Business Account Lookup Error', { error: error.response?.data || error.message });
             throw error;
         }
     }
 
-    /**
-     * Get basic account stats (followers, media count)
-     * @param {string} igUserId - Instagram Business Account ID
-     * @param {string} accessToken - User's access token
-     */
     async getAccountStats(igUserId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${igUserId}`, {
@@ -133,40 +113,37 @@ class InstagramService {
         }
     }
 
-    /**
-     * Get account-level insights (impressions, reach)
-     * @param {string} igUserId 
-     * @param {string} accessToken 
-     * @param {string} period - day, week, days_28, month
-     */
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        try {
-            const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, {
-                params: {
-                    metric: 'impressions,reach',
-                    period: period,
-                    access_token: accessToken
-                }
-            });
-            
-            const insights = {};
-            if (response.data && response.data.data) {
-                response.data.data.forEach(item => {
-                    if (item.values && item.values.length > 0) {
-                        insights[item.name] = item.values[0].value;
+        const metricSets = ['impressions,reach', 'reach', 'engagement'];
+        
+        for (const metrics of metricSets) {
+            try {
+                const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, {
+                    params: {
+                        metric: metrics,
+                        period: period,
+                        access_token: accessToken
                     }
                 });
+                
+                const insights = {};
+                if (response.data && response.data.data) {
+                    response.data.data.forEach(item => {
+                        if (item.values && item.values.length > 0) {
+                            insights[item.name] = item.values[0].value;
+                        }
+                    });
+                }
+                
+                if (Object.keys(insights).length > 0) return insights;
+            } catch (error) {
+                const errorMsg = error.response?.data?.error?.message || error.message;
+                logger.debug('INSTAGRAM_SERVICE', `Account metrics [${metrics}] failed for ${igUserId}: ${errorMsg}`);
             }
-            return insights;
-        } catch (error) {
-            logger.warn('INSTAGRAM_SERVICE', `Could not fetch account insights for ${igUserId}`, { error: error.response?.data || error.message });
-            return { impressions: 0, reach: 0 };
         }
+        return { impressions: 0, reach: 0 };
     }
 
-    /**
-     * Get Instagram Profile Data
-     */
     async getInstagramProfileData(igUserId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${igUserId}`, {
@@ -182,11 +159,6 @@ class InstagramService {
         }
     }
 
-    /**
-     * Get user's media items
-     * @param {string} igUserId 
-     * @param {string} accessToken 
-     */
     async getUserMedia(igUserId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/media`, {
@@ -202,17 +174,10 @@ class InstagramService {
         }
     }
 
-    /**
-     * Get insights for a specific media item (Post/Reel)
-     * @param {string} mediaId 
-     * @param {string} accessToken 
-     * @param {string} mediaType - IMAGE, VIDEO, or CAROUSEL_ALBUM
-     */
     async getMediaInsights(mediaId, accessToken, mediaType) {
-        // Metric sets to try in order of preference
         const metricSets = (mediaType === 'VIDEO')
-            ? ['reach,saved,plays', 'reach,plays', 'reach']
-            : ['reach,impressions,saved', 'reach,impressions', 'reach'];
+            ? ['reach,saved,plays', 'reach,plays', 'reach,video_views', 'reach,impressions', 'reach,engagement', 'reach']
+            : ['reach,impressions,saved', 'reach,impressions', 'reach,engagement', 'reach'];
 
         for (const metrics of metricSets) {
             try {
@@ -232,19 +197,15 @@ class InstagramService {
                     });
                 }
 
-                // Normalize: Map 'plays' to 'impressions' for Reels compatibility
-                if (insights.plays !== undefined) {
-                    insights.impressions = insights.plays;
-                }
+                if (insights.plays !== undefined) insights.impressions = insights.plays;
+                else if (insights.video_views !== undefined) insights.impressions = insights.video_views;
 
-                // Ensure we always have at least 0 for reach/impressions if one is missing in the set
                 if (insights.reach === undefined) insights.reach = 0;
                 if (insights.impressions === undefined) insights.impressions = 0;
 
                 return insights;
             } catch (error) {
                 const errorData = error.response?.data?.error?.message || error.message;
-                // Only log warning if it's the last attempt, otherwise keep trying fallbacks
                 if (metrics === metricSets[metricSets.length - 1]) {
                     logger.warn('INSTAGRAM_SERVICE', `All insight fallbacks failed for ${mediaId}`, {
                         mediaType,
