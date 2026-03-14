@@ -43,6 +43,9 @@ const getDashboard = async (req, res) => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    
+    let totalImpressions = 0;
+    let totalReach = 0;
 
     if (!latestSnapshot || latestSnapshot.date < oneHourAgo) {
       try {
@@ -50,8 +53,6 @@ const getDashboard = async (req, res) => {
 
         // Fetch reach/impressions from top media for a "live" view if possible
         const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
-        let totalImpressions = 0;
-        let totalReach = 0;
 
         if (media && media.length > 0) {
           const topMedia = media.slice(0, 20); // Increased from 5 to 20 for better coverage
