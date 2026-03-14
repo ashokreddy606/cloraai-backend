@@ -110,13 +110,16 @@ async function isCommenterSubscribed(youtube, authorChannelId, channelId) {
         });
 
         const items = subRes.data.items || [];
+        const totalResults = subRes.data.pageInfo?.totalResults || 0;
         
+        logger.info('YOUTUBE_WORKER', `Checking subscriber list for ${authorChannelId}. Found ${items.length} public subscribers out of ${totalResults} total.`);
+
         // Find the subscriber in the list
-        // item.snippet.resourceId.channelId is usually the host channel if mySubscribers=true
-        // item.subscriberSnippet.channelId is the subscriber's channel ID
+        // We check both subscriberSnippet.channelId and snippet.channelId for maximum robustness
         const found = items.some(item => {
             const subId = item.subscriberSnippet?.channelId;
-            return subId === authorChannelId;
+            const snippetSubId = item.snippet?.channelId;
+            return (subId && subId === authorChannelId) || (snippetSubId && snippetSubId === authorChannelId);
         });
 
         if (found) {
@@ -126,13 +129,13 @@ async function isCommenterSubscribed(youtube, authorChannelId, channelId) {
 
         // If there are more subscribers than this page shows, we can't be sure
         // they aren't subscribed — default to ALLOW to avoid blocking real subscribers
-        const totalResults = subRes.data.pageInfo?.totalResults || 0;
         if (totalResults > items.length) {
             logger.info('YOUTUBE_WORKER', `Channel has ${totalResults} subscribers (only ${items.length} fetched). Cannot confirm ${authorChannelId} — defaulting to ALLOW to avoid false negatives.`);
             return true;
         }
 
-        logger.info('YOUTUBE_WORKER', `Not subscribed: ${authorChannelId} is not in public subscriber list of ${channelId}`);
+        // If we found items but not our user, they might have private subscriptions
+        logger.info('YOUTUBE_WORKER', `Not subscribed: ${authorChannelId} is not in the public subscriber list of ${channelId}. (Note: If their subscriptions are private, they will not appear in this list)`);
         return false;
 
     } catch (apiError) {
