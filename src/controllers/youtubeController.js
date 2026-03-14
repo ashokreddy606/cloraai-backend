@@ -247,6 +247,20 @@ exports.createRule = async (req, res) => {
         const user = await prisma.user.findUnique({ where: { id: req.userId } });
         const channelId = user?.youtubeChannelId;
 
+        // Check for duplicate keyword within the same scope (global or video-specific)
+        // We do this manually because MongoDB handles null in compound unique indexes unpredictably
+        const normalizedVideoId = videoId || null;
+        const existingRule = await prisma.youtubeAutomationRule.findFirst({
+            where: {
+                userId: req.userId,
+                keyword: keyword.toLowerCase(),
+                videoId: normalizedVideoId
+            }
+        });
+        if (existingRule) {
+            return res.status(400).json({ error: 'A rule with this keyword already exists for this scope' });
+        }
+
         const rule = await prisma.youtubeAutomationRule.create({
             data: {
                 userId: req.userId,
@@ -256,7 +270,7 @@ exports.createRule = async (req, res) => {
                 isActive: isActive !== undefined ? isActive : true,
                 replyDelay: replyDelay || 0,
                 limitPerHour: limitPerHour || 20,
-                videoId: videoId || null,
+                videoId: normalizedVideoId,
                 onlySubscribers: onlySubscribers !== undefined ? onlySubscribers : (subscriberOnly || false),
                 appendLinks: appendLinks || false,
                 link1: link1 || null,
@@ -267,11 +281,12 @@ exports.createRule = async (req, res) => {
         });
         res.status(201).json(rule);
     } catch (error) {
-        if (error.code === 'P2002') {
-            return res.status(400).json({ error: 'Rule with this keyword already exists for this scope' });
+        // P2002 = Prisma unique constraint, 11000 = MongoDB native duplicate key
+        if (error.code === 'P2002' || error.code === 11000 || (error.message && error.message.includes('duplicate key'))) {
+            return res.status(400).json({ error: 'A rule with this keyword already exists for this scope' });
         }
-        logger.error('YOUTUBE', 'createRule error', error);
-        res.status(500).json({ error: 'Error creating rule' });
+        logger.error('YOUTUBE', `createRule error [${error.code || 'unknown'}]: ${error.message}`, { stack: error.stack });
+        res.status(500).json({ error: 'Error creating rule', details: error.message });
     }
 };
 

@@ -22,8 +22,6 @@ cron.schedule('* * * * *', async () => {
     }
 
     const lockName = 'youtube_cron';
-    // Acquire lock for 110s (slightly less than the 2 min interval)
-    // so if a worker crashes, the lock will still expire before the next schedule
     const locked = await acquireLock(lockName, 110);
 
     if (!locked) {
@@ -34,7 +32,6 @@ cron.schedule('* * * * *', async () => {
     logger.info('YOUTUBE_WORKER', 'Starting YouTube background worker to fetch comments');
 
     try {
-        // 1. Fetch all users who have connected their YouTube and have active rules
         const usersWithYoutube = await prisma.user.findMany({
             where: {
                 youtubeChannelId: { not: null },
@@ -57,7 +54,6 @@ cron.schedule('* * * * *', async () => {
     } catch (error) {
         logger.error('YOUTUBE_WORKER', 'Worker failed', error);
     } finally {
-        // Release the lock when done so other instances aren't blocked from the next scheduled hit
         await releaseLock(lockName);
     }
 });
@@ -74,7 +70,6 @@ async function getYoutubeClient(user) {
     client.setCredentials(credentials);
 
     try {
-        // Automatically refresh if expired
         const { token } = await client.getAccessToken();
         if (token && token !== credentials.access_token) {
             logger.info('YOUTUBE_WORKER', 'Refreshing access token', { userId: user.id });
@@ -89,6 +84,56 @@ async function getYoutubeClient(user) {
     }
 
     return google.youtube({ version: 'v3', auth: client });
+}
+
+/**
+ * Check if a commenter is subscribed to the creator's channel.
+ *
+ * NOTE: YouTube API limitation — you CANNOT check whether a specific user
+ * is subscribed to your channel using the owner's token. The only available
+ * API is `subscriptions.list` with `mySubscribers: true` which returns a
+ * paginated list of ALL subscribers (up to 1000 per page).
+ *
+ * Strategy:
+ *  1. Fetch the first page of subscribers (1000 per page).
+ *  2. Check if the commenter's channelId is in that list.
+ *  3. If the channel has more subscribers than one page covers, we cannot
+ *     guarantee accuracy — in that case we default to ALLOW (send reply)
+ *     to avoid false negatives that would block legitimate subscribers.
+ */
+async function isCommenterSubscribed(youtube, authorChannelId, channelId) {
+    try {
+        const subRes = await youtube.subscriptions.list({
+            part: 'snippet',
+            mySubscribers: true,
+            maxResults: 1000,
+        });
+
+        const items = subRes.data.items || [];
+        const found = items.some(
+            item => item.snippet?.resourceId?.channelId === authorChannelId
+        );
+
+        if (found) {
+            logger.info('YOUTUBE_WORKER', `Subscriber confirmed: ${authorChannelId}`);
+            return true;
+        }
+
+        // If there are more subscribers than this page shows, we can't be sure
+        // they aren't subscribed — default to ALLOW to avoid blocking real subscribers
+        if (subRes.data.pageInfo?.totalResults > items.length) {
+            logger.info('YOUTUBE_WORKER', `Channel has more subscribers than one page. Cannot confirm ${authorChannelId} — defaulting to ALLOW.`);
+            return true;
+        }
+
+        logger.info('YOUTUBE_WORKER', `Not subscribed: ${authorChannelId} is not in subscriber list of ${channelId}`);
+        return false;
+
+    } catch (apiError) {
+        // Common causes: missing scope, quota exceeded — default to ALLOW
+        logger.warn('YOUTUBE_WORKER', `Could not fetch subscriber list for channel ${channelId}: ${apiError.message}. Defaulting to ALLOW.`);
+        return true;
+    }
 }
 
 async function processUser(user) {
@@ -115,131 +160,127 @@ async function processUser(user) {
             if (!topLevelComment) continue;
 
             const threadId = item.id;
-            const commentId = topLevelComment.id; // Use the actual comment ID, not the thread ID, to prevent duplicate processing
+            const commentId = topLevelComment.id;
             const videoId = topLevelComment.snippet?.videoId || item.snippet?.videoId;
             const textDisplay = (topLevelComment.snippet?.textDisplay || '').toLowerCase();
             const authorDisplayName = topLevelComment.snippet?.authorDisplayName;
+            const authorChannelId = topLevelComment.snippet?.authorChannelId?.value;
 
             // Prevent replying to own comments
-            if (topLevelComment.snippet?.authorChannelId?.value === user.youtubeChannelId) continue;
+            if (authorChannelId === user.youtubeChannelId) continue;
 
-            // 3. Deduplicate: check if we already processed this comment
+            // Deduplicate: skip already-processed comments
             const existingRecord = await prisma.youtubeComment.findUnique({
                 where: { commentId }
             });
-
             if (existingRecord) {
                 logger.debug('YOUTUBE_WORKER', `Comment already processed: ${commentId}. Skipping.`);
                 continue;
             }
 
-            // 2. Keyword Matching
-            let matchedRule = user.youtubeRules.find(r => r.videoId === videoId && textDisplay.includes(r.keyword.toLowerCase()));
+            // Keyword matching — video-specific rule takes priority over global
+            let matchedRule = user.youtubeRules.find(
+                r => r.videoId === videoId && textDisplay.includes(r.keyword.toLowerCase())
+            );
             if (!matchedRule) {
-                matchedRule = user.youtubeRules.find(r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase()));
+                matchedRule = user.youtubeRules.find(
+                    r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase())
+                );
             }
-
-            if (!matchedRule) {
-                continue; // Ignore the comment if no keyword match
-            }
+            if (!matchedRule) continue; // no keyword match
 
             logger.info('YOUTUBE_WORKER', `Keyword match: "${matchedRule.keyword}" in comment ${commentId}`);
 
-            const authorChannelId = topLevelComment.snippet?.authorChannelId?.value;
-            let finalShouldReply = true;
-
-            // 4. Check onlySubscribers toggle
+            // ── Subscriber check ──────────────────────────────────────────────
+            // Toggle ON  (onlySubscribers = true)  → reply to subscribers only
+            // Toggle OFF (onlySubscribers = false) → reply to everyone
+            let shouldReply = true;
             if (matchedRule.onlySubscribers) {
-                if (authorChannelId) {
-                    try {
-                        const subRes = await youtube.subscriptions.list({
-                            part: 'snippet',
-                            channelId: authorChannelId, 
-                            forChannelId: user.youtubeChannelId 
-                        });
-                        
-                        const isSubscribed = (subRes.data.items || []).length > 0;
-                        if (!isSubscribed) {
-                            logger.info('YOUTUBE_WORKER', `User skipped: Author ${authorChannelId} is not subscribed to channel ${user.youtubeChannelId}. Skipping reply.`);
-                            finalShouldReply = false;
-                        }
-                    } catch (apiError) {
-                        logger.warn('YOUTUBE_WORKER', `User skipped: Could not verify subscription for ${authorChannelId} (likely private)`, { error: apiError.message });
-                        finalShouldReply = false;
-                    }
-                } else {
+                if (!authorChannelId) {
                     logger.warn('YOUTUBE_WORKER', `Missing authorChannelId for comment ${commentId}. Skipping.`);
-                    finalShouldReply = false;
+                    shouldReply = false;
+                } else {
+                    shouldReply = await isCommenterSubscribed(youtube, authorChannelId, user.youtubeChannelId);
+                    if (!shouldReply) {
+                        logger.info('YOUTUBE_WORKER', `Skipping reply: ${authorChannelId} is not a subscriber.`);
+                    }
                 }
             }
 
-            // Save comment
+            // ── Rate limit check ──────────────────────────────────────────────
+            if (shouldReply) {
+                const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+                const recentRepliesCount = await prisma.youtubeComment.count({
+                    where: {
+                        userId: user.id,
+                        replied: true,
+                        createdAt: { gte: oneHourAgo }
+                    }
+                });
+                if (recentRepliesCount >= matchedRule.limitPerHour) {
+                    logger.warn('YOUTUBE_WORKER', `Rate limit exceeded for user ${user.id} (Rule: ${matchedRule.keyword}). Saving comment but not replying.`);
+                    shouldReply = false;
+                }
+            }
+
+            // ── Global feature flag ───────────────────────────────────────────
+            if (shouldReply) {
+                const { appConfig } = require('../config');
+                if (!appConfig.featureFlags.youtubeCommentRepliesEnabled) {
+                    logger.debug('YOUTUBE_WORKER', 'Comment replies are globally disabled. Skipping reply.');
+                    shouldReply = false;
+                }
+            }
+
+            // ── Build reply message ───────────────────────────────────────────
+            let replySent = false;
+            if (shouldReply) {
+                let finalMessage = matchedRule.replyMessage;
+                if (matchedRule.appendLinks) {
+                    const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
+                    if (links.length > 0) {
+                        finalMessage += '\n\n' + links.join('\n');
+                    }
+                }
+
+                // ── Send reply ────────────────────────────────────────────────
+                if (matchedRule.replyDelay > 0) {
+                    // Fire-and-forget with delay; we optimistically mark as replied
+                    setTimeout(async () => {
+                        await sendReply(youtube, threadId, finalMessage, user.id);
+                    }, matchedRule.replyDelay * 1000);
+                    replySent = true; // optimistic for delayed
+                } else {
+                    replySent = await sendReply(youtube, threadId, finalMessage, user.id);
+                }
+            }
+
+            // ── Save comment record (AFTER send attempt) ──────────────────────
+            // replied=true only if we actually sent (or attempted with delay)
             await prisma.youtubeComment.create({
                 data: {
                     userId: user.id,
                     channelId: user.youtubeChannelId,
                     videoId,
-                    commentId, // unique top-level comment ID for accurate deduplication
+                    commentId,
                     username: authorDisplayName || 'Unknown',
-                    commentText: topLevelComment.textDisplay || '',
-                    replied: finalShouldReply
+                    commentText: topLevelComment.snippet?.textDisplay || '',
+                    replied: replySent
                 }
+            }).catch(err => {
+                // Don't block processing if DB save fails (comment will be retried next run)
+                logger.error('YOUTUBE_WORKER', `Failed to save comment record ${commentId}`, { error: err.message });
             });
-
-            if (!finalShouldReply) {
-                if (matchedRule.onlySubscribers) {
-                    logger.debug('YOUTUBE_WORKER', `Comment ${commentId} skipped because user is not a subscriber`);
-                } else {
-                    logger.debug('YOUTUBE_WORKER', `Comment ${commentId} did not match any rules`);
-                }
-                continue;
-            }
-
-            logger.info('YOUTUBE_WORKER', `Matched rule "${matchedRule.keyword}" for comment ${commentId}`);
-
-            // 4. Rate Limiting Check
-            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-            const recentRepliesCount = await prisma.youtubeComment.count({
-                where: {
-                    userId: user.id,
-                    replied: true,
-                    createdAt: { gte: oneHourAgo }
-                }
-            });
-
-            if (recentRepliesCount >= matchedRule.limitPerHour) {
-                logger.warn('YOUTUBE_WORKER', `Rate limit exceeded for user ${user.id} (Rule: ${matchedRule.keyword})`);
-                continue;
-            }
-
-            // 5. Send Auto-Reply
-            const { appConfig } = require('../config');
-            if (!appConfig.featureFlags.youtubeCommentRepliesEnabled) {
-                logger.debug('YOUTUBE_WORKER', 'Comment replies are globally disabled. Skipping reply.');
-                continue;
-            }
-
-            let finalMessage = matchedRule.replyMessage;
-            if (matchedRule.appendLinks) {
-                const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
-                if (links.length > 0) {
-                    finalMessage += '\n\n' + links.join('\n');
-                }
-            }
-
-            if (matchedRule.replyDelay > 0) {
-                setTimeout(() => {
-                    sendReply(youtube, threadId, finalMessage, user.id);
-                }, matchedRule.replyDelay * 1000);
-            } else {
-                await sendReply(youtube, threadId, finalMessage, user.id);
-            }
         }
     } catch (error) {
         logger.error('YOUTUBE_WORKER', `Failed to process user ${user.id}`, { error: error.message });
     }
 }
 
+/**
+ * Send a reply to a YouTube comment thread.
+ * @returns {boolean} true if reply was sent successfully, false otherwise
+ */
 async function sendReply(youtubeClient, parentId, textOriginal, userId) {
     try {
         await youtubeClient.comments.insert({
@@ -251,13 +292,15 @@ async function sendReply(youtubeClient, parentId, textOriginal, userId) {
                 }
             }
         });
-        logger.info('YOUTUBE_WORKER', `Successfully replied to comment ${parentId} for user ${userId}`);
+        logger.info('YOUTUBE_WORKER', `Successfully replied to comment thread ${parentId} for user ${userId}`);
+        return true;
     } catch (error) {
-        logger.error('YOUTUBE_WORKER', `Failed to send reply to comment ${parentId}`, {
+        logger.error('YOUTUBE_WORKER', `Failed to send reply to comment thread ${parentId}`, {
             userId,
             error: error.message,
             details: error.response?.data
         });
+        return false;
     }
 }
 
