@@ -163,7 +163,7 @@ class InstagramService {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/media`, {
                 params: {
-                    fields: 'id,caption,like_count,comments_count,timestamp,media_type,media_url,video_views',
+                    fields: 'id,caption,like_count,comments_count,timestamp,media_type,media_url',
                     access_token: accessToken
                 }
             });
@@ -171,6 +171,22 @@ class InstagramService {
         } catch (error) {
             logger.error('INSTAGRAM_SERVICE', 'Error fetching user media', { error: error.response?.data || error.message });
             throw error;
+        }
+    }
+
+    // Fetch video_views for a single VIDEO/REEL media item directly
+    async getVideoViewCount(mediaId, accessToken) {
+        try {
+            const response = await axios.get(`${GRAPH_API_URL}/${mediaId}`, {
+                params: {
+                    fields: 'id,video_views',
+                    access_token: accessToken
+                }
+            });
+            return response.data.video_views || 0;
+        } catch (error) {
+            logger.debug('INSTAGRAM_SERVICE', `video_views fetch failed for ${mediaId}`, { error: error.response?.data?.error?.message || error.message });
+            return 0;
         }
     }
 

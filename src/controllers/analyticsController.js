@@ -68,16 +68,22 @@ const getDashboard = async (req, res) => {
         if (media && media.length > 0) {
           const topMedia = media.slice(0, 30);
 
-          // Sum video_views directly from media fields (no insights permission needed)
-          const directVideoViews = topMedia.reduce((sum, m) => sum + (m.video_views || 0), 0);
+          // Fetch video_views individually per VIDEO/REEL (the only reliable method)
+          const videoItems = topMedia.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS');
+          const videoViewCounts = await Promise.all(
+            videoItems.map(m => instagramService.getVideoViewCount(m.id, account.instagramAccessToken))
+          );
+          const directVideoViews = videoViewCounts.reduce((sum, v) => sum + v, 0);
+          console.log('[ANALYTICS] directVideoViews from individual fetches:', directVideoViews, 'videos checked:', videoItems.length);
 
           const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           
           const mediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
           const mediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
           const mediaEngagement = insights.reduce((sum, ins) => sum + (ins.engagement || 0), 0);
+          console.log('[ANALYTICS] mediaImpressions:', mediaImpressions, 'mediaReach:', mediaReach, 'accountInsights:', JSON.stringify(accountInsights));
 
-          // Take the highest value to be safe (account vs media sum vs direct video views)
+          // Take the highest value across all sources
           totalImpressions = Math.max(totalImpressions, mediaImpressions, mediaEngagement, directVideoViews);
           totalReach = Math.max(totalReach, mediaReach);
         }
@@ -372,8 +378,69 @@ const getMonthlyAnalytics = async (req, res) => {
   }
 };
 
+// Debug endpoint - shows raw API results to diagnose view count issues
+const debugViews = async (req, res) => {
+  try {
+    const account = await InstagramAccount.findOne({ userId: req.userId });
+    if (!account) return res.status(404).json({ error: 'No Instagram account found' });
+
+    const results = {};
+
+    // 1. Account stats
+    try {
+      results.accountStats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
+    } catch (e) {
+      results.accountStatsError = e.response?.data || e.message;
+    }
+
+    // 2. Account insights
+    try {
+      results.accountInsights = await instagramService.getAccountInsights(
+        account.instagramId,
+        account.pageAccessToken || account.instagramAccessToken,
+        'day'
+      );
+    } catch (e) {
+      results.accountInsightsError = e.response?.data || e.message;
+    }
+
+    // 3. Media list
+    let media = [];
+    try {
+      media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+      results.mediaCount = media.length;
+      results.mediaTypes = media.map(m => m.media_type);
+    } catch (e) {
+      results.mediaError = e.response?.data || e.message;
+    }
+
+    // 4. Per-video video_views
+    const videoItems = media.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS').slice(0, 5);
+    results.videoViewChecks = await Promise.all(videoItems.map(async (m) => {
+      const views = await instagramService.getVideoViewCount(m.id, account.instagramAccessToken);
+      return { id: m.id, media_type: m.media_type, video_views: views };
+    }));
+
+    // 5. First video media insights
+    if (videoItems.length > 0) {
+      try {
+        results.firstVideoInsights = await instagramService.getMediaInsights(
+          videoItems[0].id, account.instagramAccessToken, videoItems[0].media_type
+        );
+      } catch (e) {
+        results.firstVideoInsightsError = e.response?.data || e.message;
+      }
+    }
+
+    res.status(200).json({ success: true, debug: results });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   getDashboard,
   recordSnapshot,
-  getMonthlyAnalytics
+  getMonthlyAnalytics,
+  debugViews
 };
