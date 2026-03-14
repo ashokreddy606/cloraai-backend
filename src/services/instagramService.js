@@ -178,41 +178,53 @@ class InstagramService {
      * @param {string} mediaType - IMAGE, VIDEO, or CAROUSEL_ALBUM
      */
     async getMediaInsights(mediaId, accessToken, mediaType) {
-        try {
-            // For Reels (VIDEO), 'impressions' is deprecated in favor of 'plays' in Graph API v22.0+
-            const metrics = (mediaType === 'VIDEO') 
-                ? 'reach,saved,plays' // Removed impressions and video_views, added plays
-                : 'reach,impressions,saved';
+        // Metric sets to try in order of preference
+        const metricSets = (mediaType === 'VIDEO')
+            ? ['reach,saved,plays', 'reach,plays', 'reach']
+            : ['reach,impressions,saved', 'reach,impressions', 'reach'];
 
-            const response = await axios.get(`${GRAPH_API_URL}/${mediaId}/insights`, {
-                params: {
-                    metric: metrics,
-                    access_token: accessToken
-                }
-            });
-
-            const insights = {};
-            if (response.data && response.data.data) {
-                response.data.data.forEach(item => {
-                    if (item.values && item.values.length > 0) {
-                        insights[item.name] = item.values[0].value;
+        for (const metrics of metricSets) {
+            try {
+                const response = await axios.get(`${GRAPH_API_URL}/${mediaId}/insights`, {
+                    params: {
+                        metric: metrics,
+                        access_token: accessToken
                     }
                 });
-            }
 
-            // Normalize: Map 'plays' to 'impressions' for Reels to maintain dashboard compatibility
-            if (mediaType === 'VIDEO' && insights.plays !== undefined) {
-                insights.impressions = insights.plays;
-                logger.info('INSTAGRAM_SERVICE', `Reel ${mediaId} plays: ${insights.plays}`);
-            } else if (mediaType === 'VIDEO') {
-                logger.warn('INSTAGRAM_SERVICE', `Reel ${mediaId} missing 'plays' metric`, { insights });
-            }
+                const insights = {};
+                if (response.data && response.data.data) {
+                    response.data.data.forEach(item => {
+                        if (item.values && item.values.length > 0) {
+                            insights[item.name] = item.values[0].value;
+                        }
+                    });
+                }
 
-            return insights;
-        } catch (error) {
-            logger.warn('INSTAGRAM_SERVICE', `Could not fetch insights for media ${mediaId}`, { error: error.response?.data || error.message });
-            return { reach: 0, impressions: 0 };
+                // Normalize: Map 'plays' to 'impressions' for Reels compatibility
+                if (insights.plays !== undefined) {
+                    insights.impressions = insights.plays;
+                }
+
+                // Ensure we always have at least 0 for reach/impressions if one is missing in the set
+                if (insights.reach === undefined) insights.reach = 0;
+                if (insights.impressions === undefined) insights.impressions = 0;
+
+                return insights;
+            } catch (error) {
+                const errorData = error.response?.data?.error?.message || error.message;
+                // Only log warning if it's the last attempt, otherwise keep trying fallbacks
+                if (metrics === metricSets[metricSets.length - 1]) {
+                    logger.warn('INSTAGRAM_SERVICE', `All insight fallbacks failed for ${mediaId}`, {
+                        mediaType,
+                        error: errorData
+                    });
+                } else {
+                    logger.debug('INSTAGRAM_SERVICE', `Metric set [${metrics}] failed for ${mediaId}, trying next...`);
+                }
+            }
         }
+        return { reach: 0, impressions: 0 };
     }
 }
 
