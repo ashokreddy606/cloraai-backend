@@ -114,14 +114,9 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        const metrics = [
-            'impressions', 'reach', 'profile_views', 'follower_count',
-            'email_contacts', 'get_directions_clicks', 'text_message_clicks', 'website_clicks'
-        ];
-
+        const metrics = ['impressions', 'reach', 'profile_views', 'follower_count'];
         let combinedInsights = {};
 
-        // Fetch each metric individually to prevent one failure from blocking others
         await Promise.all(metrics.map(async (metric) => {
             try {
                 const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, {
@@ -132,17 +127,15 @@ class InstagramService {
                     }
                 });
 
-                if (response.data && response.data.data && response.data.data[0]) {
-                    const item = response.data.data[0];
-                    if (item.values && item.values.length > 0) {
-                        combinedInsights[metric] = item.values[item.values.length - 1].value;
-                    }
+                if (response.data?.data?.[0]?.values) {
+                    const values = response.data.data[0].values;
+                    const value = values[values.length - 1].value;
+                    combinedInsights[metric] = value;
+                    console.log(`[INSTAGRAM_SERVICE] Account Insight Success: ${metric} (${period}) = ${value}`);
                 }
             } catch (error) {
-                // Log granularly so we know exactly which metric for which period is failing
-                logger.debug('INSTAGRAM_SERVICE', `Metric [${metric}] failed for period [${period}]`, {
-                    error: error.response?.data?.error?.message || error.message
-                });
+                const errorMsg = error.response?.data?.error?.message || error.message;
+                console.log(`[INSTAGRAM_SERVICE] Account Insight Failed: ${metric} (${period}) - ${errorMsg}`);
             }
         }));
 
@@ -179,27 +172,30 @@ class InstagramService {
         }
     }
 
-    // Fetch video_views or plays for a single VIDEO/REEL media item directly
+    // Fetch video_views, plays, or play_count for a single VIDEO/REEL media item directly
     async getVideoViewCount(mediaId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${mediaId}`, {
                 params: {
-                    fields: 'id,video_views,plays',
+                    fields: 'id,video_views,plays,play_count',
                     access_token: accessToken
                 }
             });
-            // Try video_views first, then plays
-            return response.data.video_views || response.data.plays || 0;
+            const data = response.data;
+            const views = data.play_count || data.plays || data.video_views || 0;
+            if (views > 0) console.log(`[INSTAGRAM_SERVICE] Direct View Count for ${mediaId}: ${views}`);
+            return views;
         } catch (error) {
-            logger.debug('INSTAGRAM_SERVICE', `video_views/plays fetch failed for ${mediaId}`, { error: error.response?.data?.error?.message || error.message });
+            const errorMsg = error.response?.data?.error?.message || error.message;
+            console.log(`[INSTAGRAM_SERVICE] Direct View Count Failed for ${mediaId}: ${errorMsg}`);
             return 0;
         }
     }
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
         const metrics = (mediaType === 'VIDEO' || mediaType === 'REELS')
-            ? ['impressions', 'reach', 'engagement', 'video_views', 'plays', 'clips_replays_count', 'saved', 'total_interactions']
-            : ['impressions', 'reach', 'engagement', 'saved', 'total_interactions'];
+            ? ['impressions', 'reach', 'engagement', 'video_views', 'plays', 'clips_replays_count', 'total_interactions']
+            : ['impressions', 'reach', 'engagement', 'total_interactions'];
 
         let combinedInsights = {};
 
@@ -212,17 +208,19 @@ class InstagramService {
                     }
                 });
 
-                if (response.data && response.data.data && response.data.data[0]) {
-                    combinedInsights[metric] = response.data.data[0].values[0].value;
+                if (response.data?.data?.[0]) {
+                    const value = response.data.data[0].values[0].value;
+                    combinedInsights[metric] = value;
+                    if (value > 0) {
+                        console.log(`[INSTAGRAM_SERVICE] Media Insight Success: ${mediaId} ${metric} = ${value}`);
+                    }
                 }
             } catch (error) {
-                logger.debug('INSTAGRAM_SERVICE', `Media metric [${metric}] failed for ${mediaType} ${mediaId}`, {
-                    error: error.response?.data?.error?.message || error.message
-                });
+                // Silently skip if metric is not supported for this specific media item
             }
         }));
         
-        // Ensure reach and impressions have defaults if missing
+        // Ensure defaults
         combinedInsights.reach = combinedInsights.reach || 0;
         combinedInsights.impressions = combinedInsights.impressions || 0;
         
