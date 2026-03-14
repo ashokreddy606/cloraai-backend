@@ -45,11 +45,14 @@ if (process.env.SENTRY_DSN) {
 process.on('uncaughtException', (err) => {
     logger.error('CRASH_PREVENTION', "UNCAUGHT EXCEPTION", { error: err?.message, stack: err?.stack });
     console.error('FATAL UNCAUGHT EXCEPTION:', err);
+    // Log complete stack trace for debugging container exit
+    if (err?.stack) console.error(err.stack);
 });
 
 process.on('unhandledRejection', (reason) => {
-    logger.error('CRASH_PREVENTION', "UNHANDLED REJECTION", { reason });
+    logger.error('CRASH_PREVENTION', "UNHANDLED REJECTION", { reason: reason instanceof Error ? reason.message : reason, stack: reason instanceof Error ? reason.stack : undefined });
     console.error('FATAL UNHANDLED REJECTION:', reason);
+    if (reason instanceof Error && reason.stack) console.error(reason.stack);
 });
 
 // Import routes
@@ -365,7 +368,8 @@ if (process.env.NODE_ENV !== 'test') {
     try {
         require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
     } catch (err) {
-        logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message });
+        logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message, stack: err.stack });
+        console.error('FAILED TO INITIALIZE YOUTUBE WORKER:', err);
     }
     try {
         // Redundant: src/worker.js now handles the instagram-publish queue

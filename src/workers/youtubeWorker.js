@@ -163,6 +163,13 @@ async function processUser(user) {
                             finalShouldReply = false;
                         }
                     } else {
+                        logger.warn('YOUTUBE_WORKER', `Missing authorChannelId for comment ${commentId}. Skipping verified-only reply.`);
+                        finalShouldReply = false;
+                    }
+                } catch (checkError) {
+                    logger.error('YOUTUBE_WORKER', `Subscription check failed for ${commentId}`, { error: checkError.message });
+                    finalShouldReply = false;
+                }
             }
 
             // Save comment
