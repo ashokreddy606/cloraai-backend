@@ -104,15 +104,20 @@ async function getYoutubeClient(user) {
 async function isCommenterSubscribed(youtube, authorChannelId, channelId) {
     try {
         const subRes = await youtube.subscriptions.list({
-            part: 'snippet',
+            part: 'snippet,subscriberSnippet',
             mySubscribers: true,
             maxResults: 1000,
         });
 
         const items = subRes.data.items || [];
-        const found = items.some(
-            item => item.snippet?.resourceId?.channelId === authorChannelId
-        );
+        
+        // Find the subscriber in the list
+        // item.snippet.resourceId.channelId is usually the host channel if mySubscribers=true
+        // item.subscriberSnippet.channelId is the subscriber's channel ID
+        const found = items.some(item => {
+            const subId = item.subscriberSnippet?.channelId;
+            return subId === authorChannelId;
+        });
 
         if (found) {
             logger.info('YOUTUBE_WORKER', `Subscriber confirmed: ${authorChannelId}`);
@@ -121,16 +126,17 @@ async function isCommenterSubscribed(youtube, authorChannelId, channelId) {
 
         // If there are more subscribers than this page shows, we can't be sure
         // they aren't subscribed — default to ALLOW to avoid blocking real subscribers
-        if (subRes.data.pageInfo?.totalResults > items.length) {
-            logger.info('YOUTUBE_WORKER', `Channel has more subscribers than one page. Cannot confirm ${authorChannelId} — defaulting to ALLOW.`);
+        const totalResults = subRes.data.pageInfo?.totalResults || 0;
+        if (totalResults > items.length) {
+            logger.info('YOUTUBE_WORKER', `Channel has ${totalResults} subscribers (only ${items.length} fetched). Cannot confirm ${authorChannelId} — defaulting to ALLOW to avoid false negatives.`);
             return true;
         }
 
-        logger.info('YOUTUBE_WORKER', `Not subscribed: ${authorChannelId} is not in subscriber list of ${channelId}`);
+        logger.info('YOUTUBE_WORKER', `Not subscribed: ${authorChannelId} is not in public subscriber list of ${channelId}`);
         return false;
 
     } catch (apiError) {
-        // Common causes: missing scope, quota exceeded — default to ALLOW
+        // Common causes: missing scope, quota exceeded, or privacy settings — default to ALLOW
         logger.warn('YOUTUBE_WORKER', `Could not fetch subscriber list for channel ${channelId}: ${apiError.message}. Defaulting to ALLOW.`);
         return true;
     }
