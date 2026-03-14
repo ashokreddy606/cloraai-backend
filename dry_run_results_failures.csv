@@ -1,3 +1,0 @@
-Method,Name,Error,Occurrences
-GET,/api/v1/instagram/stats,HTTPError('404 Client Error: Not Found for url: /api/v1/instagram/stats'),2
-GET,/api/v1/analytics/dashboard,HTTPError('403 Client Error: Forbidden for url: /api/v1/analytics/dashboard'),2

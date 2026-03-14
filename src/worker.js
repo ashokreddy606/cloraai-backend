@@ -14,6 +14,12 @@ const os = require('os');
 const { google } = require('googleapis');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const mongoose = require('mongoose');
+
+// Initialize Mongoose (required for Instagram Analytics)
+mongoose.connect(process.env.DATABASE_URL)
+    .then(() => logger.info('WORKER', 'Mongoose connected successfully'))
+    .catch((err) => logger.error('WORKER', 'Mongoose connection error:', { error: err.message }));
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
@@ -522,6 +528,4 @@ const gracefulShutdown = async (signal) => {
 };
 
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
