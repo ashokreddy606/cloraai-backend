@@ -1,6 +1,5 @@
 const prisma = require('../lib/prisma');
-const AppError = require('../utils/appError');
-const catchAsync = require('../utils/catchAsync');
+const { AppError, catchAsync } = require('../utils/errors');
 
 /**
  * PRODUCTION SECURITY: RESOURCE OWNERSHIP VERIFICATION (Anti-IDOR)

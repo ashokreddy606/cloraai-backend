@@ -1,4 +1,9 @@
 const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
+const { google } = require('googleapis');
+const { OAuth2Client } = require('google-auth-library');
+
 // Razorpay imports removed
 
 const s3Client = new S3Client({

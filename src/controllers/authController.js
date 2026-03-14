@@ -1,6 +1,7 @@
 const { generateTokens, hashPassword, verifyPassword, verifyToken } = require('../utils/helpers');
 const redisClient = require('../lib/redis');
 const logger = require('../utils/logger');
+const prisma = require('../lib/prisma');
 const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');

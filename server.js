@@ -7,9 +7,12 @@ const mongoSanitize = require('express-mongo-sanitize');
 const compression = require('compression');
 const mongoose = require('mongoose');
 require('dotenv').config();
+const logger = require('./src/utils/logger');
+const prisma = require('./src/lib/prisma');
 const validateEnv = require('./src/utils/envValidator');
 const fs = require('fs');
 const path = require('path');
+
 validateEnv();
 
 // Ensure uploads directory exists
@@ -24,8 +27,6 @@ mongoose.connect(process.env.DATABASE_URL)
     .catch((err) => logger.error('SERVER', 'Mongoose connection error:', { error: err.message }));
 
 const { rateLimit } = require('./src/middleware/auth');
-const prisma = require('./src/lib/prisma');
-const logger = require('./src/utils/logger');
 
 // ─── Optional Sentry Error Tracking ──────────────────────────────────────────
 // Activate by setting SENTRY_DSN in environment. No impact if unset.
