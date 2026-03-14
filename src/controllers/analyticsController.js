@@ -39,11 +39,10 @@ const getDashboard = async (req, res) => {
     // Get latest snapshot from mongo
     let latestSnapshot = await InstagramAnalytics.findOne({ userId: req.userId }).sort({ date: -1 });
 
-    // Auto-record snapshot if none today or if user wants "real-time" data
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    // Auto-refresh impressions if snapshot is older than 1 hour for "real-time" feel
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
-    if (!latestSnapshot || latestSnapshot.date < startOfToday) {
+    if (!latestSnapshot || latestSnapshot.date < oneHourAgo) {
       try {
         const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
 
@@ -53,7 +52,7 @@ const getDashboard = async (req, res) => {
         let totalReach = 0;
 
         if (media && media.length > 0) {
-          const topMedia = media.slice(0, 5);
+          const topMedia = media.slice(0, 20); // Increased from 5 to 20 for better coverage
           const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
           totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
