@@ -1,15 +1,7 @@
 const promClient = require('prom-client');
 const prisma = require('../lib/prisma');
-const Redis = require('ioredis');
+const redisClient = require('../lib/redis');
 const { Queue } = require('bullmq');
-
-// Mock Redis for tests to avoid ECONNREFUSED blocking Jest
-const redisConfig = process.env.REDIS_URL || 'redis://localhost:6379';
-const redisOptions = { maxRetriesPerRequest: null, lazyConnect: true }; // lazyConnect prevents immediate connection attempt
-
-const redisClient = (process.env.NODE_ENV === 'test')
-    ? { ping: async () => 'PONG', on: () => { } }
-    : new Redis(redisConfig, redisOptions);
 
 const scheduledPostQueue = (process.env.NODE_ENV === 'test')
     ? { getWaitingCount: async () => 0, getFailedCount: async () => 0 }

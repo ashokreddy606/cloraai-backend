@@ -1,5 +1,5 @@
 const { generateTokens, hashPassword, verifyPassword, verifyToken } = require('../utils/helpers');
-const Redis = require('ioredis');
+const redisClient = require('../lib/redis');
 const logger = require('../utils/logger');
 const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
@@ -140,10 +140,8 @@ const register = catchAsync(async (req, res, next) => {
   const { accessToken, refreshToken } = generateTokens(user.id);
 
   // Store refresh token in Redis (7 days TTL)
-  if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
-    const redis = new Redis(process.env.REDIS_URL);
-    await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-    await redis.quit();
+  if (redisClient) {
+    await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
   }
 
   // FIX 19: Send verification email

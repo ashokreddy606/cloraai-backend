@@ -11,6 +11,9 @@
 const { verifyToken } = require('../utils/helpers');
 const prisma = require('../lib/prisma');
 const { rateLimit: expressRateLimit } = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
+const logger = require('../utils/logger');
+
 // ─── Redis Setup for Rate Limiting ───────────────────────────────────────────
 const redisClient = require('../lib/redis');
 let store;

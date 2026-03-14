@@ -1,38 +1,5 @@
-const Redis = require('ioredis');
+const redisClient = require('../lib/redis');
 const logger = require('./logger');
-
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-const redisClient = new Redis(REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    retryStrategy(times) {
-        const delay = Math.min(times * 50, 2000);
-        if (times % 10 === 0) {
-            logger.warn('REDIS', `Redis connection retry #${times} in ${delay}ms`);
-        }
-        return delay;
-    },
-    reconnectOnError(err) {
-        const targetError = 'READONLY';
-        if (err.message.includes(targetError)) {
-            return true;
-        }
-        return false;
-    }
-});
-
-redisClient.on('error', (err) => {
-    if (err.code === 'EAI_AGAIN' || err.code === 'ECONNREFUSED') {
-        logger.warn('REDIS', 'Redis connection failed. Features like caching and dashboard metrics will be restricted.', { error: err.message });
-    } else {
-        logger.error('REDIS', 'Redis unexpected error', { error: err.message, code: err.code });
-    }
-});
-
-redisClient.on('connect', () => {
-    logger.info('REDIS', 'Connected to Redis server');
-});
 
 // Cache wrapper functions
 const cache = {
