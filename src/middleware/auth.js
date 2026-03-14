@@ -10,28 +10,16 @@
 
 const { verifyToken } = require('../utils/helpers');
 const prisma = require('../lib/prisma');
-const expressRateLimit = require('express-rate-limit');
-const RedisStore = require('rate-limit-redis');
-const Redis = require('ioredis');
-const logger = require('../utils/logger');
-
+const { rateLimit: expressRateLimit } = require('express-rate-limit');
 // ─── Redis Setup for Rate Limiting ───────────────────────────────────────────
-const redisUrl = process.env.REDIS_URL;
-let redisClient;
+const redisClient = require('../lib/redis');
 let store;
 
-if (redisUrl && process.env.NODE_ENV !== 'test') {
-  redisClient = new Redis(redisUrl, {
-    maxRetriesPerRequest: 3,
-    retryStrategy: (times) => Math.min(times * 50, 2000)
-  });
-  
+if (redisClient) {
   store = new RedisStore({
     sendCommand: (...args) => redisClient.call(...args),
   });
   logger.info('AUTH', 'Redis rate-limit store initialized.');
-} else if (process.env.NODE_ENV === 'production') {
-  logger.error('AUTH', 'REDIS_URL is required in production for multi-instance rate limiting!');
 }
 
 // ... 1. Authentication Middleware ...
