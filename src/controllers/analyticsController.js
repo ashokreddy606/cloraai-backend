@@ -40,7 +40,9 @@ const getDashboard = async (req, res) => {
     let latestSnapshot = await InstagramAnalytics.findOne({ userId: req.userId }).sort({ date: -1 });
 
     // Auto-refresh impressions if snapshot is older than 1 hour for "real-time" feel
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
     if (!latestSnapshot || latestSnapshot.date < oneHourAgo) {
       try {
