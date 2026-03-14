@@ -114,8 +114,14 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        const metricSets = ['impressions,reach', 'video_views,reach', 'reach', 'engagement'];
-        
+        const metricSets = [
+            'impressions,reach,profile_views,follower_count',
+            'email_contacts,get_directions_clicks,text_message_clicks,website_clicks',
+            'video_views,reach' // Fallback for some accounts
+        ];
+
+        let combinedInsights = {};
+
         for (const metrics of metricSets) {
             try {
                 const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, {
@@ -125,23 +131,23 @@ class InstagramService {
                         access_token: accessToken
                     }
                 });
-                
-                const insights = {};
+
                 if (response.data && response.data.data) {
                     response.data.data.forEach(item => {
+                        // Store the latest value for the given period
                         if (item.values && item.values.length > 0) {
-                            insights[item.name] = item.values[0].value;
+                            combinedInsights[item.name] = item.values[item.values.length - 1].value;
                         }
                     });
                 }
-                
-                if (Object.keys(insights).length > 0) return insights;
             } catch (error) {
-                const errorMsg = error.response?.data?.error?.message || error.message;
-                logger.debug('INSTAGRAM_SERVICE', `Account metrics [${metrics}] failed for ${igUserId}: ${errorMsg}`);
+                logger.debug('INSTAGRAM_SERVICE', `Account insights fetch failed for metrics: ${metrics}`, { 
+                    error: error.response?.data?.error?.message || error.message 
+                });
             }
         }
-        return { impressions: 0, reach: 0 };
+
+        return combinedInsights;
     }
 
     async getInstagramProfileData(igUserId, accessToken) {
@@ -191,22 +197,19 @@ class InstagramService {
     }
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
-        // Expanded metric sets to handle different account types and media restrictions
+        // Expanded metric sets to handle Reels (plays, clips_replays_count) and Videos
         const metricSets = (mediaType === 'VIDEO' || mediaType === 'REELS')
             ? [
-                'reach,saved,plays', 
-                'reach,plays', 
-                'reach,video_views', 
-                'reach,impressions', 
-                'reach,engagement', 
-                'reach'
-            ]
+                'impressions,reach,engagement,video_views',
+                'plays,clips_replays_count,saved',
+                'total_interactions'
+              ]
             : [
-                'reach,impressions,saved', 
-                'reach,impressions', 
-                'reach,engagement', 
-                'reach'
-            ];
+                'impressions,reach,engagement,saved',
+                'total_interactions'
+              ];
+
+        let combinedInsights = {};
 
         for (const metrics of metricSets) {
             try {
@@ -217,46 +220,25 @@ class InstagramService {
                     }
                 });
 
-                const insights = {};
                 if (response.data && response.data.data) {
                     response.data.data.forEach(item => {
-                        if (item.values && item.values.length > 0) {
-                            insights[item.name] = item.values[0].value;
-                        }
+                        combinedInsights[item.name] = item.values[0].value;
                     });
                 }
-
-                // Normalizing impressions across different video view metrics
-                if (insights.plays !== undefined) insights.impressions = (insights.impressions || 0) + insights.plays;
-                else if (insights.video_views !== undefined) insights.impressions = (insights.impressions || 0) + insights.video_views;
-
-                // Ensure reach and impressions are numbers
-                insights.reach = insights.reach || 0;
-                insights.impressions = insights.impressions || 0;
-
-                return insights;
             } catch (error) {
                 const errorData = error.response?.data?.error;
                 const errorMsg = errorData?.message || error.message;
-                const errorCode = errorData?.code;
-                const errorSubcode = errorData?.error_subcode;
-
-                // Log detailed error for the last attempt
-                if (metrics === metricSets[metricSets.length - 1]) {
-                    logger.warn('INSTAGRAM_SERVICE', `All insight fallbacks failed for ${mediaId}`, {
-                        mediaType,
-                        error: errorMsg,
-                        code: errorCode,
-                        subcode: errorSubcode
-                    });
-                } else {
-                    logger.debug('INSTAGRAM_SERVICE', `Metric set [${metrics}] failed for ${mediaId}, trying next...`, { 
-                        code: errorCode, 
-                        subcode: errorSubcode 
-                    });
-                }
+                logger.debug('INSTAGRAM_SERVICE', `Metric set [${metrics}] failed for ${mediaId}`, { 
+                    error: errorMsg 
+                });
             }
         }
+        
+        // Ensure reach and impressions have defaults if missing
+        combinedInsights.reach = combinedInsights.reach || 0;
+        combinedInsights.impressions = combinedInsights.impressions || 0;
+        
+        return combinedInsights;
         
         // Final fallback: Try to at least get reach/impressions if possible or return 0
         return { reach: 0, impressions: 0 };
