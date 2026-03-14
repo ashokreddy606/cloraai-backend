@@ -1,4 +1,5 @@
-const { generateTokens, hashPassword, verifyPassword, verifyToken } = require('../utils/helpers');
+const { generateTokens, generateToken, hashPassword, verifyPassword, verifyToken } = require('../utils/helpers');
+const Redis = require('ioredis');
 const redisClient = require('../lib/redis');
 const logger = require('../utils/logger');
 const prisma = require('../lib/prisma');
@@ -246,10 +247,8 @@ const login = async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion);
 
     // Store refresh token in Redis (7 days TTL)
-    if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
-      const redis = new Redis(process.env.REDIS_URL);
-      await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-      await redis.quit();
+    if (redisClient && process.env.NODE_ENV !== 'test') {
+      await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
     // Update login analytics
@@ -396,10 +395,8 @@ const updateProfile = async (req, res) => {
 const logout = async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    if (refreshToken && process.env.REDIS_URL) {
-      const redis = new Redis(process.env.REDIS_URL);
-      await redis.del(`refresh_token:${req.userId}:${refreshToken}`);
-      await redis.quit();
+    if (refreshToken && redisClient) {
+      await redisClient.del(`refresh_token:${req.userId}:${refreshToken}`);
     }
     res.status(200).json({
       success: true,
@@ -429,16 +426,14 @@ const refreshToken = catchAsync(async (req, res, next) => {
   }
 
   // Check Redis for token validity (Rotation & Revocation)
-  if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
-    const redis = new Redis(process.env.REDIS_URL);
-    const isValid = await redis.get(`refresh_token:${decoded.userId}:${oldToken}`);
+  if (redisClient && process.env.NODE_ENV !== 'test') {
+    const isValid = await redisClient.get(`refresh_token:${decoded.userId}:${oldToken}`);
     
     if (!isValid) {
       // Security: If a used token is presented, someone might be attempting a replay attack.
       // Revoke ALL tokens for this user for safety.
-      const keys = await redis.keys(`refresh_token:${decoded.userId}:*`);
-      if (keys.length > 0) await redis.del(...keys);
-      await redis.quit();
+      const keys = await redisClient.keys(`refresh_token:${decoded.userId}:*`);
+      if (keys.length > 0) await redisClient.del(...keys);
       return next(new AppError('Security Alert: Replay attack detected. Please login again.', 401));
     }
 
@@ -449,17 +444,15 @@ const refreshToken = catchAsync(async (req, res, next) => {
     });
 
     if (!user || user.tokenVersion !== decoded.tokenVersion) {
-      await redis.del(`refresh_token:${decoded.userId}:${oldToken}`);
-      await redis.quit();
+      await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
       return next(new AppError('User not found or session revoked', 401));
     }
 
     const tokens = generateTokens(user.id, user.tokenVersion);
 
     // Atomic Swap: Invalidate old, store new
-    await redis.del(`refresh_token:${decoded.userId}:${oldToken}`);
-    await redis.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-    await redis.quit();
+    await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
+    await redisClient.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
 
     res.status(200).json({
       success: true,

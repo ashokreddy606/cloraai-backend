@@ -22,6 +22,25 @@ const BCRYPT_ROUNDS = 12;
 const REFRESH_TOKEN_EXPIRY = '7d';
 
 /**
+ * Generate a single JWT token.
+ */
+function generateToken(userId, tokenVersion = 0, expiresIn = '15m') {
+  const secret = getJwtSecret();
+  if (!secret) throw new Error("JWT_SECRET is not configured");
+
+  return jwt.sign(
+    { userId, tokenVersion },
+    secret,
+    {
+      expiresIn,
+      algorithm: 'HS256',
+      issuer: 'cloraai',
+      audience: 'cloraai-users'
+    }
+  );
+}
+
+/**
  * Generate a pair of tokens (Access + Refresh).
  */
 function generateTokens(userId, tokenVersion = 0) {
