@@ -114,18 +114,23 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        const metrics = ['impressions', 'reach', 'profile_views', 'follower_count'];
+        const metrics = ['views', 'reach', 'content_views', 'profile_views', 'follower_count', 'accounts_engaged'];
         let combinedInsights = {};
 
         await Promise.all(metrics.map(async (metric) => {
             try {
-                const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, {
-                    params: {
-                        metric,
-                        period,
-                        access_token: accessToken
-                    }
-                });
+                let params = {
+                    metric,
+                    period,
+                    access_token: accessToken
+                };
+
+                // Specific parameter required for profile_views according to error logs
+                if (metric === 'profile_views') {
+                    params.metric_type = 'total_value';
+                }
+
+                const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, { params });
 
                 if (response.data?.data?.[0]?.values) {
                     const values = response.data.data[0].values;
@@ -135,7 +140,10 @@ class InstagramService {
                 }
             } catch (error) {
                 const errorMsg = error.response?.data?.error?.message || error.message;
-                console.log(`[INSTAGRAM_SERVICE] Account Insight Failed: ${metric} (${period}) - ${errorMsg}`);
+                // Log granularly to identify which metrics are actually supported
+                if (!errorMsg.includes('must be one of')) {
+                    console.log(`[INSTAGRAM_SERVICE] Account Insight Failed: ${metric} (${period}) - ${errorMsg}`);
+                }
             }
         }));
 
@@ -172,17 +180,17 @@ class InstagramService {
         }
     }
 
-    // Fetch video_views, plays, or play_count for a single VIDEO/REEL media item directly
+    // Fetch video_views, plays, views or play_count for a single VIDEO/REEL media item directly
     async getVideoViewCount(mediaId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${mediaId}`, {
                 params: {
-                    fields: 'id,video_views,plays,play_count',
+                    fields: 'id,video_views,plays,play_count,views',
                     access_token: accessToken
                 }
             });
             const data = response.data;
-            const views = data.play_count || data.plays || data.video_views || 0;
+            const views = data.play_count || data.plays || data.views || data.video_views || 0;
             if (views > 0) console.log(`[INSTAGRAM_SERVICE] Direct View Count for ${mediaId}: ${views}`);
             return views;
         } catch (error) {
@@ -194,8 +202,8 @@ class InstagramService {
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
         const metrics = (mediaType === 'VIDEO' || mediaType === 'REELS')
-            ? ['impressions', 'reach', 'engagement', 'video_views', 'plays', 'clips_replays_count', 'total_interactions']
-            : ['impressions', 'reach', 'engagement', 'total_interactions'];
+            ? ['views', 'plays', 'reach', 'impressions', 'video_views', 'clips_replays_count', 'total_interactions']
+            : ['impressions', 'reach', 'total_interactions'];
 
         let combinedInsights = {};
 
@@ -216,7 +224,7 @@ class InstagramService {
                     }
                 }
             } catch (error) {
-                // Silently skip if metric is not supported for this specific media item
+                // Silently skip
             }
         }));
         

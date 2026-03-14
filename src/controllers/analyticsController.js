@@ -68,10 +68,14 @@ const getDashboard = async (req, res) => {
         );
 
         totalImpressions = Math.max(
-          accountInsights.impressions || 0,
-          accountInsights30d.impressions || 0,
+          accountInsights.views || 0,
+          accountInsights30d.views || 0,
+          accountInsights.content_views || 0,
+          accountInsights30d.content_views || 0,
           accountInsights.reach || 0,
-          accountInsights30d.reach || 0
+          accountInsights30d.reach || 0,
+          accountInsights.impressions || 0, // Fallback if supported
+          accountInsights30d.impressions || 0
         );
         totalReach = Math.max(accountInsights.reach || 0, accountInsights30d.reach || 0);
 
@@ -80,7 +84,7 @@ const getDashboard = async (req, res) => {
         if (media && media.length > 0) {
           const topMedia = media.slice(0, 30);
 
-          // Fetch video_views independently (direct field) and insights (plays/replays)
+          // Fetch video_views independently (direct field) and insights (plays/replays/views)
           const videoItems = topMedia.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS');
           const videoViewCounts = await Promise.all(
             videoItems.map(m => instagramService.getVideoViewCount(m.id, account.instagramAccessToken))
@@ -89,14 +93,14 @@ const getDashboard = async (req, res) => {
 
           const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           
-          const mediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
+          const mediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0) + (ins.views || 0), 0);
           const mediaPlays = insights.reduce((sum, ins) => sum + (ins.plays || 0) + (ins.clips_replays_count || 0), 0);
           const mediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
           const mediaEngagement = insights.reduce((sum, ins) => sum + (ins.engagement || 0) + (ins.total_interactions || 0), 0);
           
           console.log('[ANALYTICS] Final Source Breakdown:', {
-            accountDay: accountInsights.impressions,
-            account28d: accountInsights30d.impressions,
+            accountDay: accountInsights.views || accountInsights.impressions,
+            account28d: accountInsights30d.views || accountInsights30d.impressions,
             mediaImpressions,
             mediaPlays,
             mediaReach,
@@ -458,6 +462,7 @@ const debugViews = async (req, res) => {
         type: m.media_type, 
         direct_video_views: directViews,
         plays: insights.plays || 0,
+        views: insights.views || 0,
         replays: insights.clips_replays_count || 0,
         impressions: insights.impressions || 0,
         reach: insights.reach || 0,
