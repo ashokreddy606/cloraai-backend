@@ -134,6 +134,37 @@ class InstagramService {
     }
 
     /**
+     * Get account-level insights (impressions, reach)
+     * @param {string} igUserId 
+     * @param {string} accessToken 
+     * @param {string} period - day, week, days_28, month
+     */
+    async getAccountInsights(igUserId, accessToken, period = 'day') {
+        try {
+            const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/insights`, {
+                params: {
+                    metric: 'impressions,reach',
+                    period: period,
+                    access_token: accessToken
+                }
+            });
+            
+            const insights = {};
+            if (response.data && response.data.data) {
+                response.data.data.forEach(item => {
+                    if (item.values && item.values.length > 0) {
+                        insights[item.name] = item.values[0].value;
+                    }
+                });
+            }
+            return insights;
+        } catch (error) {
+            logger.warn('INSTAGRAM_SERVICE', `Could not fetch account insights for ${igUserId}`, { error: error.response?.data || error.message });
+            return { impressions: 0, reach: 0 };
+        }
+    }
+
+    /**
      * Get Instagram Profile Data
      */
     async getInstagramProfileData(igUserId, accessToken) {

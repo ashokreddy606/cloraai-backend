@@ -18,7 +18,7 @@ const initiateAuth = (req, res) => {
   try {
     const APP_ID = process.env.INSTAGRAM_APP_ID;
     const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
-    const scope = 'instagram_basic,pages_show_list,pages_read_engagement,instagram_manage_messages,instagram_manage_comments,business_management';
+    const scope = 'instagram_basic,pages_show_list,pages_read_engagement,instagram_manage_insights,instagram_manage_messages,instagram_manage_comments,business_management';
 
     // Use state for CSRF protection and to pass userId
     const state = Buffer.from(JSON.stringify({ userId: req.userId })).toString('base64');

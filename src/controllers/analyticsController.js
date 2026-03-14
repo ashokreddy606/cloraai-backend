@@ -53,15 +53,25 @@ const getDashboard = async (req, res) => {
       try {
         const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
 
-        // Fetch reach/impressions from media for a "live" view
-        const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+        // Try getting account-level insights first (more reliable for total views)
+        const accountInsights = await instagramService.getAccountInsights(
+          account.instagramId, 
+          account.pageAccessToken || account.instagramAccessToken,
+          'day'
+        );
 
-        if (media && media.length > 0) {
-          // Increase coverage to top 30 media items for more accurate "Total Views"
-          const topMedia = media.slice(0, 30); 
-          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
-          totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
-          totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
+        totalImpressions = accountInsights.impressions || 0;
+        totalReach = accountInsights.reach || 0;
+
+        // If account-level insights are zero, fallback to media aggregation
+        if (totalImpressions === 0) {
+          const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+          if (media && media.length > 0) {
+            const topMedia = media.slice(0, 30); 
+            const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
+            totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
+            totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
+          }
         }
 
         // Create or Update snapshot
