@@ -144,26 +144,25 @@ async function processUser(user) {
                 try {
                     const authorChannelId = topLevelComment.snippet?.authorChannelId?.value;
                     if (authorChannelId) {
-                        const subRes = await youtube.subscriptions.list({
-                            part: 'id',
-                            mine: true,
-                            forChannelId: authorChannelId
-                        });
-                        
-                        const isSubscribed = (subRes.data.items || []).length > 0;
-                        if (!isSubscribed) {
-                            logger.info('YOUTUBE_WORKER', `User ${authorChannelId} is not subscribed. Skipping reply for rule ${matchedRule.keyword}`);
+                        try {
+                            const subRes = await youtube.subscriptions.list({
+                                part: 'snippet',
+                                channelId: authorChannelId, // Check the commenter's subscriptions
+                                forChannelId: user.youtubeChannelId // To see if they follow the creator
+                            });
+                            
+                            const isSubscribed = (subRes.data.items || []).length > 0;
+                            if (!isSubscribed) {
+                                logger.info('YOUTUBE_WORKER', `User ${authorChannelId} is not subscribed (or subscriptions are private). Skipping reply for rule ${matchedRule.keyword}`);
+                                finalShouldReply = false;
+                            }
+                        } catch (apiError) {
+                            // If user's subscriptions are private, API returns 403 or empty. 
+                            // We treat private/error as not verified.
+                            logger.warn('YOUTUBE_WORKER', `Could not verify subscription for ${authorChannelId} (likely private)`, { error: apiError.message });
                             finalShouldReply = false;
                         }
                     } else {
-                        logger.warn('YOUTUBE_WORKER', `Could not find authorChannelId for comment ${commentId}. Skipping potentially restricted reply.`);
-                        finalShouldReply = false;
-                    }
-                } catch (subError) {
-                    logger.error('YOUTUBE_WORKER', 'Error checking subscription status', { error: subError.message });
-                    // Default to false if we can't verify and rule is subscriberOnly
-                    finalShouldReply = false;
-                }
             }
 
             // Save comment
