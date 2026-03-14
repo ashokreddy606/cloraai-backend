@@ -269,10 +269,8 @@ async function cancelSubscription(req, res) {
       });
     }
 
-    // Cancel with Razorpay at cycle end (cancelAtCycleEnd = true → graceful)
-    await rzpCancelSubscription(user.activeRazorpaySubscriptionId, true);
-
-    // Update local DB status
+    // For Google Play Billing, cancellation is handled via Play Store UI.
+    // We just mark the local state if the user expresses intent.
     await prisma.user.update({
       where: { id: req.userId },
       data: { subscriptionStatus: 'CANCELLED' },

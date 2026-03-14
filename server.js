@@ -66,7 +66,7 @@ const adminPlanRoutes = require('./src/routes/adminPlan');
 const userRoutes = require('./src/routes/user');
 const calendarRoutes = require('./src/routes/calendar');
 const notificationRoutes = require('./src/routes/notification');
-const webhookRoutes = require('./src/routes/webhook');
+// Webhook routes removed (Razorpay cleanup)
 const youtubeRoutes = require('./src/routes/youtube');
 const uploadRoutes = require('./src/routes/upload');
 
@@ -340,10 +340,7 @@ app.use('/api/v1/youtube', youtubeRoutes);
 app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/upload', uploadRoutes);
-// Webhooks must remain at non-versioned paths because external services (Razorpay, Instagram)
-// send to fixed URLs that we cannot change after configuration.
-app.use('/api/webhook', webhookRoutes);
-app.use('/webhook', webhookRoutes); // Root level access for Meta verification
+// Webhook routes removed (Razorpay cleanup)
 console.log('YouTube routes mounted at /api/v1/youtube');
 
 // 404 handler (must come before error middleware)
