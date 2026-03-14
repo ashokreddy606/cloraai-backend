@@ -175,9 +175,22 @@ class InstagramService {
     }
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
+        // Expanded metric sets to handle different account types and media restrictions
         const metricSets = (mediaType === 'VIDEO')
-            ? ['reach,saved,plays', 'reach,plays', 'reach,video_views', 'reach,impressions', 'reach,engagement', 'reach']
-            : ['reach,impressions,saved', 'reach,impressions', 'reach,engagement', 'reach'];
+            ? [
+                'reach,saved,plays', 
+                'reach,plays', 
+                'reach,video_views', 
+                'reach,impressions', 
+                'reach,engagement', 
+                'reach'
+            ]
+            : [
+                'reach,impressions,saved', 
+                'reach,impressions', 
+                'reach,engagement', 
+                'reach'
+            ];
 
         for (const metrics of metricSets) {
             try {
@@ -197,25 +210,39 @@ class InstagramService {
                     });
                 }
 
-                if (insights.plays !== undefined) insights.impressions = insights.plays;
-                else if (insights.video_views !== undefined) insights.impressions = insights.video_views;
+                // Normalizing impressions across different video view metrics
+                if (insights.plays !== undefined) insights.impressions = (insights.impressions || 0) + insights.plays;
+                else if (insights.video_views !== undefined) insights.impressions = (insights.impressions || 0) + insights.video_views;
 
-                if (insights.reach === undefined) insights.reach = 0;
-                if (insights.impressions === undefined) insights.impressions = 0;
+                // Ensure reach and impressions are numbers
+                insights.reach = insights.reach || 0;
+                insights.impressions = insights.impressions || 0;
 
                 return insights;
             } catch (error) {
-                const errorData = error.response?.data?.error?.message || error.message;
+                const errorData = error.response?.data?.error;
+                const errorMsg = errorData?.message || error.message;
+                const errorCode = errorData?.code;
+                const errorSubcode = errorData?.error_subcode;
+
+                // Log detailed error for the last attempt
                 if (metrics === metricSets[metricSets.length - 1]) {
                     logger.warn('INSTAGRAM_SERVICE', `All insight fallbacks failed for ${mediaId}`, {
                         mediaType,
-                        error: errorData
+                        error: errorMsg,
+                        code: errorCode,
+                        subcode: errorSubcode
                     });
                 } else {
-                    logger.debug('INSTAGRAM_SERVICE', `Metric set [${metrics}] failed for ${mediaId}, trying next...`);
+                    logger.debug('INSTAGRAM_SERVICE', `Metric set [${metrics}] failed for ${mediaId}, trying next...`, { 
+                        code: errorCode, 
+                        subcode: errorSubcode 
+                    });
                 }
             }
         }
+        
+        // Final fallback: Try to at least get reach/impressions if possible or return 0
         return { reach: 0, impressions: 0 };
     }
 }

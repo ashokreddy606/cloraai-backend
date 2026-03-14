@@ -51,7 +51,7 @@ const performDailySnapshots = async () => {
                         reach: totalReach,
                         impressions: totalImpressions
                     },
-                    { upsert: true, new: true }
+                    { upsert: true, returnDocument: 'after' }
                 );
 
                 logger.info('WORKER', `Snapshot saved for user ${account.userId}`);

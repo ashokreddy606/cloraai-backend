@@ -70,7 +70,7 @@ const handleOAuthCallback = async (req, res) => {
     await InstagramAccount.findOneAndUpdate(
       { userId },
       accountData,
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     logger.info('INSTAGRAM', `Instagram Connected for user ${userId}`);
