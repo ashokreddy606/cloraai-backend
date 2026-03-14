@@ -125,8 +125,8 @@ class InstagramService {
                     access_token: accessToken
                 };
 
-                // Specific parameter required for profile_views according to error logs
-                if (metric === 'profile_views') {
+                // Specific parameter required for many metrics according to error logs
+                if (['profile_views', 'views', 'content_views', 'accounts_engaged'].includes(metric)) {
                     params.metric_type = 'total_value';
                 }
 
