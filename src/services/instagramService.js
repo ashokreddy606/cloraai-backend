@@ -203,6 +203,9 @@ class InstagramService {
             // Normalize: Map 'plays' to 'impressions' for Reels to maintain dashboard compatibility
             if (mediaType === 'VIDEO' && insights.plays !== undefined) {
                 insights.impressions = insights.plays;
+                logger.info('INSTAGRAM_SERVICE', `Reel ${mediaId} plays: ${insights.plays}`);
+            } else if (mediaType === 'VIDEO') {
+                logger.warn('INSTAGRAM_SERVICE', `Reel ${mediaId} missing 'plays' metric`, { insights });
             }
 
             return insights;

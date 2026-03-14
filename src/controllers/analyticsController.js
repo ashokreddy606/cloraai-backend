@@ -40,6 +40,8 @@ const getDashboard = async (req, res) => {
     let latestSnapshot = await InstagramAnalytics.findOne({ userId: req.userId }).sort({ date: -1 });
 
     // Auto-refresh impressions if snapshot is older than 1 hour for "real-time" feel
+    // OR if forceRefresh is requested by user
+    const forceRefresh = req.query.forceRefresh === 'true';
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
@@ -47,20 +49,22 @@ const getDashboard = async (req, res) => {
     let totalImpressions = 0;
     let totalReach = 0;
 
-    if (!latestSnapshot || latestSnapshot.date < oneHourAgo) {
+    if (!latestSnapshot || latestSnapshot.date < oneHourAgo || forceRefresh) {
       try {
         const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
 
-        // Fetch reach/impressions from top media for a "live" view if possible
+        // Fetch reach/impressions from media for a "live" view
         const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
 
         if (media && media.length > 0) {
-          const topMedia = media.slice(0, 20); // Increased from 5 to 20 for better coverage
+          // Increase coverage to top 30 media items for more accurate "Total Views"
+          const topMedia = media.slice(0, 30); 
           const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           totalImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
           totalReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
         }
 
+        // Create or Update snapshot
         latestSnapshot = await InstagramAnalytics.create({
           userId: req.userId,
           followers: stats.followers_count || 0,
@@ -71,7 +75,7 @@ const getDashboard = async (req, res) => {
           date: new Date()
         });
       } catch (e) {
-        console.warn('Daily snapshot creation failed:', e.message);
+        console.warn('Snapshot refresh failed:', e.message);
       }
     }
 

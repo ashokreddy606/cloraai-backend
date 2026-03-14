@@ -102,11 +102,14 @@ const cacheRoute = (ttlSeconds, keyPrefix = 'route') => {
 
         const userId = req.userId || 'guest';
         const key = `${keyPrefix}:${userId}:${req.originalUrl || req.url}`;
+        const forceRefresh = req.query.forceRefresh === 'true';
 
         try {
-            const cachedData = await cache.get(key);
-            if (cachedData) {
-                return res.json(cachedData);
+            if (!forceRefresh) {
+                const cachedData = await cache.get(key);
+                if (cachedData) {
+                    return res.json(cachedData);
+                }
             }
 
             const originalJson = res.json.bind(res);
