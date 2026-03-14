@@ -191,9 +191,9 @@ model PaymentHistory {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   razorpaySubscriptionId String? // Razorpay sub_xxx id
-  razorpayPaymentId      String? @unique // Razorpay pay_xxx id
+  razorpayPaymentId      String? // Razorpay pay_xxx id
   razorpayOrderId        String? // Razorpay order_xxx id
-  transactionId          String? @unique // Generic transaction/token ID for others (e.g. G-Play)
+  transactionId          String? // Generic transaction/token ID for others (e.g. G-Play)
 
   amount   Int // amount in paise (₹199 = 19900)
   currency String @default("INR")
@@ -517,7 +517,7 @@ model YoutubeAutomationRule {
   channelId    String? // Link to specific YouTube channel
   
   videoId      String? // Optional: If a rule is bound to a specific video
-  subscriberOnly Boolean @default(false)
+  onlySubscribers Boolean @default(false)
   appendLinks  Boolean @default(false)
   link1        String?
   link2        String?

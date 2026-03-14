@@ -13,8 +13,8 @@ const getOAuth2Client = () => {
     );
 };
 
-// Worker runs every 2 minutes
-cron.schedule('*/2 * * * *', async () => {
+// Worker runs every 1 minute
+cron.schedule('* * * * *', async () => {
     const { appConfig } = require('../config');
     if (!appConfig.featureFlags.youtubeAutomationEnabled) {
         logger.debug('YOUTUBE_WORKER', 'YouTube Automation is globally disabled. Skipping.');
@@ -128,46 +128,47 @@ async function processUser(user) {
                 where: { commentId }
             });
 
-            if (existingRecord) continue;
+            if (existingRecord) {
+                logger.debug('YOUTUBE_WORKER', `Comment already processed: ${commentId}. Skipping.`);
+                continue;
+            }
 
+            // 2. Keyword Matching
             let matchedRule = user.youtubeRules.find(r => r.videoId === videoId && textDisplay.includes(r.keyword.toLowerCase()));
-
             if (!matchedRule) {
                 matchedRule = user.youtubeRules.find(r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase()));
             }
 
-            const shouldReply = !!matchedRule;
-            let finalShouldReply = shouldReply;
+            if (!matchedRule) {
+                continue; // Ignore the comment if no keyword match
+            }
 
-            // If matched a rule that requires subscriber status, check it
-            if (shouldReply && matchedRule.subscriberOnly) {
-                try {
-                    const authorChannelId = topLevelComment.snippet?.authorChannelId?.value;
-                    if (authorChannelId) {
-                        try {
-                            const subRes = await youtube.subscriptions.list({
-                                part: 'snippet',
-                                channelId: authorChannelId, // Check the commenter's subscriptions
-                                forChannelId: user.youtubeChannelId // To see if they follow the creator
-                            });
-                            
-                            const isSubscribed = (subRes.data.items || []).length > 0;
-                            if (!isSubscribed) {
-                                logger.info('YOUTUBE_WORKER', `User ${authorChannelId} is not subscribed (or subscriptions are private). Skipping reply for rule ${matchedRule.keyword}`);
-                                finalShouldReply = false;
-                            }
-                        } catch (apiError) {
-                            // If user's subscriptions are private, API returns 403 or empty. 
-                            // We treat private/error as not verified.
-                            logger.warn('YOUTUBE_WORKER', `Could not verify subscription for ${authorChannelId} (likely private)`, { error: apiError.message });
+            logger.info('YOUTUBE_WORKER', `Keyword match: "${matchedRule.keyword}" in comment ${commentId}`);
+
+            const authorChannelId = topLevelComment.snippet?.authorChannelId?.value;
+            let finalShouldReply = true;
+
+            // 4. Check onlySubscribers toggle
+            if (matchedRule.onlySubscribers) {
+                if (authorChannelId) {
+                    try {
+                        const subRes = await youtube.subscriptions.list({
+                            part: 'snippet',
+                            channelId: authorChannelId, 
+                            forChannelId: user.youtubeChannelId 
+                        });
+                        
+                        const isSubscribed = (subRes.data.items || []).length > 0;
+                        if (!isSubscribed) {
+                            logger.info('YOUTUBE_WORKER', `User skipped: Author ${authorChannelId} is not subscribed to channel ${user.youtubeChannelId}. Skipping reply.`);
                             finalShouldReply = false;
                         }
-                    } else {
-                        logger.warn('YOUTUBE_WORKER', `Missing authorChannelId for comment ${commentId}. Skipping verified-only reply.`);
+                    } catch (apiError) {
+                        logger.warn('YOUTUBE_WORKER', `User skipped: Could not verify subscription for ${authorChannelId} (likely private)`, { error: apiError.message });
                         finalShouldReply = false;
                     }
-                } catch (checkError) {
-                    logger.error('YOUTUBE_WORKER', `Subscription check failed for ${commentId}`, { error: checkError.message });
+                } else {
+                    logger.warn('YOUTUBE_WORKER', `Missing authorChannelId for comment ${commentId}. Skipping.`);
                     finalShouldReply = false;
                 }
             }
@@ -186,7 +187,7 @@ async function processUser(user) {
             });
 
             if (!finalShouldReply) {
-                if (shouldReply && matchedRule.subscriberOnly) {
+                if (matchedRule.onlySubscribers) {
                     logger.debug('YOUTUBE_WORKER', `Comment ${commentId} skipped because user is not a subscriber`);
                 } else {
                     logger.debug('YOUTUBE_WORKER', `Comment ${commentId} did not match any rules`);
