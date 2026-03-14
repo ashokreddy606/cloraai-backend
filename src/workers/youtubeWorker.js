@@ -136,7 +136,7 @@ async function processUser(user) {
                 matchedRule = user.youtubeRules.find(r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase()));
             }
 
-            const shouldReply = matchedRule !== null;
+            const shouldReply = !!matchedRule;
             let finalShouldReply = shouldReply;
 
             // If matched a rule that requires subscriber status, check it
