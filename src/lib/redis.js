@@ -6,7 +6,7 @@ let redis;
 
 if (redisUrl && process.env.NODE_ENV !== 'test') {
   redis = new Redis(redisUrl, {
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: null, // Required for BullMQ
     retryStrategy: (times) => Math.min(times * 50, 2000),
     reconnectOnError: (err) => {
       const targetError = 'READONLY';

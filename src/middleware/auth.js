@@ -16,14 +16,8 @@ const logger = require('../utils/logger');
 
 // ─── Redis Setup for Rate Limiting ───────────────────────────────────────────
 const redisClient = require('../lib/redis');
-let store;
-
-if (redisClient) {
-  store = new RedisStore({
-    sendCommand: (...args) => redisClient.call(...args),
-  });
-  logger.info('AUTH', 'Redis rate-limit store initialized.');
-}
+// We no longer create a single global store because express-rate-limit 7.x
+// requires a unique store instance per rate limiter to prevent state leak.
 
 // ... 1. Authentication Middleware ...
 const authenticate = async (req, res, next) => {
@@ -94,12 +88,17 @@ const rateLimit = (max = 200, windowMinutes = 15, keyGenerator = undefined) => {
     return (req, res, next) => next();
   }
 
+  const store = redisClient ? new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+    prefix: `rl:${keyGenerator ? 'custom' : 'ip'}:${windowMinutes}m:`,
+  }) : undefined;
+
   return expressRateLimit({
     windowMs: windowMinutes * 60 * 1000,
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    store: store, // Use Redis if available
+    store, // Each limiter now gets its own store instance
     keyGenerator: keyGenerator || ((req) => req.ip || req.headers['x-forwarded-for'] || '127.0.0.1'),
     message: {
       error: "Too many requests. Please try again later."
