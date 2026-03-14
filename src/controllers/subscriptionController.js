@@ -10,7 +10,7 @@
 
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
-const { createSubscription, cancelSubscription: rzpCancelSubscription } = require('../services/razorpayService');
+const googlePlayService = require('../services/googlePlayService');
 const { cache } = require('../utils/cache');
 
 // ─── Helper: compute days remaining ──────────────────────────────────────────
@@ -21,257 +21,7 @@ const getDaysRemaining = (planEndDate, plan) => {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 };
 
-// ─── 1. CREATE RAZORPAY SUBSCRIPTION ORDER ───────────────────────────────────
-/**
- * POST /api/subscription/create-order
- * Authenticated. Returns a Razorpay subscription_id that the RN app
- * passes to Razorpay's checkout SDK.
- *
- * Body: { planId? } — if omitted, uses env RAZORPAY_PLAN_ID
- */
-const createOrder = async (req, res) => {
-  try {
-    // Support planType from frontend ('monthly'|'yearly') or a direct planId
-    const { planType, planId: directPlanId } = req.body;
-
-    let planId;
-    if (directPlanId) {
-      planId = directPlanId;
-    } else if (planType === 'yearly') {
-      planId = process.env.RAZORPAY_PLAN_ID_YEARLY || process.env.RAZORPAY_PLAN_ID;
-    } else {
-      // Default: monthly
-      planId = process.env.RAZORPAY_PLAN_ID;
-    }
-
-    const totalCount = planType === 'yearly' ? 12 : 12; // 12 billing cycles for both (monthly=12 months, yearly=12 years max)
-
-    if (!planId) {
-      console.warn(`[Subscription] createOrder: Missing plan ID for planType=${planType}. Check RAZORPAY_PLAN_ID in .env`);
-      return res.status(400).json({
-        error: 'Missing plan ID',
-        message: 'Razorpay Plan ID is required. Please contact support.',
-      });
-    }
-
-    // Check user exists
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId },
-      select: {
-        id: true, email: true, username: true,
-        plan: true, subscriptionStatus: true, planEndDate: true,
-        activeRazorpaySubscriptionId: true, updatedAt: true,
-        role: true
-      },
-    });
-
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    if (user.plan === 'LIFETIME') {
-      return res.status(400).json({
-        error: 'Already on Lifetime plan',
-        message: 'You are on the Lifetime plan and cannot subscribe again.',
-      });
-    }
-
-    const isAdmin = user.role === 'ADMIN' || user.role === 'SUPER_ADMIN';
-
-    if (
-      user.plan === 'PRO' &&
-      user.subscriptionStatus === 'ACTIVE' &&
-      user.planEndDate &&
-      new Date(user.planEndDate) > new Date() &&
-      !isAdmin
-    ) {
-      console.warn(`[Subscription] createOrder: Double billing guard hit for user ${user.id}`);
-      return res.status(400).json({
-        error: 'Already on active PRO plan',
-        message: 'Your PRO subscription is already active. You cannot start a new one while it is still running.',
-      });
-    }
-
-    // ── PHASE 4 FIX: Prevent concurrent subscription entry ──────────────────
-    // If a user has an 'active' Razorpay subscription ID logged but is not yet 
-    // ACTIVE, and it was updated in the last 15 minutes, block a new creation.
-    // This prevents "Double Click" or "Rapid Retry" from creating 5+ sub IDs.
-    const FIFTEEN_MINUTES = 15 * 60 * 1000;
-    if (
-      user.activeRazorpaySubscriptionId &&
-      user.subscriptionStatus !== 'ACTIVE' &&
-      (new Date() - new Date(user.updatedAt)) < FIFTEEN_MINUTES
-    ) {
-      return res.status(200).json({
-        success: true,
-        data: {
-          subscriptionId: user.activeRazorpaySubscriptionId,
-          keyId: process.env.RAZORPAY_KEY_ID,
-          prefill: { email: user.email, name: user.username },
-          isContinuing: true // Signal to frontend that this is a resume
-        },
-      });
-    }
-
-    const subscription = await createSubscription(planId, totalCount, {
-      userId: user.id,
-      email: user.email,
-      planType: planType || 'monthly',
-    });
-
-    // ── FIX: Early link — store sub ID on User for webhook independence ───
-    // Webhook can now look up userId via User.activeRazorpaySubscriptionId
-    // even if /verify is never called (frontend crash, page refresh, etc.)
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { activeRazorpaySubscriptionId: subscription.id },
-    });
-
-    console.log(`[Subscription] createOrder: User ${user.id} linked to sub ${subscription.id}`);
-
-    return res.status(200).json({
-      success: true,
-      data: {
-        subscriptionId: subscription.id,
-        keyId: process.env.RAZORPAY_KEY_ID,
-        prefill: {
-          email: user.email,
-          name: user.username,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('[Subscription] createOrder error details:', {
-      message: error.message,
-      description: error.description,
-      code: error.code,
-      stack: error.stack
-    });
-    const errorMsg = error.description || error.message || 'Failed to create subscription order';
-    return res.status(500).json({
-      error: 'Internal Server Error',
-      message: errorMsg
-    });
-  }
-};
-
-// ─── 2. VERIFY PAYMENT & ACTIVATE PLAN ───────────────────────────────────────
-/**
- * POST /api/subscription/verify
- * Authenticated. Called by RN app after Razorpay checkout completes.
- * Body: { razorpay_payment_id, razorpay_subscription_id, razorpay_signature }
- */
-const verifyPayment = async (req, res) => {
-  const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
-  const userId = req.userId;
-
-  if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
-    return res.status(400).json({
-      error: 'Missing payment details',
-      message: 'razorpay_payment_id, razorpay_subscription_id and razorpay_signature are all required',
-    });
-  }
-
-  const secret = process.env.RAZORPAY_KEY_SECRET;
-  if (!secret) {
-    console.error('[CRITICAL] RAZORPAY_KEY_SECRET is missing');
-    return res.status(500).json({ error: 'Payment configuration error' });
-  }
-
-  // Verify HMAC-SHA256 signature (critical security step)
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
-    .digest('hex');
-
-  if (expectedSignature !== razorpay_signature) {
-    console.warn(`[Security] Invalid Razorpay signature from user ${userId}`);
-    return res.status(403).json({
-      error: 'Payment verification failed',
-      message: 'Invalid payment signature. Do not retry — contact support.',
-    });
-  }
-
-  // ── FIX: Race condition — webhook is sole source of truth ─────────────────
-  // /verify now only provides fast UI confirmation (PAYMENT_PENDING), NOT activation.
-  // The webhook subscription.charged handler is the only code that sets plan=PRO + status=ACTIVE.
-  // This eliminates the parallel upsert race between /verify and the webhook entirely.
-
-  try {
-    // ── Idempotency: Return early if already processed by webhook ──────────
-    const existingPayment = await prisma.paymentHistory.findUnique({
-      where: { razorpayPaymentId: razorpay_payment_id },
-    });
-
-    if (existingPayment && existingPayment.status === 'SUCCESS') {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { plan: true, subscriptionStatus: true, planEndDate: true, planSource: true },
-      });
-      return res.status(200).json({
-        success: true,
-        message: 'Payment already verified. Plan is active.',
-        data: {
-          plan: user.plan,
-          subscriptionStatus: user.subscriptionStatus,
-          planSource: user.planSource,
-          planEndDate: user.planEndDate?.toISOString(),
-          daysRemaining: getDaysRemaining(user.planEndDate, user.plan),
-        },
-      });
-    }
-
-    // Mark as PAYMENT_PENDING — signals to the app that payment was submitted.
-    // The webhook will promote this to ACTIVE with the correct planEndDate.
-    // Use upsert so a retried /verify call post-webhook doesn't create a duplicate.
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: userId },
-        data: {
-          plan: 'PRO',
-          subscriptionStatus: 'ACTIVE',   // Optimistic: webhook will write same value
-          planSource: 'RAZORPAY',
-          planStartDate: new Date(),
-          manuallyUpgraded: false,
-          // planEndDate intentionally NOT set — webhook sets the authoritative value
-        },
-      }),
-      prisma.paymentHistory.upsert({
-        where: { razorpayPaymentId: razorpay_payment_id },
-        update: {}, // No-op if webhook already wrote it
-        create: {
-          userId,
-          razorpaySubscriptionId: razorpay_subscription_id,
-          razorpayPaymentId: razorpay_payment_id,
-          // Derive amount from appConfig instead of hardcoding 19900
-          amount: req.body.planType === 'yearly'
-            ? (require('../config').appConfig.yearlyPrice * 100)
-            : (require('../config').appConfig.subscriptionPrice * 100),
-          currency: 'INR',
-          status: 'SUCCESS',
-          planName: req.body.planType === 'yearly' ? 'PRO_YEARLY' : 'PRO_MONTHLY',
-          startDate: new Date(),
-          // endDate left null — webhook corrects it to exact Razorpay billing end
-        },
-      }),
-    ]);
-
-    console.log(`[Subscription] User ${userId} payment confirmed via /verify — waiting for webhook to set planEndDate`);
-    await cache.clearUserCache(userId);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Payment verified. Your Pro plan is activating — please wait a moment! 🎉',
-      data: {
-        plan: 'PRO',
-        subscriptionStatus: 'ACTIVE',
-        planSource: 'RAZORPAY',
-        // Do not return a fake planEndDate — webhook will push the real one
-      },
-    });
-  } catch (error) {
-    console.error('[Subscription] verifyPayment DB error:', error.message);
-    return res.status(500).json({ error: 'Failed to activate subscription' });
-  }
-};
+// Razorpay logic removed - Google Play Billing is now the primary monetization system.
 
 // ─── 3. GET SUBSCRIPTION STATUS ──────────────────────────────────────────────
 /**
@@ -331,131 +81,105 @@ const getStatus = async (req, res) => {
   }
 };
 
-const renderCheckout = async (req, res) => {
-  const { subscriptionId } = req.params;
-  const keyId = process.env.RAZORPAY_KEY_ID;
+// Razorpay checkout rendering removed.
 
-  if (!subscriptionId) return res.status(400).send('Subscription ID is required');
+const verifyGooglePlayPurchase = async (req, res) => {
+  const { purchaseToken, productId, packageName } = req.body;
+  const userId = req.userId;
 
-  const html = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>CloraAI Checkout</title>
-        <style>
-          body { 
-            background: #0A0A0F; 
-            color: white; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            padding: 20px;
-          }
-          .loader {
-            border: 3px solid #1A1A28;
-            border-top: 3px solid #38BDF8;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-          }
-          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-          h2 { font-weight: 700; margin-bottom: 8px; text-align: center; }
-          p { color: #9CA3AF; font-size: 14px; text-align: center; max-width: 80%; line-height: 1.5; }
-          .error-box {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid #EF4444;
-            color: #FCA5A5;
-            padding: 15px;
-            border-radius: 12px;
-            margin-top: 20px;
-            display: none;
-            width: 100%;
-            max-width: 300px;
-          }
-          .retry-btn {
-            margin-top: 20px;
-            padding: 12px 24px;
-            background: #38BDF8;
-            border: none;
-            border-radius: 10px;
-            color: white;
-            font-weight: 700;
-            cursor: pointer;
-          }
-        </style>
-      </head>
-      <body>
-        <div id="content">
-            <div class="loader"></div>
-            <h2>Opening Secure Checkout...</h2>
-            <p>Please complete your payment in the Razorpay window. Your Pro features will activate automatically.</p>
-        </div>
-        <div id="errorBox" class="error-box"></div>
+  if (!purchaseToken || !productId) {
+    return res.status(400).json({ error: 'Missing purchaseToken or productId' });
+  }
 
-        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-        <script>
-          window.onerror = function(message, source, lineno, colno, error) {
-            showError("JS Error: " + message);
-            return true;
-          };
+  try {
+    // ── Idempotency Check ──
+    const existingPayment = await prisma.paymentHistory.findUnique({
+      where: { transactionId: purchaseToken },
+    });
 
-          function showError(msg) {
-            console.error(msg);
-            const errorBox = document.getElementById('errorBox');
-            errorBox.innerText = msg;
-            errorBox.style.display = 'block';
-            document.getElementById('content').style.display = 'none';
-          }
+    if (existingPayment && existingPayment.status === 'SUCCESS') {
+      return res.status(200).json({ success: true, message: 'Purchase already processed' });
+    }
 
-          const keyId = "${keyId || ''}";
-          const subId = "${subscriptionId || ''}";
+    const isSubscription = productId.includes('pro');
+    let verificationResult;
 
-          if (!keyId || keyId === "undefined" || keyId === "null") {
-            showError("Missing Razorpay Key ID. Please check backend config.");
-          } else if (!subId) {
-            showError("Missing Subscription ID.");
-          } else {
-            try {
-              const options = {
-                key: keyId,
-                subscription_id: subId,
-                name: "CloraAI",
-                description: "Pro Subscription",
-                image: "https://cloraai.com/logo.png",
-                theme: { color: "#38BDF8" },
-                handler: function (response) {
-                  document.body.innerHTML = '<h2>🎉 Payment Successful!</h2><p>Your subscription is being activated. You can now close this window and return to the app.</p><button onclick="window.close()" class="retry-btn">Return to App</button>';
-                },
-                modal: {
-                    ondismiss: function() {
-                        document.body.innerHTML = '<h2>Payment Cancelled</h2><p>The payment process was not completed.</p><button onclick="window.location.reload()" class="retry-btn">Retry Payment</button>';
-                    }
-                }
-              };
-              const rzp = new Razorpay(options);
-              rzp.on('payment.failed', function (response){
-                  showError("Payment Failed: " + (response.error.description || "Unknown error"));
-              });
-              rzp.open();
-            } catch (e) {
-              showError("Failed to open Razorpay: " + e.message);
+    if (isSubscription) {
+      verificationResult = await googlePlayService.verifySubscription(packageName || 'com.cloraai.app', productId, purchaseToken);
+      
+      if (verificationResult.success && verificationResult.active) {
+        // Update user to PRO
+        const expiryDate = new Date(parseInt(verificationResult.data.expiryTimeMillis));
+        
+        await prisma.$transaction([
+          prisma.user.update({
+            where: { id: userId },
+            data: {
+              plan: 'PRO',
+              subscriptionStatus: 'ACTIVE',
+              planSource: 'GOOGLE_PLAY',
+              planEndDate: expiryDate,
             }
-          }
-        </script>
-      </body>
-    </html>
-  `;
-  res.send(html);
+          }),
+          prisma.paymentHistory.create({
+            data: {
+              userId,
+              amount: productId === 'cloraai_pro_yearly' ? 169900 : 19900, // Hardcoded for now based on PRD, should ideally fetch from DB/config
+              currency: 'INR',
+              status: 'SUCCESS',
+              planName: productId === 'cloraai_pro_yearly' ? 'PRO_YEARLY' : 'PRO_MONTHLY',
+              paymentMethod: 'GOOGLE_PLAY',
+              transactionId: purchaseToken,
+            }
+          })
+        ]);
+        
+        await cache.clearUserCache(userId);
+        return res.status(200).json({ success: true, message: 'Subscription activated' });
+      }
+    } else {
+      // Consumable (Credits)
+      verificationResult = await googlePlayService.verifyProduct(packageName || 'com.cloraai.app', productId, purchaseToken);
+      
+      if (verificationResult.success && verificationResult.purchased) {
+        // Consume it so user can buy again later
+        await googlePlayService.consumeProduct(packageName || 'com.cloraai.app', productId, purchaseToken);
+        
+        const creditCount = productId === 'cloraai_500_credits' ? 500 : 100;
+        
+        await prisma.$transaction([
+          prisma.user.update({
+            where: { id: userId },
+            data: {
+              credits: { increment: creditCount }
+            }
+          }),
+          prisma.paymentHistory.create({
+            data: {
+              userId,
+              amount: productId === 'cloraai_500_credits' ? 39900 : 9900,
+              currency: 'INR',
+              status: 'SUCCESS',
+              planName: `CREDITS_${creditCount}`,
+              paymentMethod: 'GOOGLE_PLAY',
+              transactionId: purchaseToken,
+            }
+          })
+        ]);
+        
+        await cache.clearUserCache(userId);
+        return res.status(200).json({ success: true, message: `${creditCount} credits added` });
+      }
+    }
+
+    return res.status(400).json({ success: false, error: 'Verification failed or purchase inactive' });
+  } catch (error) {
+    console.error('[Subscription] G-Play Verify error:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
 };
 
-module.exports = { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription, renderCheckout };
+module.exports = { verifyGooglePlayPurchase, getStatus, getPaymentHistory, cancelSubscription };
 
 // ─── 4. GET PAYMENT HISTORY ──────────────────────────────────────────────────
 /**
@@ -471,6 +195,7 @@ async function getPaymentHistory(req, res) {
       take: 50,
       select: {
         id: true,
+        transactionId: true,
         razorpayPaymentId: true,
         razorpaySubscriptionId: true,
         amount: true,
@@ -487,7 +212,7 @@ async function getPaymentHistory(req, res) {
     const enriched = history.map((h) => ({
       ...h,
       // Identify the source so frontend can show correct icon/label
-      planSource: h.paymentMethod === 'ADMIN_GRANT' ? 'ADMIN' : 'RAZORPAY',
+      planSource: h.paymentMethod || 'RAZORPAY',
       // Human-readable plan name fallback
       planName: h.planName || (h.amount >= 199900 ? 'Pro — Yearly' : h.amount >= 19900 ? 'Pro — Monthly' : 'Pro'),
     }));
@@ -502,12 +227,8 @@ async function getPaymentHistory(req, res) {
   }
 }
 
-// ─── 5. CANCEL SUBSCRIPTION ──────────────────────────────────────────────────
-/**
- * POST /api/subscription/cancel
- * Authenticated. Gracefully cancels the active Razorpay subscription.
- * User keeps Pro access until the end of the current billing cycle.
- */
+// Google Play subscriptions are managed via Play Store natively.
+// Local cancellation just marks user intent if needed, but the source of truth is Play Store.
 async function cancelSubscription(req, res) {
   try {
     const user = await prisma.user.findUnique({

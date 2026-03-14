@@ -69,7 +69,6 @@ const notificationRoutes = require('./src/routes/notification');
 const webhookRoutes = require('./src/routes/webhook');
 const youtubeRoutes = require('./src/routes/youtube');
 const uploadRoutes = require('./src/routes/upload');
-const paymentRoutes = require('./src/routes/payment');
 
 // Initialize Prisma
 // (Now using shared instance from src/lib/prisma.js)
@@ -92,9 +91,8 @@ if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 64) {
     logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters).');
 }
 
-// Raw body capture for Razorpay webhook signature verification
-// MUST be registered BEFORE express.json() for this specific path
-app.use('/api/webhook/razorpay', express.raw({ type: 'application/json' }));
+// Raw body capture for generic webhooks if needed
+// app.use('/api/webhook/some-external-service', express.raw({ type: 'application/json' }));
 
 // Raw body capture for Instagram webhook signature verification (X-Hub-Signature-256)
 // Uses express.json() with a verify callback to attach rawBody to req before JSON parsing.
@@ -131,12 +129,6 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "https://checkout.razorpay.com"], // Removed unsafe-inline for tighter security
-            frameSrc: ["'self'", "https://api.razorpay.com", "https://tds.razorpay.com"],
-            imgSrc: ["'self'", "data:", "https://*.razorpay.com", "https://cloraai.com", "https://s3.amazonaws.com"],
-            styleSrc: ["'self'", "'unsafe-inline'"],
-            connectSrc: ["'self'", "https://lumberjack.razorpay.com", "https://api.razorpay.com"],
-            objectSrc: ["'none'"],
             upgradeInsecureRequests: [],
         },
     },
@@ -342,7 +334,6 @@ app.use('/api/v1/brand-deals', brandDealRoutes);
 app.use('/api/v1/referral', referralRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/admin-plans', adminPlanRoutes);
-app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/calendar', calendarRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/youtube', youtubeRoutes);

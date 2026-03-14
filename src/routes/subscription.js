@@ -5,17 +5,11 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
-const { createOrder, verifyPayment, getStatus, getPaymentHistory, cancelSubscription, renderCheckout } = require('../controllers/subscriptionController');
+const { verifyGooglePlayPurchase, getStatus, getPaymentHistory, cancelSubscription } = require('../controllers/subscriptionController');
 const { cacheRoute } = require('../utils/cache');
 
-// Create a Razorpay subscription order → returns subscription_id to RN SDK
-router.post('/create-order', authenticate, createOrder);
-
-// Render a hosted checkout page for Expo Go fallback
-router.get('/checkout/:subscriptionId', renderCheckout);
-
-// Verify payment signature after user completes checkout → activates Pro plan
-router.post('/verify', authenticate, verifyPayment);
+// Verify Google Play Billing purchase
+router.post('/verify-google-play', authenticate, verifyGooglePlayPurchase);
 
 // Get current subscription state (plan, status, daysRemaining, planSource)
 router.get('/status', authenticate, cacheRoute(3600, 'subscription'), getStatus);
@@ -23,7 +17,7 @@ router.get('/status', authenticate, cacheRoute(3600, 'subscription'), getStatus)
 // Get all payment transactions for the authenticated user
 router.get('/history', authenticate, cacheRoute(3600, 'subscription'), getPaymentHistory);
 
-// Cancel the active Razorpay subscription gracefully (access kept until cycle end)
+// Mark subscription for cancellation (Note: actual management is via Google Play Store)
 router.post('/cancel', authenticate, cancelSubscription);
 
 module.exports = router;

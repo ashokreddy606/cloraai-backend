@@ -26,6 +26,7 @@ enum SubscriptionStatus {
 
 enum PlanSource {
   RAZORPAY
+  GOOGLE_PLAY
   ADMIN
   REFERRAL
 }
@@ -61,6 +62,7 @@ model User {
   manuallyUpgraded   Boolean             @default(false) // Admin override flag
   paymentStatus      String              @default("NONE") // NONE | SUCCESS | FAILED
   retryAttempts      Int                 @default(0)
+  credits            Int                 @default(0)
 
   // ── Razorpay Live Link ───────────────────────────────────────────────────
   // Set in createOrder so webhook can find userId without depending on PaymentHistory.
@@ -191,6 +193,7 @@ model PaymentHistory {
   razorpaySubscriptionId String? // Razorpay sub_xxx id
   razorpayPaymentId      String? @unique // Razorpay pay_xxx id
   razorpayOrderId        String? // Razorpay order_xxx id
+  transactionId          String? @unique // Generic transaction/token ID for others (e.g. G-Play)
 
   amount   Int // amount in paise (₹199 = 19900)
   currency String @default("INR")
