@@ -39,6 +39,7 @@ router.post('/reset-password',
     authController.resetPassword
 );
 
+router.post('/refresh-token', authController.refreshToken);
 router.get('/me', authenticate, authController.getCurrentUser);
 router.put('/profile', authenticate, authController.updateProfile);
 router.post('/verify-email', authController.verifyEmail);

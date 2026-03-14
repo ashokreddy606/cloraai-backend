@@ -8,7 +8,17 @@ const { cacheRoute } = require('../utils/cache');
 router.get('/dashboard', authenticate, checkProAccess, cacheRoute(300, 'analytics'), analyticsController.getDashboard);
 router.post('/snapshot', authenticate, checkProAccess, analyticsController.recordSnapshot);
 router.get('/monthly', authenticate, checkProAccess, cacheRoute(300, 'analytics'), analyticsController.getMonthlyAnalytics);
-router.get('/debug', authenticate, analyticsController.debugViews);
+// Debug routes ONLY available in Development or for Admin
+router.get('/debug', authenticate, (req, res, next) => {
+    // Security Restriction: Debug endpoints expose internal Meta API objects
+    if (process.env.NODE_ENV !== 'production' || req.user?.role === 'ADMIN') {
+        return analyticsController.debugViews(req, res, next);
+    }
+    res.status(403).json({ 
+        error: 'Forbidden', 
+        message: 'Debug access is disabled in production environments for non-admin accounts.' 
+    });
+});
 
 
 module.exports = router;

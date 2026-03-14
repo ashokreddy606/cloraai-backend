@@ -85,10 +85,16 @@ app.get("/test", (req, res) => {
     res.send("Backend API is working");
 });
 
-// JWT_SECRET minimum strength check (must be ≥ 64 characters).
-// helpers.js also enforces this, but belt-and-suspenders catch at server entry.
-if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 64) {
-    logger.error('SERVER', 'JWT_SECRET is too weak (must be ≥ 64 characters).');
+// ─── Security Enforcement ───────────────────────────────────────────────────
+// Check for critical missing environment variables.
+if (process.env.NODE_ENV === 'production') {
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 64) {
+        logger.error('SERVER', 'CRITICAL: JWT_SECRET must be at least 64 characters in production.');
+        process.exit(1);
+    }
+    if (!process.env.REDIS_URL) {
+        logger.error('SERVER', 'CRITICAL: REDIS_URL is required for production scaling.');
+    }
 }
 
 // Raw body capture for generic webhooks if needed
@@ -167,43 +173,35 @@ app.use(
     })
 );
 
-// CORS — restrict in production
+// CORS — PRODUCTION SECURITY: Use a strict allowlist.
 const allowedOrigins = [
     'http://localhost:8081',   // Expo mobile dev
-    'http://localhost:19000',  // Legacy Expo dev
-    'http://localhost:19006',  // Expo web dev
-    'http://localhost:5173',   // Vite admin dev (default)
-    'http://localhost:5174',   // Vite admin dev (fallback port)
-    'http://localhost:5175',   // Vite admin dev (tertiary fallback)
-    'http://localhost:3000',   // Generic React/Node
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:5174',
-    'null',                     // Some mobile webviews
-    'file://',                  // Some mobile webviews
+    'http://localhost:5173',   // Vite admin dev
 ];
 
+// Load production domains from environment
 if (process.env.FRONTEND_URL) {
+    // Expected format: "https://cloraai.com, https://admin.cloraai.com"
     process.env.FRONTEND_URL.split(',').forEach(url => allowedOrigins.push(url.trim()));
 }
 
 app.use(cors({
     origin: (origin, callback) => {
-        // [DEBUG] Log incoming origin for CORS troubleshooting
-        // if (origin) logger.info('CORS', `Incoming request from origin: ${origin}`);
-
         // Allow requests with no origin (mobile apps, curl, Postman)
         if (!origin) return callback(null, true);
 
-        // Allow common origins
+        // Allow explicitly whitelisted origins
         if (allowedOrigins.includes(origin)) return callback(null, true);
 
-        // Broaden matching for Expo/Tunnel origins or development
-        if (process.env.NODE_ENV !== 'production' || origin.includes('expo.dev') || origin.includes('ngrok') || origin.includes('railway.app')) {
-            return callback(null, true);
+        // Broaden matching for development environments ONLY
+        if (process.env.NODE_ENV !== 'production') {
+            if (origin.includes('expo.dev') || origin.includes('ngrok') || origin.includes('localhost')) {
+                return callback(null, true);
+            }
         }
 
-        logger.warn('CORS', `Origin ${origin} blocked by policy`);
-        callback(new Error(`CORS: origin '${origin}' not allowed`));
+        logger.warn('CORS', `Origin ${origin} blocked by security policy`);
+        callback(new Error(`Security Restriction: CORS origin '${origin}' not allowed`));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -217,7 +215,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 // Global rate limiting (100 requests per 15 minutes per IP)
-// Global rate limiting (100 requests per 15 minutes per IP)
+// Multi-instance safe via Redis (configured in src/middleware/auth.js)
 const globalLimiter = rateLimit(100, 15);
 
 app.use((req, res, next) => {

@@ -1,5 +1,6 @@
-const prisma = require('../lib/prisma');
-const { generateToken, hashPassword, verifyPassword } = require('../utils/helpers');
+const { generateTokens, hashPassword, verifyPassword, verifyToken } = require('../utils/helpers');
+const Redis = require('ioredis');
+const logger = require('../utils/logger');
 const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
@@ -135,8 +136,15 @@ const register = catchAsync(async (req, res, next) => {
     return newUser;
   });
 
-  // Generate token
-  const token = generateToken(user.id);
+  // Generate tokens
+  const { accessToken, refreshToken } = generateTokens(user.id);
+
+  // Store refresh token in Redis (7 days TTL)
+  if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+    const redis = new Redis(process.env.REDIS_URL);
+    await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+    await redis.quit();
+  }
 
   // FIX 19: Send verification email
   const verifyLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/verify-email?token=${user.emailVerificationToken}`;
@@ -160,7 +168,8 @@ const register = catchAsync(async (req, res, next) => {
         email: user.email,
         username: user.username
       },
-      token
+      accessToken,
+      refreshToken
     }
   });
 });
@@ -234,8 +243,15 @@ const login = async (req, res) => {
       });
     }
 
-    // Generate token with tokenVersion (Phase 1 Fix)
-    const token = generateToken(user.id, user.tokenVersion);
+    // Generate tokens
+    const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion);
+
+    // Store refresh token in Redis (7 days TTL)
+    if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+      const redis = new Redis(process.env.REDIS_URL);
+      await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redis.quit();
+    }
 
     // Update login analytics
     await prisma.user.update({
@@ -258,7 +274,8 @@ const login = async (req, res) => {
           profileImage: user.profileImage,
           role: user.role
         },
-        token
+        accessToken,
+        refreshToken
       }
     });
   } catch (error) {
@@ -376,13 +393,88 @@ const updateProfile = async (req, res) => {
   }
 };
 
-// Logout (client-side token deletion)
+// Logout (revokes tokens)
 const logout = async (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Logged out successfully'
-  });
+  try {
+    const { refreshToken } = req.body;
+    if (refreshToken && process.env.REDIS_URL) {
+      const redis = new Redis(process.env.REDIS_URL);
+      await redis.del(`refresh_token:${req.userId}:${refreshToken}`);
+      await redis.quit();
+    }
+    res.status(200).json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    res.status(200).json({ success: true, message: 'Logged out' });
+  }
 };
+
+/**
+ * PRODUCTION SECURITY: REFRESH TOKEN ROTATION
+ */
+const refreshToken = catchAsync(async (req, res, next) => {
+  const { refreshToken: oldToken } = req.body;
+
+  if (!oldToken) {
+    return next(new AppError('Refresh token is required', 400));
+  }
+
+  let decoded;
+  try {
+    decoded = verifyToken(oldToken);
+    if (decoded.type !== 'refresh') throw new Error('Invalid token type');
+  } catch (err) {
+    return next(new AppError('Invalid or expired refresh token', 401));
+  }
+
+  // Check Redis for token validity (Rotation & Revocation)
+  if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+    const redis = new Redis(process.env.REDIS_URL);
+    const isValid = await redis.get(`refresh_token:${decoded.userId}:${oldToken}`);
+    
+    if (!isValid) {
+      // Security: If a used token is presented, someone might be attempting a replay attack.
+      // Revoke ALL tokens for this user for safety.
+      const keys = await redis.keys(`refresh_token:${decoded.userId}:*`);
+      if (keys.length > 0) await redis.del(...keys);
+      await redis.quit();
+      return next(new AppError('Security Alert: Replay attack detected. Please login again.', 401));
+    }
+
+    // Issue new pair (Rotation)
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, tokenVersion: true }
+    });
+
+    if (!user || user.tokenVersion !== decoded.tokenVersion) {
+      await redis.del(`refresh_token:${decoded.userId}:${oldToken}`);
+      await redis.quit();
+      return next(new AppError('User not found or session revoked', 401));
+    }
+
+    const tokens = generateTokens(user.id, user.tokenVersion);
+
+    // Atomic Swap: Invalidate old, store new
+    await redis.del(`refresh_token:${decoded.userId}:${oldToken}`);
+    await redis.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+    await redis.quit();
+
+    res.status(200).json({
+      success: true,
+      data: tokens
+    });
+  } else {
+    // Fallback if Redis is down (less secure but keeps app running)
+    const tokens = generateTokens(decoded.userId, decoded.tokenVersion);
+    res.status(200).json({
+      success: true,
+      data: tokens
+    });
+  }
+});
 
 // Forgot Password
 const forgotPassword = async (req, res) => {
@@ -748,8 +840,15 @@ const googleAuth = async (req, res) => {
       });
     }
 
-    // Generate our JWT with tokenVersion
-    const token = generateToken(user.id, user.tokenVersion);
+    // Generate our JWT tokens (Rotation enabled)
+    const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion);
+
+    // Store refresh token in Redis (7 days TTL)
+    if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+      const redis = new Redis(process.env.REDIS_URL);
+      await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redis.quit();
+    }
 
     res.status(200).json({
       success: true,
@@ -761,7 +860,8 @@ const googleAuth = async (req, res) => {
           profileImage: user.profileImage,
           role: user.role
         },
-        token
+        accessToken,
+        refreshToken
       }
     });
 
@@ -825,8 +925,16 @@ const verify2FA = async (req, res) => {
       return res.status(200).json({ success: true, message: '2FA enabled successfully' });
     }
 
-    // Refresh valid session data
-    const accessToken = generateToken(user.id, user.tokenVersion);
+    // Refresh valid session data (Rotation enabled)
+    const tokens = generateTokens(user.id, user.tokenVersion);
+
+    // Store refresh token in Redis (7 days TTL)
+    if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+      const redis = new Redis(process.env.REDIS_URL);
+      await redis.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redis.quit();
+    }
+
     return res.status(200).json({
       success: true,
       data: {
@@ -837,7 +945,7 @@ const verify2FA = async (req, res) => {
           profileImage: user.profileImage,
           role: user.role
         },
-        token: accessToken
+        ...tokens
       }
     });
   } catch (err) {
@@ -912,5 +1020,6 @@ module.exports = {
   verify2FA,
   facebookCallback,
   instagramAuth,
-  instagramCallback
+  instagramCallback,
+  refreshToken
 };

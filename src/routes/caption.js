@@ -6,6 +6,7 @@ const { aiLimiter } = require('../middleware/aiLimiter');
 const checkProAccess = require('../middleware/checkProAccess');
 const validate = require('../middleware/validate');
 const { z } = require('zod');
+const verifyResourceOwnership = require('../middleware/ownership');
 
 // AI generation route limit: 30 per hour per user
 const aiRateLimit = rateLimit(30, 60, (req) => req.userId || req.ip);
@@ -14,7 +15,7 @@ const aiRateLimit = rateLimit(30, 60, (req) => req.userId || req.ip);
 router.post('/generate',
     authenticate,
     checkProAccess,
-    aiLimiter('caption'),  // ← replaces manual plan check in controller
+    aiLimiter('caption'),
     aiRateLimit,
     validate(z.object({
         body: z.object({
@@ -26,10 +27,11 @@ router.post('/generate',
     captionController.generateCaption
 );
 
-// Free tier: read-only history access
+// Free tier: read-only history access (Controller already filters by req.userId)
 router.get('/history', authenticate, captionController.getCaptions);
-router.delete('/:id', authenticate, captionController.deleteCaption);
-router.post('/:id/report', authenticate, captionController.reportCaption);
+
+// Protected by ownership check to prevent IDOR
+router.delete('/:id', authenticate, verifyResourceOwnership('caption'), captionController.deleteCaption);
+router.post('/:id/report', authenticate, verifyResourceOwnership('caption'), captionController.reportCaption);
 
 module.exports = router;
-

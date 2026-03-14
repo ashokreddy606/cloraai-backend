@@ -13,41 +13,66 @@ const getJwtSecret = () => {
   return secret;
 };
 
-// Tokens expire in 1 day by default. Use JWT_EXPIRY env var to override.
-// Shorter expiry limits damage from stolen tokens.
-const JWT_EXPIRY = process.env.JWT_EXPIRY || '1d';
+// Shortened token lifespan for PRODUCTION SECURITY. 1 hour is standard.
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h';
 
 // BCRYPT_ROUNDS: 12 is the recommended production minimum (2^12 = 4096 iterations).
-// This is 4× slower than 10 but far more resistant to brute-force attacks.
 const BCRYPT_ROUNDS = 12;
 
+const REFRESH_TOKEN_EXPIRY = '7d';
+
 /**
- * Generate a signed JWT for a user.
- * @param {string} userId
- * @param {number} tokenVersion - incremented on forced logout; embed in token
+ * Generate a pair of tokens (Access + Refresh).
  */
-function generateToken(userId, tokenVersion = 0) {
+function generateTokens(userId, tokenVersion = 0) {
   const secret = getJwtSecret();
   if (!secret) throw new Error("JWT_SECRET is not configured");
-  return jwt.sign(
-    { userId, tokenVersion },
+  
+  const accessToken = jwt.sign(
+    { userId, tokenVersion, type: 'access' },
     secret,
-    { expiresIn: process.env.JWT_EXPIRY || "7d" }
+    { 
+      expiresIn: JWT_EXPIRY,
+      algorithm: 'HS256',
+      issuer: 'cloraai',
+      audience: 'cloraai-users'
+    }
   );
+
+  const refreshToken = jwt.sign(
+    { userId, tokenVersion, type: 'refresh' },
+    secret,
+    { 
+      expiresIn: REFRESH_TOKEN_EXPIRY,
+      algorithm: 'HS256',
+      issuer: 'cloraai',
+      audience: 'cloraai-users'
+    }
+  );
+
+  return { accessToken, refreshToken };
 }
 
 function verifyToken(token) {
   const secret = getJwtSecret();
-  const previousSecret = process.env.JWT_SECRET_PREVIOUS;
-
   if (!secret) throw new Error("JWT_SECRET is not configured");
 
   try {
-    return jwt.verify(token, secret);
+    // PRODUCTION SECURITY: Explicitly define allowed algorithms and validate issuer/audience
+    return jwt.verify(token, secret, {
+      algorithms: ['HS256'],
+      issuer: 'cloraai',
+      audience: 'cloraai-users'
+    });
   } catch (err) {
-    if (previousSecret && err.name === 'JsonWebTokenError') {
-      // Try fallback to previous secret if signature is invalid under new secret
-      return jwt.verify(token, previousSecret);
+    // If JWT_SECRET was rotated, try previously valid secret
+    const previousSecret = process.env.JWT_SECRET_PREVIOUS;
+    if (previousSecret && (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError')) {
+      return jwt.verify(token, previousSecret, {
+        algorithms: ['HS256'],
+        issuer: 'cloraai',
+        audience: 'cloraai-users'
+      });
     }
     throw err;
   }
@@ -73,7 +98,7 @@ const sendResponse = (res, status, data) => {
 };
 
 module.exports = {
-  generateToken,
+  generateTokens,
   verifyToken,
   hashPassword,
   verifyPassword,

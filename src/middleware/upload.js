@@ -3,6 +3,8 @@ const multerS3 = require('multer-s3');
 const { S3Client } = require('@aws-sdk/client-s3');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
 const { appConfig } = require('../config');
 
 // S3 Client Setup
@@ -10,11 +12,6 @@ const awsAccessKeyId = (process.env.AWS_ACCESS_KEY_ID || 'dummy').trim();
 const awsSecretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || 'dummy').trim();
 const awsRegion = (process.env.AWS_REGION || 'us-east-1').trim();
 const awsBucketName = (process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets').trim();
-
-console.log('[DEBUG_S3] Region:', awsRegion);
-console.log('[DEBUG_S3] Bucket:', awsBucketName);
-console.log('[DEBUG_S3] Access Key Loaded:', awsAccessKeyId !== 'dummy' ? 'YES (Starts with ' + awsAccessKeyId.substring(0, 4) + '...)' : 'NO (Dummy)');
-console.log('[DEBUG_S3] Secret Key Loaded:', awsSecretAccessKey !== 'dummy' ? 'YES' : 'NO (Dummy)');
 
 const s3 = new S3Client({
     region: awsRegion,
@@ -24,15 +21,29 @@ const s3 = new S3Client({
     }
 });
 
-// Allowed mimetypes
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo'];
-
-// Helper to sanitize filenames
-const sanitizeFileName = (originalname) => {
-    return path.basename(originalname).replace(/[^a-zA-Z0-9.\-_]/g, '');
+/**
+ * PRODUCTION SECURITY: EXTENSION WHITELIST & MAPPING
+ */
+const SAFE_EXTENSIONS = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'video/mp4': '.mp4',
+    'video/quicktime': '.mov',
+    'video/x-msvideo': '.avi'
 };
 
+const ALLOWED_MIME_TYPES = Object.keys(SAFE_EXTENSIONS);
+
+/**
+ * SECURE FILENAME GENERATOR
+ */
+const generateSecureFileName = (file) => {
+    const ext = SAFE_EXTENSIONS[file.mimetype] || path.extname(file.originalname).toLowerCase();
+    return `${uuidv4()}${ext}`;
+};
+
+// S3 Storage
 const getS3Storage = (folder) => multerS3({
     s3: s3,
     bucket: awsBucketName,
@@ -41,54 +52,79 @@ const getS3Storage = (folder) => multerS3({
         cb(null, { fieldName: file.fieldname });
     },
     key: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, `${folder}/${uniqueSuffix}-${sanitizeFileName(file.originalname)}`);
+        cb(null, `${folder}/${generateSecureFileName(file)}`);
     }
 });
 
-// Image Upload Middleware (Max 10MB)
-const uploadImage = multer({
-    storage: getS3Storage('images'),
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+// Local Disk Storage
+const getLocalDiskStorage = (folder) => multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = path.join(__dirname, '../../public/uploads', folder);
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+        }
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        cb(null, generateSecureFileName(file));
+    }
+});
+
+// Middleware factory
+const createUpload = (storage, sizeLimit) => multer({
+    storage,
+    limits: { fileSize: sizeLimit },
     fileFilter: (req, file, cb) => {
-        if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+        if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('Invalid image type. Only JPEG, PNG, and WebP are allowed.'), false);
+            cb(new Error(`Security Policy: Mimetype ${file.mimetype} is not allowed.`), false);
         }
     }
 });
 
-// Video Upload Middleware (S3, Max 200MB)
-const uploadVideoS3 = multer({
-    storage: getS3Storage('videos'),
-    limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
-    fileFilter: (req, file, cb) => {
-        if (ALLOWED_VIDEO_TYPES.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Invalid video type. Only MP4, MOV, and AVI are allowed.'), false);
-        }
-    }
-});
+const uploadImage = createUpload(getS3Storage('images'), 10 * 1024 * 1024);
+const uploadVideoS3 = createUpload(getS3Storage('videos'), 200 * 1024 * 1024);
+const uploadTempVideo = createUpload(multer({ dest: path.join(os.tmpdir(), 'cloraai-uploads') }), 200 * 1024 * 1024);
+const uploadLocal = createUpload(getLocalDiskStorage(''), 50 * 1024 * 1024);
 
-// Local Temp Storage for YouTube/Processing (Max 200MB)
-const uploadTempVideo = multer({
-    dest: path.join(os.tmpdir(), 'cloraai-uploads'),
-    limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
-    fileFilter: (req, file, cb) => {
-        if (ALLOWED_VIDEO_TYPES.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Invalid video type. Only MP4, MOV, and AVI are allowed.'), false);
+/**
+ * MAGIC-BYTE VALIDATION MIDDLEWARE
+ */
+const validateFileContent = async (req, res, next) => {
+    if (!req.file) return next();
+
+    try {
+        const { fileTypeFromBuffer, fileTypeFromFile } = await import('file-type');
+        let type;
+
+        if (req.file.buffer) {
+            type = await fileTypeFromBuffer(req.file.buffer);
+        } else if (req.file.path) {
+            type = await fileTypeFromFile(req.file.path);
         }
+
+        if (!type || !ALLOWED_MIME_TYPES.includes(type.mime)) {
+            if (req.file.path) fs.unlink(req.file.path, () => { });
+            return res.status(400).json({
+                error: 'Security Violation',
+                message: 'Invalid file content detected. The file type does not match its description or is not allowed.'
+            });
+        }
+
+        req.file.verifiedMimeType = type.mime;
+        next();
+    } catch (error) {
+        console.error('[SECURITY] File validation error:', error);
+        next(error);
     }
-});
+};
 
 module.exports = {
     uploadImage,
     uploadVideoS3,
     uploadTempVideo,
-    ALLOWED_IMAGE_TYPES,
-    ALLOWED_VIDEO_TYPES
+    uploadLocal,
+    validateFileContent,
+    ALLOWED_MIME_TYPES
 };
