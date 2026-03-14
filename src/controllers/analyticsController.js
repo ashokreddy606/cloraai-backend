@@ -235,7 +235,7 @@ const getDashboard = async (req, res) => {
         views: {
           views30d,
         },
-        totalViews: latestSnapshot?.impressions || 0,
+        totalViews: (latestSnapshot?.impressions || totalImpressions) || 0,
         followerHistory: history.map(snap => snap.followers),
         viewsHistory: history.map(snap => snap.impressions),
         activityHistory: history.map(snap => snap.reach || 0),

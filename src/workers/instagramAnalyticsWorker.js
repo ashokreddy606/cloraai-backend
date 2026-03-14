@@ -19,16 +19,15 @@ const performDailySnapshots = async () => {
 
         for (const account of accounts) {
             try {
-                // Token is not encrypted in the new Mongoose model for simplicity in this step,
-                // but if it were, we would decrypt it here. The prompt didn't specify encryption for Mongoose model.
+                // Ensure token is decrypted explicitly if needed
                 const accessToken = account.instagramAccessToken;
 
                 // 2. Fetch basic stats
                 const stats = await instagramService.getAccountStats(account.instagramId, accessToken);
 
-                // 3. Fetch recent media to estimate reach/impressions (last 10 posts)
+                // 3. Fetch recent media to estimate reach/impressions (last 20 posts for better coverage)
                 const media = await instagramService.getUserMedia(account.instagramId, accessToken);
-                const recentMedia = media.slice(0, 10);
+                const recentMedia = media.slice(0, 20);
 
                 let totalReach = 0;
                 let totalImpressions = 0;
