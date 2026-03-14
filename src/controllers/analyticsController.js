@@ -66,15 +66,19 @@ const getDashboard = async (req, res) => {
         // Always fetch media insights for a "live" feel and aggregate them
         const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
         if (media && media.length > 0) {
-          const topMedia = media.slice(0, 30); 
+          const topMedia = media.slice(0, 30);
+
+          // Sum video_views directly from media fields (no insights permission needed)
+          const directVideoViews = topMedia.reduce((sum, m) => sum + (m.video_views || 0), 0);
+
           const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           
           const mediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
           const mediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
           const mediaEngagement = insights.reduce((sum, ins) => sum + (ins.engagement || 0), 0);
 
-          // Take the highest value to be safe (account vs media sum)
-          totalImpressions = Math.max(totalImpressions, mediaImpressions, mediaEngagement);
+          // Take the highest value to be safe (account vs media sum vs direct video views)
+          totalImpressions = Math.max(totalImpressions, mediaImpressions, mediaEngagement, directVideoViews);
           totalReach = Math.max(totalReach, mediaReach);
         }
 

@@ -114,7 +114,7 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        const metricSets = ['impressions,reach', 'reach', 'engagement'];
+        const metricSets = ['impressions,reach', 'video_views,reach', 'reach', 'engagement'];
         
         for (const metrics of metricSets) {
             try {
@@ -163,7 +163,7 @@ class InstagramService {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${igUserId}/media`, {
                 params: {
-                    fields: 'id,caption,like_count,comments_count,timestamp,media_type,media_url',
+                    fields: 'id,caption,like_count,comments_count,timestamp,media_type,media_url,video_views',
                     access_token: accessToken
                 }
             });
@@ -176,7 +176,7 @@ class InstagramService {
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
         // Expanded metric sets to handle different account types and media restrictions
-        const metricSets = (mediaType === 'VIDEO')
+        const metricSets = (mediaType === 'VIDEO' || mediaType === 'REELS')
             ? [
                 'reach,saved,plays', 
                 'reach,plays', 
