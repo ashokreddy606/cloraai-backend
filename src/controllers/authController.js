@@ -539,19 +539,9 @@ const deleteAccount = async (req, res) => {
       }
     }
 
-    // 2. Cancel Razorpay Subscriptions
+    // 2. Cancel Native Subscriptions
     if (user.activeRazorpaySubscriptionId && (user.subscriptionStatus === 'ACTIVE' || user.subscriptionStatus === 'PAST_DUE')) {
-      try {
-        const Razorpay = require('razorpay');
-        const rzp = new Razorpay({
-          key_id: process.env.RAZORPAY_KEY_ID,
-          key_secret: process.env.RAZORPAY_KEY_SECRET,
-        });
-        await rzp.subscriptions.cancel(user.activeRazorpaySubscriptionId);
-        console.log('[PRIVACY] Razorpay subscription cancelled.');
-      } catch (e) {
-        console.warn('[PRIVACY] Failed to cancel Razorpay subscription:', e.message);
-      }
+      console.log('[PRIVACY] Native subscription reference found. (Account deletion — no Razorpay API call made)');
     }
 
     // 3. Remove S3 Media

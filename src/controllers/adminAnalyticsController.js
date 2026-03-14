@@ -195,7 +195,7 @@ const getRecentTransactions = async (req, res) => {
                 amount: true,
                 status: true,
                 createdAt: true,
-                razorpayPaymentId: true
+                transactionId: true
             }
         });
 

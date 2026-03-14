@@ -1,7 +1,7 @@
 const prisma = require('../lib/prisma');
 const { hashPassword } = require('../utils/helpers');
 const { appConfig, saveConfig } = require('../config');
-const { cancelSubscription: rzpCancelSub, createRefund } = require('../services/razorpayService');
+// Razorpay imports removed
 const logger = require('../utils/logger');
 const OpenAI = require('openai');
 const { logAIUsage } = require('../middleware/aiLimiter');
@@ -279,7 +279,7 @@ const adminUpgradeToPro = async (req, res) => {
                     paymentMethod: 'ADMIN_GRANT',
                     startDate: now,
                     endDate: planEndDate,
-                    razorpayPaymentId: `admin_grant_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    transactionId: `admin_grant_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                 },
             }),
         ]);
@@ -315,12 +315,7 @@ const adminDowngradeToFree = async (req, res) => {
         });
 
         if (userRecord?.activeRazorpaySubscriptionId) {
-            try {
-                await rzpCancelSub(userRecord.activeRazorpaySubscriptionId, false); // immediate
-                console.log(`[Admin] Razorpay sub ${userRecord.activeRazorpaySubscriptionId} cancelled for user ${userId}`);
-            } catch (err) {
-                console.warn('[Admin] Razorpay cancel on downgrade warning:', err.message);
-            }
+            console.log(`[Admin] Native subscription reference ${userRecord.activeRazorpaySubscriptionId} found for user ${userId}. (Manual downgrade — no API call made)`);
         }
 
         const user = await prisma.user.update({
@@ -445,12 +440,7 @@ const adminCancelSubscription = async (req, res) => {
 
         let razorpayError = null;
         if (lastPayment?.razorpaySubscriptionId) {
-            try {
-                await rzpCancelSub(lastPayment.razorpaySubscriptionId, !immediate);
-            } catch (err) {
-                razorpayError = err.message;
-                console.warn('[Admin] Razorpay cancel API warning:', err.message);
-            }
+            console.log(`[Admin] Native subscription reference ${lastPayment.razorpaySubscriptionId} found for user ${userId}. (Manual cancel — no API call made)`);
         }
 
         await prisma.user.update({
@@ -491,22 +481,9 @@ const adminRefundPayment = async (req, res) => {
             return res.status(404).json({ error: 'Payment record not found in database' });
         }
 
-        const refund = await createRefund(paymentId, amount || null, reason);
-
-        // Mark payment as refunded
-        await prisma.paymentHistory.updateMany({
-            where: { razorpayPaymentId: paymentId },
-            data: { status: 'REFUNDED' },
-        });
-
-        // Cancel Razorpay subscription to prevent re-billing
-        if (paymentRecord.razorpaySubscriptionId) {
-            try {
-                await rzpCancelSub(paymentRecord.razorpaySubscriptionId, false);
-            } catch (err) {
-                console.warn('[Admin] Razorpay cancel during refund warning:', err.message);
-            }
-        }
+        // Refund logic for Google Play should be handled via Google Play Console/API service.
+        // Razorpay refund logic removed.
+        console.log(`[Admin] Refund requested for payment ${paymentId}. Manual action required in payment console.`);
 
         // Downgrade user plan immediately — they got their money back
         await prisma.user.update({

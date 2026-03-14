@@ -1,13 +1,5 @@
-const prisma = require('../lib/prisma');
-const Razorpay = require('razorpay');
 const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const { OAuth2Client } = require('google-auth-library');
-const logger = require('../utils/logger');
-
-const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Razorpay imports removed
 
 const s3Client = new S3Client({
     region: process.env.AWS_REGION || 'ap-south-1',
@@ -42,11 +34,7 @@ const deleteAccount = async (req, res) => {
 
         // 2. Cancel Subscriptions
         if (user.activeRazorpaySubscriptionId && user.subscriptionStatus === 'ACTIVE') {
-            try {
-                await razorpay.subscriptions.cancel(user.activeRazorpaySubscriptionId);
-            } catch (e) {
-                logger.warn('PRIVACY', "Failed to cancel Razorpay subscription", { error: e.message });
-            }
+            logger.info('PRIVACY', "Native subscription reference found. (Account deletion — no Razorpay API call made)");
         }
 
         // 3. Remove Stored Media References from S3
