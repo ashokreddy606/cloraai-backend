@@ -140,18 +140,18 @@ async function processUser(user) {
     let youtube;
     try {
         youtube = await getYoutubeClient(user);
-        logger.debug('YOUTUBE_WORKER', `Processing user ${user.id}`, { channelId: user.youtubeChannelId });
+        logger.info('YOUTUBE_WORKER', `Processing user ${user.id}`, { channelId: user.youtubeChannelId });
 
         const response = await youtube.commentThreads.list({
             part: 'snippet,replies',
             allThreadsRelatedToChannelId: user.youtubeChannelId,
-            maxResults: 20,
+            maxResults: 50, // Increased from 20
             order: 'time'
         });
 
         const items = response.data.items || [];
         if (items.length === 0) {
-            logger.debug('YOUTUBE_WORKER', `No new comments for user ${user.id}`);
+            logger.info('YOUTUBE_WORKER', `No new comments for user ${user.id}`);
             return;
         }
 
@@ -174,6 +174,7 @@ async function processUser(user) {
                 where: { commentId }
             });
             if (existingRecord) {
+                // Keep this as debug to avoid flooding logs with old comments
                 logger.debug('YOUTUBE_WORKER', `Comment already processed: ${commentId}. Skipping.`);
                 continue;
             }
@@ -187,22 +188,29 @@ async function processUser(user) {
                     r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase())
                 );
             }
-            if (!matchedRule) continue; // no keyword match
+            if (!matchedRule) {
+                // If no rule matches, we can optionally save it as "processed" so we don't log it every time
+                // but for now we'll just skip to keep DB clean. If we want it to stop bothering us:
+                // await prisma.youtubeComment.create({ data: { ... replied: false } });
+                continue; 
+            }
 
             logger.info('YOUTUBE_WORKER', `Keyword match: "${matchedRule.keyword}" in comment ${commentId}`);
 
             // ── Subscriber check ──────────────────────────────────────────────
-            // Toggle ON  (onlySubscribers = true)  → reply to subscribers only
-            // Toggle OFF (onlySubscribers = false) → reply to everyone
             let shouldReply = true;
+            let skipReason = null;
+
             if (matchedRule.onlySubscribers) {
                 if (!authorChannelId) {
                     logger.warn('YOUTUBE_WORKER', `Missing authorChannelId for comment ${commentId}. Skipping.`);
                     shouldReply = false;
+                    skipReason = 'missing_author_id';
                 } else {
                     shouldReply = await isCommenterSubscribed(youtube, authorChannelId, user.youtubeChannelId);
                     if (!shouldReply) {
                         logger.info('YOUTUBE_WORKER', `Skipping reply: ${authorChannelId} is not a subscriber.`);
+                        skipReason = 'not_subscribed';
                     }
                 }
             }
@@ -218,8 +226,9 @@ async function processUser(user) {
                     }
                 });
                 if (recentRepliesCount >= matchedRule.limitPerHour) {
-                    logger.warn('YOUTUBE_WORKER', `Rate limit exceeded for user ${user.id} (Rule: ${matchedRule.keyword}). Saving comment but not replying.`);
+                    logger.warn('YOUTUBE_WORKER', `Rate limit exceeded for user ${user.id} (Rule: ${matchedRule.keyword})`);
                     shouldReply = false;
+                    skipReason = 'rate_limit';
                 }
             }
 
@@ -227,13 +236,13 @@ async function processUser(user) {
             if (shouldReply) {
                 const { appConfig } = require('../config');
                 if (!appConfig.featureFlags.youtubeCommentRepliesEnabled) {
-                    logger.debug('YOUTUBE_WORKER', 'Comment replies are globally disabled. Skipping reply.');
+                    logger.debug('YOUTUBE_WORKER', 'Comment replies are globally disabled.');
                     shouldReply = false;
+                    skipReason = 'feature_disabled';
                 }
             }
 
-            // ── Build reply message ───────────────────────────────────────────
-            let replySent = false;
+            // ── Final Decision ────────────────────────────────────────────────
             if (shouldReply) {
                 let finalMessage = matchedRule.replyMessage;
                 if (matchedRule.appendLinks) {
@@ -243,34 +252,52 @@ async function processUser(user) {
                     }
                 }
 
-                // ── Send reply ────────────────────────────────────────────────
+                let replySentSuccessfully = false;
                 if (matchedRule.replyDelay > 0) {
-                    // Fire-and-forget with delay; we optimistically mark as replied
+                    logger.info('YOUTUBE_WORKER', `Delaying reply for ${matchedRule.replyDelay}s: ${commentId}`);
                     setTimeout(async () => {
                         await sendReply(youtube, threadId, finalMessage, user.id);
                     }, matchedRule.replyDelay * 1000);
-                    replySent = true; // optimistic for delayed
+                    replySentSuccessfully = true; // We mark as sent to avoid duplicate triggers during the delay
                 } else {
-                    replySent = await sendReply(youtube, threadId, finalMessage, user.id);
+                    replySentSuccessfully = await sendReply(youtube, threadId, finalMessage, user.id);
+                }
+
+                if (replySentSuccessfully) {
+                    await prisma.youtubeComment.create({
+                        data: {
+                            userId: user.id,
+                            channelId: user.youtubeChannelId,
+                            videoId,
+                            commentId,
+                            username: authorDisplayName || 'Unknown',
+                            commentText: topLevelComment.snippet?.textDisplay || '',
+                            replied: true
+                        }
+                    }).catch(err => logger.error('YOUTUBE_WORKER', `Failed to save reply record`, err));
+                }
+            } else {
+                // CRITICAL CHANGE: If skipped due to subscriber status or rate limit, 
+                // DO NOT save to DB yet. This allows retrying in the next cron run 
+                // if they subscribe or the hour passes.
+                
+                if (skipReason === 'not_subscribed' || skipReason === 'rate_limit') {
+                    logger.info('YOUTUBE_WORKER', `Comment ${commentId} skipped due to ${skipReason}. NOT saving to DB to allow retry.`);
+                } else {
+                    // Save as permanent skip
+                    await prisma.youtubeComment.create({
+                        data: {
+                            userId: user.id,
+                            channelId: user.youtubeChannelId,
+                            videoId,
+                            commentId,
+                            username: authorDisplayName || 'Unknown',
+                            commentText: topLevelComment.snippet?.textDisplay || '',
+                            replied: false
+                        }
+                    }).catch(err => logger.error('YOUTUBE_WORKER', `Failed to save skip record`, err));
                 }
             }
-
-            // ── Save comment record (AFTER send attempt) ──────────────────────
-            // replied=true only if we actually sent (or attempted with delay)
-            await prisma.youtubeComment.create({
-                data: {
-                    userId: user.id,
-                    channelId: user.youtubeChannelId,
-                    videoId,
-                    commentId,
-                    username: authorDisplayName || 'Unknown',
-                    commentText: topLevelComment.snippet?.textDisplay || '',
-                    replied: replySent
-                }
-            }).catch(err => {
-                // Don't block processing if DB save fails (comment will be retried next run)
-                logger.error('YOUTUBE_WORKER', `Failed to save comment record ${commentId}`, { error: err.message });
-            });
         }
     } catch (error) {
         logger.error('YOUTUBE_WORKER', `Failed to process user ${user.id}`, { error: error.message });
