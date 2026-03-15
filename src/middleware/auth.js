@@ -83,7 +83,7 @@ const requireAdmin = async (req, res, next) => {
  * Rate Limiter Factory
  * Uses RedisStore in production to prevent IP bypass across scaled instances.
  */
-const rateLimit = (max = 200, windowMinutes = 15, keyGenerator = undefined) => {
+const rateLimit = (max = 500, windowMinutes = 15, keyGenerator = undefined) => {
   if (process.env.NODE_ENV === 'test') {
     return (req, res, next) => next();
   }
@@ -110,7 +110,7 @@ const rateLimit = (max = 200, windowMinutes = 15, keyGenerator = undefined) => {
   });
 };
 
-const authLimiterLogin = rateLimit(10, 15); // Slightly more relaxed for valid users
+const authLimiterLogin = rateLimit(50, 15); // Slightly more relaxed for valid users
 const authLimiterRegister = rateLimit(5, 60); // Stricter for registration
 const authLimiterForgot = rateLimit(5, 60);
 

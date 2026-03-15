@@ -218,9 +218,9 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Static files
 app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
-// Global rate limiting (100 requests per 15 minutes per IP)
+// Global rate limiting (500 requests per 15 minutes per IP)
 // Multi-instance safe via Redis (configured in src/middleware/auth.js)
-const globalLimiter = rateLimit(100, 15);
+const globalLimiter = rateLimit(500, 15);
 
 app.use((req, res, next) => {
     // Skip rate limit for health check and external webhooks
