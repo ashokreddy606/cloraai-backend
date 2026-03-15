@@ -727,38 +727,25 @@ exports.uploadVideo = async (req, res) => {
         tempFilePath = req.file?.path;
         const s3Url = req.body.videoUrl; // In case they send an S3 URL directly
 
-        if (!tempFilePath && !s3Url) {
-            return res.status(400).json({ error: 'Video file or videoUrl is required' });
-        }
-
-        // If it's an S3 URL, we need to download it first (YouTube API needs a stream/file)
-        if (s3Url && !tempFilePath) {
-            const fs = require('fs');
-            const path = require('path');
-            const os = require('os');
+        // If it's an S3 URL, we can stream it directly to YouTube
+        let videoStream;
+        if (s3Url) {
             const axios = require('axios');
-            
-            const tempDir = path.join(os.tmpdir(), 'cloraai-uploads');
-            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-            
-            tempFilePath = path.join(tempDir, `yt_upload_${Date.now()}.mp4`);
-            
-            const response = await axios({
+            logger.info('YOUTUBE', 'Starting streaming upload from S3', { userId: req.userId, s3Url });
+            const s3Response = await axios({
                 method: 'get',
                 url: s3Url,
                 responseType: 'stream'
             });
-
-            const writer = fs.createWriteStream(tempFilePath);
-            response.data.pipe(writer);
-
-            await new Promise((resolve, reject) => {
-                writer.on('finish', resolve);
-                writer.on('error', reject);
-            });
+            videoStream = s3Response.data;
+        } else if (tempFilePath) {
+            const fs = require('fs');
+            videoStream = fs.createReadStream(tempFilePath);
+        } else {
+            return res.status(400).json({ error: 'Video file or videoUrl is required' });
         }
 
-        // Parse tags if sent as a JSON string from FormData
+        // Parse tags
         let parsedTags = tags;
         if (typeof tags === 'string') {
             try { parsedTags = JSON.parse(tags); } catch { parsedTags = tags.split(',').map(t => t.trim()).filter(Boolean); }
@@ -769,7 +756,8 @@ exports.uploadVideo = async (req, res) => {
             status.publishAt = new Date(publishAt).toISOString();
         }
 
-        const fs = require('fs');
+        logger.info('YOUTUBE', 'Initiating YouTube video insert', { userId: req.userId, title });
+        
         const uploadRes = await youtube.videos.insert({
             part: 'snippet,status',
             requestBody: {
@@ -777,14 +765,16 @@ exports.uploadVideo = async (req, res) => {
                     title,
                     description: description || '',
                     tags: parsedTags || [],
-                    categoryId: '22', // People & Blogs default
+                    categoryId: '22',
                 },
                 status,
             },
             media: {
-                body: fs.createReadStream(tempFilePath),
+                body: videoStream,
             },
         });
+
+        logger.info('YOUTUBE', 'YouTube upload successful', { userId: req.userId, videoId: uploadRes.data.id });
 
         res.status(201).json({
             success: true,
@@ -796,10 +786,14 @@ exports.uploadVideo = async (req, res) => {
             }
         });
     } catch (error) {
-        logger.error('YOUTUBE', 'uploadVideo', error);
-        res.status(500).json({ error: 'Error uploading video', message: error.message });
+        logger.error('YOUTUBE', 'uploadVideo failed', { userId: req.userId, error: error.message, details: error.response?.data });
+        res.status(500).json({ 
+            error: 'Error uploading video', 
+            message: error.message,
+            details: error.response?.data?.error?.message || null 
+        });
     } finally {
-        // Clean up temp file
+        // Clean up temp file if it was a direct upload
         if (tempFilePath) {
             const fs = require('fs');
             fs.unlink(tempFilePath, () => { });
