@@ -30,7 +30,10 @@ const SAFE_EXTENSIONS = {
     'image/webp': '.webp',
     'video/mp4': '.mp4',
     'video/quicktime': '.mov',
-    'video/x-msvideo': '.avi'
+    'video/x-msvideo': '.avi',
+    'video/x-matroska': '.mkv',
+    'video/webm': '.webm',
+    'video/mpeg': '.mpeg'
 };
 
 const ALLOWED_MIME_TYPES = Object.keys(SAFE_EXTENSIONS);
