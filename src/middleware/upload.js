@@ -105,6 +105,13 @@ const validateFileContent = async (req, res, next) => {
         }
 
         if (!type || !ALLOWED_MIME_TYPES.includes(type.mime)) {
+            // RELAXED FOR YOUTUBE UPLOADS: If file-type fails but multer detected a valid video mime, allow it
+            if (ALLOWED_MIME_TYPES.includes(req.file.mimetype)) {
+                console.warn(`[SECURITY] file-type detection failed for ${req.file.originalname} (mimetype: ${req.file.mimetype}), but allowing based on Multer mimetype.`);
+                req.file.verifiedMimeType = req.file.mimetype;
+                return next();
+            }
+
             if (req.file.path) fs.unlink(req.file.path, () => { });
             return res.status(400).json({
                 error: 'Security Violation',

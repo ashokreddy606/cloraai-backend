@@ -5,6 +5,7 @@ const { appConfig, saveConfig } = require('../config');
 const logger = require('../utils/logger');
 const OpenAI = require('openai');
 const { logAIUsage } = require('../middleware/aiLimiter');
+const pushNotificationService = require('../services/pushNotificationService');
 
 
 const openai = new OpenAI({
@@ -1053,6 +1054,38 @@ const sendDealNotifications = async (req, res) => {
         await prisma.notification.createMany({
             data: notifications
         });
+
+        // Send actual Push Notifications
+        const userIds = notifications.map(n => n.userId);
+        const users = await prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, pushToken: true }
+        });
+
+        const pushMessages = [];
+        notifications.forEach(notif => {
+            const user = users.find(u => u.id === notif.userId);
+            if (user && user.pushToken) {
+                pushMessages.push({
+                    to: user.pushToken,
+                    title: notif.title,
+                    body: notif.body,
+                    data: { type: 'brand_deal', dealId: id }
+                });
+            }
+        });
+
+        if (pushMessages.length > 0) {
+            // Chunk or send via service
+            for (const msg of pushMessages) {
+                await pushNotificationService.sendPushNotification(
+                    [msg.to],
+                    msg.title,
+                    msg.body,
+                    msg.data
+                ).catch(err => logger.error('PUSH', `Admin notification failed: ${err.message}`));
+            }
+        }
 
         res.json({ success: true, message: `Sent notifications to ${notifications.length} users` });
     } catch (error) {

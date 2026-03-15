@@ -39,6 +39,7 @@ const localUpload = async (req, res) => {
 
 /**
  * Handle file upload to S3
+ * Logic: Multer saves to temp path -> Validation middleware checks content -> Controller uploads to S3 -> Cleanup
  */
 const s3Upload = async (req, res) => {
     try {
@@ -46,7 +47,66 @@ const s3Upload = async (req, res) => {
             return res.status(400).json({ error: 'No file uploaded or file rejected by security policy' });
         }
 
-        logger.info('UPLOAD', `File uploaded to S3 by user ${req.userId}`, { 
+        // Import necessary S3 parts here to keep scope clean or move to top
+        const { PutObjectCommand, S3Client } = require('@aws-sdk/client-s3');
+        const fs = require('fs');
+        const path = require('path');
+        const { v4: uuidv4 } = require('uuid');
+
+        // Check if we have a local path (from uploadTempVideo)
+        if (req.file.path) {
+            const awsBucketName = (process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets').trim();
+            const awsRegion = (process.env.AWS_REGION || 'us-east-1').trim();
+            
+            // Re-initialize/Reuse S3 client (Middleware already has one, but we need it here)
+            const s3Client = new S3Client({
+                region: awsRegion,
+                credentials: {
+                    accessKeyId: (process.env.AWS_ACCESS_KEY_ID || 'dummy').trim(),
+                    secretAccessKey: (process.env.AWS_SECRET_ACCESS_KEY || 'dummy').trim()
+                }
+            });
+
+            const fileStream = fs.createReadStream(req.file.path);
+            const extension = path.extname(req.file.originalname).toLowerCase() || '.mp4';
+            const s3Key = `videos/${uuidv4()}${extension}`;
+
+            const uploadParams = {
+                Bucket: awsBucketName,
+                Key: s3Key,
+                Body: fileStream,
+                ContentType: req.file.verifiedMimeType || req.file.mimetype
+            };
+
+            await s3Client.send(new PutObjectCommand(uploadParams));
+
+            // Clean up temp file
+            fs.unlink(req.file.path, (err) => {
+                if (err) logger.error('UPLOAD', 'Failed to delete temp file after S3 upload', { path: req.file.path, error: err.message });
+            });
+
+            const publicUrl = `https://${awsBucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+
+            logger.info('UPLOAD', `File uploaded manually to S3 by user ${req.userId}`, { 
+                location: publicUrl,
+                key: s3Key,
+                size: req.file.size
+            });
+
+            return res.json({
+                success: true,
+                data: {
+                    publicUrl: publicUrl,
+                    key: s3Key,
+                    filename: req.file.originalname,
+                    mimetype: req.file.verifiedMimeType || req.file.mimetype,
+                    size: req.file.size
+                }
+            });
+        }
+
+        // Fallback for direct multer-s3 (if ever reverted)
+        logger.info('UPLOAD', `File uploaded to S3 via multer-s3 by user ${req.userId}`, { 
             location: req.file.location,
             key: req.file.key,
             size: req.file.size
@@ -55,7 +115,7 @@ const s3Upload = async (req, res) => {
         res.json({
             success: true,
             data: {
-                publicUrl: req.file.location, // multer-s3 provides 'location' as the public URL
+                publicUrl: req.file.location,
                 key: req.file.key,
                 filename: req.file.originalname,
                 mimetype: req.file.mimetype,
@@ -63,7 +123,11 @@ const s3Upload = async (req, res) => {
             }
         });
     } catch (error) {
-        logger.error('UPLOAD', 'S3 upload failure:', error);
+        if (req.file && req.file.path) {
+            const fs = require('fs');
+            fs.unlink(req.file.path, () => {});
+        }
+        logger.error('UPLOAD', 'S3 manual upload failure:', error);
         res.status(500).json({ error: 'Failed to upload file to S3', message: error.message });
     }
 };
