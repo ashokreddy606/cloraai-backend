@@ -54,7 +54,16 @@ const authenticate = async (req, res, next) => {
     }
 
     // --- Session Persistence Check ---
-    // Check if the current session exists and is not expired
+    // Fast-path: Check Redis first for instant invalidation
+    if (redisClient && decoded.sessionToken) {
+      const redisKey = `refresh_token:${user.id}:${decoded.sessionToken}`;
+      const isRedisValid = await redisClient.get(redisKey);
+      if (!isRedisValid) {
+        return res.status(401).json({ error: "Session revoked or expired. Please log in again." });
+      }
+    }
+
+    // Secondary-path: Database check for persistence/expiration
     const currentSession = await prisma.loginSession.findFirst({
       where: {
         userId: user.id,
