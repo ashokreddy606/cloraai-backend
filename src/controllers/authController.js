@@ -572,25 +572,26 @@ const getSessions = catchAsync(async (req, res, next) => {
   // Filtering out expired sessions if they have an expiration date
   const activeSessions = sessions.filter(s => !s.expiresAt || new Date(s.expiresAt) > new Date());
   
-  const current = activeSessions.find(s => s.isCurrent) || activeSessions[0];
+  // identify the device that made the current request
+  const current = activeSessions.find(s => s.id === req.sessionId) || activeSessions[0];
   const other = activeSessions.filter(s => s.id !== current?.id);
 
-  const formatSession = (s) => ({
+  const formatSession = (s, isCurrentReq) => ({
     sessionId: s.id,
     device: s.deviceName || 'Unknown Device',
     os: s.os || 'Unknown',
     browser: s.browser || 'Unknown',
     location: (s.city && s.country) ? `${s.city}, ${s.country}` : 'Unknown Location',
     ip: s.ipAddress || 'Unknown',
-    active: s.isCurrent ? 'Active now' : s.lastActive ? dayjs(s.lastActive).fromNow() : 'Recently active',
-    currentDevice: s.isCurrent
+    active: isCurrentReq ? 'Active now' : s.lastActive ? dayjs(s.lastActive).fromNow() : 'Recently active',
+    currentDevice: isCurrentReq
   });
 
   res.status(200).json({ 
     success: true, 
     data: {
-      currentDevice: current ? formatSession(current) : null,
-      otherDevices: other.map(formatSession)
+      currentDevice: current ? formatSession(current, true) : null,
+      otherDevices: other.map(s => formatSession(s, false))
     }
   });
 });
@@ -610,7 +611,7 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
   const sessions = await prisma.loginSession.findMany({ 
     where: { 
       userId: req.userId,
-      isCurrent: false
+      id: { not: req.sessionId }
     } 
   });
 
@@ -626,7 +627,7 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
   await prisma.loginSession.deleteMany({ 
     where: { 
       userId: req.userId,
-      isCurrent: false
+      id: { not: req.sessionId }
     } 
   });
 
