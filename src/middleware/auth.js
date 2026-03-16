@@ -53,8 +53,38 @@ const authenticate = async (req, res, next) => {
       return res.status(401).json({ error: "Session expired. Please login again." });
     }
 
+    // --- Session Persistence Check ---
+    // Check if the current session exists and is not expired
+    const sessionToken = req.headers['x-session-token'] || token; // Fallback to JWT token if no specific session header
+    const currentSession = await prisma.session.findFirst({
+      where: {
+        userId: user.id,
+        OR: [
+          { token: token },
+          { isCurrent: true }
+        ],
+        AND: [
+          { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }
+        ]
+      }
+    });
+
+    if (!currentSession) {
+      return res.status(401).json({ error: "Session invalidated or expired. Please log in again." });
+    }
+
+    // Update lastActiveAt (Throttle to once every 5 minutes to save DB writes)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    if (currentSession.lastActiveAt < fiveMinutesAgo) {
+      await prisma.session.update({
+        where: { id: currentSession.id },
+        data: { lastActiveAt: new Date() }
+      });
+    }
+
     req.user = user;
     req.userId = user.id;
+    req.sessionId = currentSession.id;
     next();
   } catch (err) {
     console.error("Authentication middleware error:", err);
