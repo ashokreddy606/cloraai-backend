@@ -123,7 +123,7 @@ const register = catchAsync(async (req, res, next) => {
     }
   });
 
-  if (redisClient) await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+  if (redisClient) await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
 
   const verifyLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/verify-email?token=${user.emailVerificationToken}`;
   const emailHtml = `<!DOCTYPE html><html><body><h2>Welcome to CloraAI, ${user.username}!</h2><p>Please verify your email address to access all features.</p><a href="${verifyLink}" style="padding:10px 20px; background:#4F46E5; color:white; text-decoration:none; border-radius:5px;">Verify Email</a></body></html>`;
@@ -236,7 +236,7 @@ const login = async (req, res) => {
     await prisma.loginSession.create({ data: currentSessionData });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
     await prisma.user.update({
@@ -310,7 +310,7 @@ const logout = async (req, res) => {
     if (req.userId && req.sessionId && redisClient) {
       const session = await prisma.loginSession.findUnique({ where: { id: req.sessionId } });
       if (session?.sessionToken) {
-        await redisClient.del(`refresh_token:${req.userId}:${session.sessionToken}`);
+        await redisClient.del(`refresh_token:${req.userId.toString()}:${session.sessionToken}`);
       }
     }
     res.status(200).json({ success: true, message: 'Logged out successfully' });
@@ -337,7 +337,7 @@ const refreshToken = catchAsync(async (req, res, next) => {
     
     const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { id: true, tokenVersion: true } });
     if (!user || user.tokenVersion !== decoded.tokenVersion) {
-      await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
+      await redisClient.del(redisKey);
       return next(new AppError('User not found or session revoked', 401));
     }
     const tokens = generateTokens(user.id, user.tokenVersion, decoded.sessionToken);
@@ -500,7 +500,7 @@ const googleAuth = async (req, res) => {
     await prisma.loginSession.create({ data: currentSessionData });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
     res.status(200).json({ 
       success: true, 
@@ -582,7 +582,7 @@ const verify2FA = async (req, res) => {
     });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
     res.status(200).json({ 
@@ -634,14 +634,54 @@ const getSessions = catchAsync(async (req, res, next) => {
 });
 
 const logoutSession = catchAsync(async (req, res, next) => {
-  const { sessionId } = req.body;
+  const { sessionId, password } = req.body;
   if (!sessionId) throw new AppError('Session ID is required', 400);
+  if (!password) throw new AppError('Password is required for this action', 400);
+
+  const user = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: { id: true, password: true, failedLogoutAttempts: true, logoutLockoutUntil: true }
+  });
+
+  if (!user) throw new AppError('User not found', 404);
+
+  // Check lockout
+  if (user.logoutLockoutUntil && new Date(user.logoutLockoutUntil) > new Date()) {
+    throw new AppError('please try again after 24 hours', 403);
+  }
+
+  // Verify password
+  const isPasswordValid = await verifyPassword(password, user.password);
+  if (!isPasswordValid) {
+    const newAttempts = user.failedLogoutAttempts + 1;
+    let logoutLockoutUntil = user.logoutLockoutUntil;
+    
+    if (newAttempts >= 5) {
+      logoutLockoutUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { failedLogoutAttempts: newAttempts, logoutLockoutUntil }
+    });
+
+    if (newAttempts >= 5) {
+      throw new AppError('please try again after 24 hours', 403);
+    }
+    throw new AppError('wrong password please enter correct password', 401);
+  }
+
+  // Reset failed attempts on success
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { failedLogoutAttempts: 0, logoutLockoutUntil: null }
+  });
 
   const session = await prisma.loginSession.findUnique({ where: { id: sessionId } });
   if (!session || session.userId.toString() !== req.userId.toString()) throw new AppError('Session not found', 404);
 
   if (session.sessionToken && redisClient) {
-    await redisClient.del(`refresh_token:${req.userId}:${session.sessionToken}`);
+    await redisClient.del(`refresh_token:${req.userId.toString()}:${session.sessionToken}`);
   }
 
   await prisma.loginSession.delete({ where: { id: sessionId } });
@@ -649,6 +689,48 @@ const logoutSession = catchAsync(async (req, res, next) => {
 });
 
 const logoutAllDevices = catchAsync(async (req, res, next) => {
+  const { password } = req.body;
+  if (!password) throw new AppError('Password is required for this action', 400);
+
+  const user = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: { id: true, password: true, failedLogoutAttempts: true, logoutLockoutUntil: true }
+  });
+
+  if (!user) throw new AppError('User not found', 404);
+
+  // Check lockout
+  if (user.logoutLockoutUntil && new Date(user.logoutLockoutUntil) > new Date()) {
+    throw new AppError('please try again after 24 hours', 403);
+  }
+
+  // Verify password
+  const isPasswordValid = await verifyPassword(password, user.password);
+  if (!isPasswordValid) {
+    const newAttempts = user.failedLogoutAttempts + 1;
+    let logoutLockoutUntil = user.logoutLockoutUntil;
+    
+    if (newAttempts >= 5) {
+      logoutLockoutUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { failedLogoutAttempts: newAttempts, logoutLockoutUntil }
+    });
+
+    if (newAttempts >= 5) {
+      throw new AppError('please try again after 24 hours', 403);
+    }
+    throw new AppError('wrong password please enter correct password', 401);
+  }
+
+  // Reset failed attempts on success
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { failedLogoutAttempts: 0, logoutLockoutUntil: null }
+  });
+
   const sessions = await prisma.loginSession.findMany({ 
     where: { 
       userId: req.userId,

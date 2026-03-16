@@ -56,7 +56,7 @@ const authenticate = async (req, res, next) => {
     // --- Session Persistence Check ---
     // Fast-path: Check Redis first for instant invalidation
     if (redisClient && decoded.sessionToken) {
-      const redisKey = `refresh_token:${user.id}:${decoded.sessionToken}`;
+      const redisKey = `refresh_token:${user.id.toString()}:${decoded.sessionToken}`;
       const isRedisValid = await redisClient.get(redisKey);
       if (!isRedisValid) {
         return res.status(401).json({ error: "Session revoked or expired. Please log in again." });
