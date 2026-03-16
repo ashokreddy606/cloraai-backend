@@ -96,8 +96,34 @@ const register = catchAsync(async (req, res, next) => {
     return newUser;
   });
 
-  const { accessToken, refreshToken } = generateTokens(user.id);
-  if (redisClient) await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+  const sessionToken = crypto.randomBytes(32).toString('hex');
+  const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
+
+  // Create initial session for registration
+  const userAgent = req.headers['user-agent'] || '';
+  const detectedInfo = detectDevice(userAgent);
+  const location = await getLocationFromIp(ipAddress);
+  
+  await prisma.loginSession.create({
+    data: {
+      userId: user.id,
+      deviceName: detectedInfo.deviceModel || 'Unknown Device',
+      deviceType: detectedInfo.deviceType || 'desktop',
+      os: detectedInfo.os || 'Unknown',
+      browser: detectedInfo.browser || 'Unknown',
+      ipAddress,
+      city: location.city,
+      region: location.region,
+      country: location.country,
+      timezone: location.timezone,
+      sessionToken,
+      isCurrent: true,
+      loginTime: new Date(),
+      lastActive: new Date()
+    }
+  });
+
+  if (redisClient) await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
 
   const verifyLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/verify-email?token=${user.emailVerificationToken}`;
   const emailHtml = `<!DOCTYPE html><html><body><h2>Welcome to CloraAI, ${user.username}!</h2><p>Please verify your email address to access all features.</p><a href="${verifyLink}" style="padding:10px 20px; background:#4F46E5; color:white; text-decoration:none; border-radius:5px;">Verify Email</a></body></html>`;
@@ -210,7 +236,7 @@ const login = async (req, res) => {
     await prisma.loginSession.create({ data: currentSessionData });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
     await prisma.user.update({
@@ -280,8 +306,13 @@ const updateProfile = async (req, res) => {
 
 const logout = async (req, res) => {
   try {
-    const { refreshToken } = req.body;
-    if (refreshToken && redisClient) await redisClient.del(`refresh_token:${req.userId}:${refreshToken}`);
+    // Invalidate the specific session token in Redis
+    if (req.userId && req.sessionId && redisClient) {
+      const session = await prisma.loginSession.findUnique({ where: { id: req.sessionId } });
+      if (session?.sessionToken) {
+        await redisClient.del(`refresh_token:${req.userId}:${session.sessionToken}`);
+      }
+    }
     res.status(200).json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
     res.status(200).json({ success: true, message: 'Logged out' });
@@ -295,20 +326,23 @@ const refreshToken = catchAsync(async (req, res, next) => {
   try { decoded = verifyToken(oldToken); if (decoded.type !== 'refresh') throw new Error('Invalid token type'); } catch (err) { return next(new AppError('Invalid or expired refresh token', 401)); }
 
   if (redisClient && process.env.NODE_ENV !== 'test') {
-    const isValid = await redisClient.get(`refresh_token:${decoded.userId}:${oldToken}`);
+    if (!decoded.sessionToken) return next(new AppError('Invalid session. Please login again.', 401));
+    
+    const redisKey = `refresh_token:${decoded.userId}:${decoded.sessionToken}`;
+    const isValid = await redisClient.get(redisKey);
+    
     if (!isValid) {
-      const keys = await redisClient.keys(`refresh_token:${decoded.userId}:*`);
-      if (keys.length > 0) await redisClient.del(...keys);
-      return next(new AppError('Security Alert: Replay attack detected. Please login again.', 401));
+      return next(new AppError('Session revoked or expired. Please login again.', 401));
     }
+    
     const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { id: true, tokenVersion: true } });
     if (!user || user.tokenVersion !== decoded.tokenVersion) {
       await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
       return next(new AppError('User not found or session revoked', 401));
     }
     const tokens = generateTokens(user.id, user.tokenVersion, decoded.sessionToken);
-    await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
-    await redisClient.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+    // Refresh the same key (idempotent sliding window)
+    await redisClient.set(redisKey, 'valid', 'EX', 7 * 24 * 60 * 60);
     res.status(200).json({ success: true, data: tokens });
   } else {
     const tokens = generateTokens(decoded.userId, decoded.tokenVersion);
@@ -466,7 +500,7 @@ const googleAuth = async (req, res) => {
     await prisma.loginSession.create({ data: currentSessionData });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
     res.status(200).json({ 
       success: true, 
@@ -548,7 +582,7 @@ const verify2FA = async (req, res) => {
     });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+      await redisClient.set(`refresh_token:${user.id}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
     res.status(200).json({ 
@@ -605,6 +639,10 @@ const logoutSession = catchAsync(async (req, res, next) => {
 
   const session = await prisma.loginSession.findUnique({ where: { id: sessionId } });
   if (!session || session.userId !== req.userId) throw new AppError('Session not found', 404);
+
+  if (session.sessionToken && redisClient) {
+    await redisClient.del(`refresh_token:${req.userId}:${session.sessionToken}`);
+  }
 
   await prisma.loginSession.delete({ where: { id: sessionId } });
   res.status(200).json({ success: true, message: 'Logged out from device.' });
