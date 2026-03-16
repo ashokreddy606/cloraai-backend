@@ -61,4 +61,8 @@ router.get('/facebook/callback', authController.facebookCallback);
 router.get('/instagram', authController.instagramAuth);
 router.get('/instagram/callback', authController.instagramCallback);
 
+// Session Management
+router.get('/sessions', authenticate, authController.getSessions);
+router.post('/logout-device', authenticate, authController.logoutDevice);
+
 module.exports = router;

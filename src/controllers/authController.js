@@ -246,6 +246,21 @@ const login = async (req, res) => {
     // Generate tokens
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion);
 
+    // ── Session & Activity Tracking ─────────────────────────────────────────
+    // Record login session
+    const deviceName = req.body.deviceName || 'Unknown Device';
+    const deviceType = req.body.deviceType || 'unknown';
+
+    await prisma.session.create({
+      data: {
+        userId: user.id,
+        deviceName,
+        deviceType,
+        ipAddress,
+        isCurrent: true
+      }
+    });
+
     // Store refresh token in Redis (7 days TTL)
     if (redisClient && process.env.NODE_ENV !== 'test') {
       await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
@@ -996,6 +1011,99 @@ const instagramCallback = async (req, res) => {
 };
 
 
+// Session Management
+const getSessions = catchAsync(async (req, res, next) => {
+  const sessions = await prisma.session.findMany({
+    where: { userId: req.userId },
+    orderBy: { lastActiveAt: 'desc' }
+  });
+
+  const now = new Date();
+  const formattedSessions = sessions.map(s => {
+    const diffTime = Math.abs(now - new Date(s.createdAt));
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return {
+      id: s.id,
+      deviceName: s.deviceName,
+      ipAddress: s.ipAddress,
+      daysActive: diffDays,
+      isCurrent: s.isCurrent,
+      lastActiveAt: s.lastActiveAt
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    data: formattedSessions
+  });
+});
+
+const logoutDevice = catchAsync(async (req, res, next) => {
+  const { sessionId, password } = req.body;
+  const userId = req.userId;
+
+  if (!sessionId || !password) {
+    throw new AppError('Session ID and password are required', 400);
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AppError('User not found', 404);
+
+  // Check lockout status
+  if (user.logoutLockoutUntil && new Date(user.logoutLockoutUntil) > new Date()) {
+    const hoursRemaining = Math.ceil((new Date(user.logoutLockoutUntil) - new Date()) / (1000 * 60 * 60));
+    throw new AppError(`You cannot logout any device. Please try after ${hoursRemaining} hours.`, 403);
+  }
+
+  // Verify password
+  const passwordValid = await verifyPassword(password, user.password);
+
+  if (!passwordValid) {
+    const newAttempts = user.failedLogoutAttempts + 1;
+    let logoutLockoutUntil = null;
+    
+    if (newAttempts >= 5) {
+      logoutLockoutUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours lockout
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        failedLogoutAttempts: newAttempts,
+        logoutLockoutUntil
+      }
+    });
+
+    if (logoutLockoutUntil) {
+      throw new AppError('Now you cannot logout any device. Please try after 24 hours.', 403);
+    }
+    throw new AppError('Password is wrong. Enter correct password.', 401);
+  }
+
+  // Password correct, perform logout
+  const session = await prisma.session.findFirst({
+    where: { id: sessionId, userId: userId }
+  });
+
+  if (!session) {
+    throw new AppError('Session not found', 404);
+  }
+
+  // delete the session
+  await prisma.session.delete({ where: { id: sessionId } });
+
+  // Reset failed attempts on success
+  await prisma.user.update({
+    where: { id: userId },
+    data: { failedLogoutAttempts: 0 }
+  });
+
+  res.status(200).json({
+    success: true,
+    message: 'Account immediately logged out from that device.'
+  });
+});
+
 module.exports = {
   register,
   login,
@@ -1013,5 +1121,7 @@ module.exports = {
   facebookCallback,
   instagramAuth,
   instagramCallback,
-  refreshToken
+  refreshToken,
+  getSessions,
+  logoutDevice
 };

@@ -117,12 +117,33 @@ model User {
   youtubeLeads          YoutubeLead[]
   contentCalendars      ContentCalendar[]
 
+  // ── Session & Activity Tracking ─────────────────────────────────────────
+  sessions              Session[]
+  failedLogoutAttempts  Int       @default(0)
+  logoutLockoutUntil    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([plan])
   @@index([createdAt])
   @@index([planEndDate])
+}
+
+// User Sessions
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName   String
+  deviceType   String?  // mobile, tablet, desktop
+  ipAddress    String?
+  lastActiveAt DateTime @default(now())
+  isCurrent    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
 }
 
 // Calendar Tasks
