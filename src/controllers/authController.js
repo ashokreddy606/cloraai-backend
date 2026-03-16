@@ -156,14 +156,24 @@ const login = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
+    // Mark previous sessions as NOT current for this user
+    await prisma.session.updateMany({
+      where: { userId: user.id, isCurrent: true },
+      data: { isCurrent: false }
+    });
+
     const currentSessionData = {
       userId: user.id,
       deviceName: req.body.deviceName || deviceInfo.deviceName,
       deviceType: deviceInfo.deviceType,
+      deviceModel: deviceInfo.deviceModel,
       browser: deviceInfo.browser,
       os: deviceInfo.os,
       ipAddress,
-      location,
+      city: location.city,
+      region: location.region,
+      country: location.country,
+      timezone: location.timezone,
       userAgent,
       token: refreshToken,
       expiresAt,
@@ -177,7 +187,7 @@ const login = async (req, res) => {
             userId: user.id,
             type: 'suspicious_login',
             title: 'New Login Detected',
-            body: `New login from ${currentSessionData.deviceName} in ${location}. If this wasn't you, please secure your account.`,
+            body: `New login from ${currentSessionData.deviceName} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
             icon: 'shield-alert',
             color: '#EF4444'
           }
@@ -383,14 +393,24 @@ const googleAuth = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
+    // Mark previous sessions as NOT current for this user
+    await prisma.session.updateMany({
+      where: { userId: user.id, isCurrent: true },
+      data: { isCurrent: false }
+    });
+
     const currentSessionData = {
       userId: user.id,
       deviceName: deviceName || deviceInfo.deviceName,
       deviceType: deviceInfo.deviceType,
+      deviceModel: deviceInfo.deviceModel,
       browser: deviceInfo.browser,
       os: deviceInfo.os,
       ipAddress,
-      location,
+      city: location.city,
+      region: location.region,
+      country: location.country,
+      timezone: location.timezone,
       userAgent,
       token: refreshToken,
       expiresAt,
@@ -404,7 +424,7 @@ const googleAuth = async (req, res) => {
             userId: user.id,
             type: 'suspicious_login',
             title: 'New Login Detected',
-            body: `New login from ${currentSessionData.deviceName} in ${location}. If this wasn't you, please secure your account.`,
+            body: `New login from ${currentSessionData.deviceName} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
             icon: 'shield-alert',
             color: '#EF4444'
           }
@@ -456,15 +476,21 @@ const getSessions = catchAsync(async (req, res, next) => {
     orderBy: { lastActiveAt: 'desc' } 
   });
   
-  const currentDevice = sessions.find(s => s.isCurrent) || sessions[0];
-  const otherDevices = sessions.filter(s => s.id !== currentDevice?.id);
+  const now = new Date();
+  const formattedSessions = sessions.map(s => ({
+    id: s.id, // Keep ID for internal use (logout)
+    device: s.deviceName || s.deviceModel || 'Unknown Device',
+    os: s.os || 'Unknown',
+    browser: s.browser || 'Unknown',
+    location: (s.city && s.country) ? `${s.city}, ${s.country}` : 'Unknown Location',
+    ip: s.ipAddress || 'Unknown',
+    active: s.isCurrent ? 'Active now' : s.lastActiveAt ? `Last active ${dayjs(s.lastActiveAt).fromNow()}` : 'Recently active',
+    currentDevice: s.isCurrent
+  }));
 
   res.status(200).json({ 
     success: true, 
-    data: {
-      currentDevice,
-      otherDevices
-    } 
+    data: formattedSessions 
   });
 });
 

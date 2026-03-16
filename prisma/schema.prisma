@@ -137,10 +137,14 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   deviceName   String?  // e.g., "iPhone 14 Pro Max"
   deviceType   String?  // mobile, tablet, desktop
+  deviceModel  String?
   browser      String?  // e.g., "Chrome", "Safari"
   os           String?  // e.g., "iOS", "Windows"
   ipAddress    String?
-  location     String?  // e.g., "Hyderabad, India"
+  city         String?
+  region       String?
+  country      String?
+  timezone     String?
   userAgent    String?
   token        String?  @unique // Stores the refresh token for rotation/revocation
   lastActiveAt DateTime @default(now())

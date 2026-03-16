@@ -73,6 +73,7 @@ const notificationRoutes = require('./src/routes/notification');
 // Webhook routes removed (Razorpay cleanup)
 const youtubeRoutes = require('./src/routes/youtube');
 const uploadRoutes = require('./src/routes/upload');
+const accountRoutes = require('./src/routes/account');
 
 // Initialize Prisma
 // (Now using shared instance from src/lib/prisma.js)
@@ -342,6 +343,7 @@ app.use('/api/v1/youtube', youtubeRoutes);
 app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/upload', uploadRoutes);
+app.use('/api/account', accountRoutes);
 // Webhook routes removed (Razorpay cleanup)
 console.log('YouTube routes mounted at /api/v1/youtube');
 
