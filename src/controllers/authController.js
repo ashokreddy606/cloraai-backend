@@ -11,6 +11,8 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
 const dayjs = require('dayjs');
+const relativeTime = require('dayjs/plugin/relativeTime');
+dayjs.extend(relativeTime);
 
 const sendEmail = async ({ to, subject, html }) => {
   if (process.env.RESEND_API_KEY) {
@@ -573,8 +575,9 @@ const getSessions = catchAsync(async (req, res, next) => {
   const activeSessions = sessions.filter(s => !s.expiresAt || new Date(s.expiresAt) > new Date());
   
   // identify the device that made the current request
-  const current = activeSessions.find(s => s.id === req.sessionId) || activeSessions[0];
-  const other = activeSessions.filter(s => s.id !== current?.id);
+  // Use toString() to ensure comparison works regardless of type (ObjectId vs String)
+  const current = activeSessions.find(s => s.id.toString() === req.sessionId?.toString()) || activeSessions[0];
+  const other = activeSessions.filter(s => s.id.toString() !== current?.id?.toString());
 
   const formatSession = (s, isCurrentReq) => ({
     sessionId: s.id,
