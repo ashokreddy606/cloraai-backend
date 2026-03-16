@@ -139,7 +139,7 @@ const rateLimit = (max = 500, windowMinutes = 15, keyGenerator = undefined) => {
   });
 };
 
-const authLimiterLogin = rateLimit(50, 15); // Slightly more relaxed for valid users
+const authLimiterLogin = rateLimit(100, 15); // Slightly more relaxed for valid users
 const authLimiterRegister = rateLimit(5, 60); // Stricter for registration
 const authLimiterForgot = rateLimit(5, 60);
 
