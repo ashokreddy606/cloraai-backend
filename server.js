@@ -343,7 +343,7 @@ app.use('/api/v1/youtube', youtubeRoutes);
 app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/upload', uploadRoutes);
-app.use('/api/account', accountRoutes);
+app.use('/api/v1/account', accountRoutes);
 // Webhook routes removed (Razorpay cleanup)
 console.log('YouTube routes mounted at /api/v1/youtube');
 

@@ -295,7 +295,7 @@ const refreshToken = catchAsync(async (req, res, next) => {
       await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
       return next(new AppError('User not found or session revoked', 401));
     }
-    const tokens = generateTokens(user.id, user.tokenVersion);
+    const tokens = generateTokens(user.id, user.tokenVersion, decoded.sessionToken);
     await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
     await redisClient.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     res.status(200).json({ success: true, data: tokens });
@@ -476,13 +476,70 @@ const setup2FA = async (req, res) => {
 const verify2FA = async (req, res) => {
   try {
     const { token } = req.body;
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
+    
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
     const verified = speakeasy.totp.verify({ secret: user.twoFactorSecret, encoding: 'base32', token });
     if (!verified) return res.status(400).json({ error: 'Invalid token' });
+    
     if (!user.twoFactorEnabled) await prisma.user.update({ where: { id: user.id }, data: { twoFactorEnabled: true } });
-    const tokens = generateTokens(user.id, user.tokenVersion);
-    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, ...tokens } });
-  } catch (err) { res.status(500).json({ error: '2FA verification failed' }); }
+    
+    // Production Session Management
+    const sessionToken = require('crypto').randomBytes(32).toString('hex');
+    const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
+    
+    const userAgent = req.headers['user-agent'] || '';
+    const deviceInfo = detectDevice(userAgent);
+    const location = await getLocationFromIp(ip);
+    
+    const expiresAt = deviceInfo.deviceType === 'mobile' ? 
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
+      new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    // Mark previous current session as false
+    await prisma.loginSession.updateMany({
+      where: { userId: user.id, isCurrent: true },
+      data: { isCurrent: false }
+    });
+
+    await prisma.loginSession.create({
+      data: {
+        userId: user.id,
+        deviceType: deviceInfo.deviceType,
+        deviceModel: deviceInfo.deviceModel,
+        os: deviceInfo.os,
+        browser: deviceInfo.browser,
+        ipAddress: ip,
+        city: location.city,
+        region: location.region,
+        country: location.country,
+        timezone: location.timezone,
+        sessionToken,
+        isCurrent: true,
+        loginTime: new Date(),
+        lastActive: new Date(),
+        expiresAt
+      }
+    });
+
+    if (redisClient && process.env.NODE_ENV !== 'test') {
+      await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      data: { 
+        user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, 
+        accessToken, 
+        refreshToken 
+      } 
+    });
+  } catch (err) { 
+    console.error('2FA verification failed:', err);
+    res.status(500).json({ error: '2FA verification failed' }); 
+  }
 };
 
 const getSessions = catchAsync(async (req, res, next) => {

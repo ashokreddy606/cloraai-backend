@@ -66,6 +66,9 @@ const authenticate = async (req, res, next) => {
     });
 
     if (!currentSession) {
+      if (!decoded.sessionToken) {
+        return res.status(401).json({ error: "Session tracking upgrade. Please log in again to secure your account." });
+      }
       return res.status(401).json({ error: "Session invalidated or expired. Please log in again." });
     }
 
