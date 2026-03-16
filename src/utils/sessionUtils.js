@@ -10,20 +10,16 @@ exports.detectDevice = (userAgent) => {
   const parser = new UAParser(userAgent);
   const result = parser.getResult();
   
-  // Custom mapping for deviceType to match user requirements
+  // Mapping OS to be more precise as requested
+  const osName = result.os.name || 'Unknown';
+  const browserName = result.browser.name || 'Unknown';
   let deviceType = result.device.type || 'desktop';
-  if (deviceType === 'mobile' || deviceType === 'tablet') {
-    // Keep as is
-  } else {
-    deviceType = 'desktop';
-  }
 
   return {
-    deviceName: `${result.device.vendor || ''} ${result.device.model || result.os.name || 'Unknown'}`.trim(),
     deviceType,
-    deviceModel: result.device.model || 'Generic',
-    browser: result.browser.name || 'Unknown',
-    os: result.os.name || 'Unknown',
+    deviceModel: result.device.model || 'Generic Device',
+    os: osName,
+    browser: browserName,
     userAgent: userAgent
   };
 };
@@ -35,64 +31,46 @@ exports.detectDevice = (userAgent) => {
  */
 exports.getLocationFromIp = async (ip) => {
   try {
-    // Handle local development IPs
     if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
       return {
         city: 'Local',
         region: 'Development',
-        country: 'System',
-        timezone: 'UTC'
+        country: 'System'
       };
     }
 
-    // Using ip-api.com (Free for non-commercial)
     const response = await axios.get(`http://ip-api.com/json/${ip}`);
     
     if (response.data && response.data.status === 'success') {
-      const { city, regionName, country, timezone } = response.data;
+      const { city, regionName, country } = response.data;
       return {
-        city: city || 'Unknown',
-        region: regionName || 'Unknown',
-        country: country || 'Unknown',
-        timezone: timezone || 'UTC'
+        city: city || 'Unknown City',
+        region: regionName || 'Unknown Region',
+        country: country || 'Unknown Country'
       };
     }
     
     return {
-      city: 'Unknown',
-      region: 'Unknown',
-      country: 'Unknown',
-      timezone: 'UTC'
+      city: 'Unknown City',
+      region: 'Unknown Region',
+      country: 'Unknown Country'
     };
   } catch (error) {
     console.error('IP Location lookup failed:', error.message);
     return {
-      city: 'Unknown',
-      region: 'Unknown',
-      country: 'Unknown',
-      timezone: 'UTC'
+      city: 'Unknown City',
+      region: 'Unknown Region',
+      country: 'Unknown Country'
     };
   }
 };
 
 /**
  * Simple suspicious login detection
- * @param {object} lastSession 
- * @param {object} currentSession 
- * @returns {boolean}
  */
 exports.isSuspicious = (lastSession, currentSession) => {
   if (!lastSession) return false;
-
-  // New country detection
-  if (lastSession.country !== currentSession.country && lastSession.country !== 'Unknown' && currentSession.country !== 'Unknown') {
-    return true;
-  }
-
-  // New critical device change detection (e.g. iOS to Android)
-  if (lastSession.os !== currentSession.os) {
-    return true;
-  }
-
+  if (lastSession.country !== currentSession.country && lastSession.country !== 'Unknown Country') return true;
+  if (lastSession.os !== currentSession.os) return true;
   return false;
 };

@@ -55,14 +55,10 @@ const authenticate = async (req, res, next) => {
 
     // --- Session Persistence Check ---
     // Check if the current session exists and is not expired
-    const sessionToken = req.headers['x-session-token'] || token; // Fallback to JWT token if no specific session header
-    const currentSession = await prisma.session.findFirst({
+    const currentSession = await prisma.loginSession.findFirst({
       where: {
         userId: user.id,
-        OR: [
-          { token: token },
-          { isCurrent: true }
-        ],
+        sessionToken: decoded.sessionToken,
         AND: [
           { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }
         ]
@@ -73,12 +69,12 @@ const authenticate = async (req, res, next) => {
       return res.status(401).json({ error: "Session invalidated or expired. Please log in again." });
     }
 
-    // Update lastActiveAt (Throttle to once every 5 minutes to save DB writes)
+    // Update lastActive (Throttle to once every 5 minutes to save DB writes)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    if (currentSession.lastActiveAt < fiveMinutesAgo) {
-      await prisma.session.update({
+    if (currentSession.lastActive < fiveMinutesAgo) {
+      await prisma.loginSession.update({
         where: { id: currentSession.id },
-        data: { lastActiveAt: new Date() }
+        data: { lastActive: new Date() }
       });
     }
 

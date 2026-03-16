@@ -43,12 +43,12 @@ function generateToken(userId, tokenVersion = 0, expiresIn = '15m') {
 /**
  * Generate a pair of tokens (Access + Refresh).
  */
-function generateTokens(userId, tokenVersion = 0) {
+function generateTokens(userId, tokenVersion = 0, sessionToken = null) {
   const secret = getJwtSecret();
   if (!secret) throw new Error("JWT_SECRET is not configured");
   
   const accessToken = jwt.sign(
-    { userId, tokenVersion, type: 'access' },
+    { userId, tokenVersion, sessionToken, type: 'access' },
     secret,
     { 
       expiresIn: JWT_EXPIRY,
@@ -59,7 +59,7 @@ function generateTokens(userId, tokenVersion = 0) {
   );
 
   const refreshToken = jwt.sign(
-    { userId, tokenVersion, type: 'refresh' },
+    { userId, tokenVersion, sessionToken, type: 'refresh' },
     secret,
     { 
       expiresIn: REFRESH_TOKEN_EXPIRY,
