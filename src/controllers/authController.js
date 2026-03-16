@@ -10,6 +10,7 @@ const { OAuth2Client } = require('google-auth-library');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
+const dayjs = require('dayjs');
 
 const sendEmail = async ({ to, subject, html }) => {
   if (process.env.RESEND_API_KEY) {
@@ -446,10 +447,8 @@ const googleAuth = async (req, res) => {
 
     await prisma.loginSession.create({ data: currentSessionData });
 
-    if (process.env.REDIS_URL) {
-      const redis = new require('ioredis')(process.env.REDIS_URL);
-      await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-      await redis.quit();
+    if (redisClient && process.env.NODE_ENV !== 'test') {
+      await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
     res.status(200).json({ 
       success: true, 
