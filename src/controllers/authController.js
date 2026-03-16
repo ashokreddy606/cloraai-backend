@@ -638,7 +638,7 @@ const logoutSession = catchAsync(async (req, res, next) => {
   if (!sessionId) throw new AppError('Session ID is required', 400);
 
   const session = await prisma.loginSession.findUnique({ where: { id: sessionId } });
-  if (!session || session.userId !== req.userId) throw new AppError('Session not found', 404);
+  if (!session || session.userId.toString() !== req.userId.toString()) throw new AppError('Session not found', 404);
 
   if (session.sessionToken && redisClient) {
     await redisClient.del(`refresh_token:${req.userId}:${session.sessionToken}`);
@@ -653,14 +653,14 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
     where: { 
       userId: req.userId,
       id: { not: req.sessionId }
-    } 
+    }
   });
 
   // Invalidate all refresh tokens in Redis
   if (redisClient) {
     for (const session of sessions) {
       if (session.sessionToken) {
-        await redisClient.del(`refresh_token:${req.userId}:${session.sessionToken}`);
+        await redisClient.del(`refresh_token:${session.userId.toString()}:${session.sessionToken}`);
       }
     }
   }
