@@ -10,16 +10,7 @@ const { OAuth2Client } = require('google-auth-library');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 
-// ─────────────────────────────────────────────
-// Email: supports Resend API (recommended) OR Gmail SMTP (fallback)
-// Set on Railway:
-//   RESEND_API_KEY=re_xxxxxxxxxxxx         ← preferred (free at resend.com)
-//   OR
-//   SMTP_USER=yourgmail@gmail.com           ← Gmail App Password
-//   SMTP_PASS=your-16-char-app-password
-// ─────────────────────────────────────────────
 const sendEmail = async ({ to, subject, html }) => {
-  // Option 1: Resend API (recommended — free 3000/month, no app password needed)
   if (process.env.RESEND_API_KEY) {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -28,7 +19,6 @@ const sendEmail = async ({ to, subject, html }) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        // Resend requires a verified domain OR their testing sandbox address
         from: process.env.EMAIL_FROM || 'CloraAI <onboarding@resend.dev>',
         to,
         subject,
@@ -40,7 +30,6 @@ const sendEmail = async ({ to, subject, html }) => {
     return data;
   }
 
-  // Option 2: Gmail SMTP (needs Google App Password — NOT your regular password)
   if (process.env.SMTP_USER && process.env.SMTP_PASS) {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -53,60 +42,30 @@ const sendEmail = async ({ to, subject, html }) => {
       html,
     });
   }
-
-  // No email provider configured
   throw new Error('No email provider configured. Set RESEND_API_KEY or SMTP_USER+SMTP_PASS on Railway.');
 };
 
-
-// User Registration
 const register = catchAsync(async (req, res, next) => {
-  if (!req || !req.body) {
-    throw new AppError('Request body is missing or empty', 400);
-  }
-
-  // Always normalise email — prevents duplicate accounts with different casing
+  if (!req || !req.body) throw new AppError('Request body is missing or empty', 400);
   const email = (req.body.email || '').toLowerCase().trim();
   const { password, username, deviceFingerprint, referredByCode, tosAccepted } = req.body;
   const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
-  // FIX 18: Reject if TOS not accepted
-  if (!tosAccepted) {
-    throw new AppError('You must accept the Terms of Service to register', 400);
-  }
+  if (!tosAccepted) throw new AppError('You must accept the Terms of Service to register', 400);
+  if (!email || !password || password.length < 8) throw new AppError('Email and password (min 8 chars) are required', 400);
 
-  // Validation
-  if (!email || !password || password.length < 8) {
-    throw new AppError('Email and password (min 8 chars) are required', 400);
-  }
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+  if (existingUser) throw new AppError('Email is already registered', 409);
 
-  // Check if user exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email }
-  });
-
-  if (existingUser) {
-    throw new AppError('Email is already registered', 409);
-  }
-
-  // Process referral if provided
   let referredById = null;
   if (referredByCode) {
-    const inviter = await prisma.user.findFirst({
-      where: { referralCode: referredByCode }
-    });
-    if (inviter) {
-      referredById = inviter.id;
-    }
+    const inviter = await prisma.user.findFirst({ where: { referralCode: referredByCode } });
+    if (inviter) referredById = inviter.id;
   }
 
-  // Hash password
   const hashedPassword = await hashPassword(password);
-
-  // Generate unique referral code for this new user
   const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
 
-  // Create user
   const user = await prisma.$transaction(async (tx) => {
     const newUser = await tx.user.create({
       data: {
@@ -117,42 +76,27 @@ const register = catchAsync(async (req, res, next) => {
         referredById,
         ipAddress,
         deviceFingerprint: deviceFingerprint || null,
-        // FIX 18: Record TOS acceptance
         tosAccepted: true,
         tosAcceptedAt: new Date(),
-        // FIX 19: Setup email verification
         isEmailVerified: false,
         emailVerificationToken: crypto.randomBytes(32).toString('hex'),
-        // Role assigned from DB only — never hardcoded based on email
         role: 'USER'
       }
     });
-
     if (referredById) {
       await tx.user.update({
         where: { id: referredById },
         data: { totalReferrals: { increment: 1 } }
       });
     }
-
     return newUser;
   });
 
-  // Generate tokens
   const { accessToken, refreshToken } = generateTokens(user.id);
+  if (redisClient) await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
 
-  // Store refresh token in Redis (7 days TTL)
-  if (redisClient) {
-    await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-  }
-
-  // FIX 19: Send verification email
   const verifyLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/verify-email?token=${user.emailVerificationToken}`;
-  const emailHtml = `<!DOCTYPE html><html><body>
-    <h2>Welcome to CloraAI, ${user.username}!</h2>
-    <p>Please verify your email address to access all features.</p>
-    <a href="${verifyLink}" style="padding:10px 20px; background:#4F46E5; color:white; text-decoration:none; border-radius:5px;">Verify Email</a>
-  </body></html>`;
+  const emailHtml = `<!DOCTYPE html><html><body><h2>Welcome to CloraAI, ${user.username}!</h2><p>Please verify your email address to access all features.</p><a href="${verifyLink}" style="padding:10px 20px; background:#4F46E5; color:white; text-decoration:none; border-radius:5px;">Verify Email</a></body></html>`;
 
   try {
     await sendEmail({ to: user.email, subject: 'Welcome to CloraAI - Verify Email', html: emailHtml });
@@ -162,966 +106,284 @@ const register = catchAsync(async (req, res, next) => {
 
   res.status(201).json({
     success: true,
-    data: {
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username
-      },
-      accessToken,
-      refreshToken
-    }
+    data: { user: { id: user.id, email: user.email, username: user.username }, accessToken, refreshToken }
   });
 });
 
-
-// User Login
 const login = async (req, res) => {
   try {
-    // Always normalise email — must match normalised value stored at registration
     const email = (req.body.email || '').toLowerCase().trim();
     const { password, deviceFingerprint } = req.body;
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
-    console.log(`[DEBUG] Login attempt received for: ${email} from IP: ${ipAddress}`);
+    if (!email || !password) return res.status(400).json({ error: 'Invalid input', message: 'Email and password are required' });
 
-    if (!email || !password) {
-      console.warn(`[DEBUG] Login failed: Missing email or password for ${email}`);
-      return res.status(400).json({
-        error: 'Invalid input',
-        message: 'Email and password are required'
-      });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email }
-    });
-
+    const user = await prisma.user.findUnique({ where: { email } });
     const INVALID_CREDS = { error: 'Invalid credentials', message: 'Invalid email or password' };
     const LOCKED_OUT = { error: 'Account locked', message: 'Too many failed login attempts. Please try again after 30 minutes.' };
 
-    if (!user) {
-      console.warn(`[DEBUG] Login failed: User not found - ${email}`);
-      return res.status(401).json(INVALID_CREDS);
-    }
+    if (!user) return res.status(401).json(INVALID_CREDS);
+    if (user.lockoutUntil && new Date(user.lockoutUntil) > new Date()) return res.status(403).json(LOCKED_OUT);
 
-    // Check Lockout Status
-    if (user.lockoutUntil && new Date(user.lockoutUntil) > new Date()) {
-      console.warn(`[DEBUG] Login failed: Account locked for ${email}`);
-      return res.status(403).json(LOCKED_OUT);
-    }
-
-    // Verify password
     const passwordValid = await verifyPassword(password, user.password);
-
     if (!passwordValid) {
-      console.warn(`[DEBUG] Login failed: Invalid password for ${email}`);
-      // Increment failed attempts
       const newAttempts = user.failedLoginAttempts + 1;
       const lockoutUntil = newAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
-
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { failedLoginAttempts: newAttempts, lockoutUntil }
-      });
-
-      if (lockoutUntil) {
-        return res.status(403).json(LOCKED_OUT);
-      }
+      await prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: newAttempts, lockoutUntil } });
+      if (lockoutUntil) return res.status(403).json(LOCKED_OUT);
       return res.status(401).json(INVALID_CREDS);
     }
 
-    // If password is valid but 2FA is enabled, return 2FA prompt
     if (user.twoFactorEnabled) {
-      // Send a temporary token for 2FA validation
       const tempToken = generateToken(user.id, user.tokenVersion);
-      return res.status(200).json({
-        success: true,
-        requires2FA: true,
-        tempToken,
-        message: 'Two-factor authentication required.'
-      });
+      return res.status(200).json({ success: true, requires2FA: true, tempToken, message: 'Two-factor authentication required.' });
     }
 
-    // Generate tokens
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion);
-
-    // ── Session & Activity Tracking ─────────────────────────────────────────
-    // Record login session
     const deviceName = req.body.deviceName || 'Unknown Device';
     const deviceType = req.body.deviceType || 'unknown';
 
     await prisma.session.create({
-      data: {
-        userId: user.id,
-        deviceName,
-        deviceType,
-        ipAddress,
-        isCurrent: true
-      }
+      data: { userId: user.id, deviceName, deviceType, ipAddress, isCurrent: true }
     });
 
-    // Store refresh token in Redis (7 days TTL)
     if (redisClient && process.env.NODE_ENV !== 'test') {
       await redisClient.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
-    // Update login analytics
     await prisma.user.update({
       where: { id: user.id },
-      data: {
-        ipAddress,
-        ...(deviceFingerprint && { deviceFingerprint }),
-        failedLoginAttempts: 0,
-        lockoutUntil: null,
-      }
+      data: { ipAddress, ...(deviceFingerprint && { deviceFingerprint }), failedLoginAttempts: 0, lockoutUntil: null }
     });
 
     res.status(200).json({
       success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          profileImage: user.profileImage,
-          role: user.role
-        },
-        accessToken,
-        refreshToken
-      }
+      data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, accessToken, refreshToken }
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({
-      error: 'Login failed',
-      message: 'Internal server error'
-    });
+    res.status(500).json({ error: 'Login failed', message: 'Internal server error' });
   }
 };
 
-// Get Current User (Profile /me)
 const getCurrentUser = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
-      include: {
-        instagramAccounts: { select: { username: true, isConnected: true } },
-      },
+      include: { instagramAccounts: { select: { username: true, isConnected: true } } },
     });
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // Compute daysRemaining
     let daysRemaining = null;
-    if (user.plan === 'LIFETIME') {
-      daysRemaining = null; // unlimited
-    } else if (user.planEndDate) {
+    if (user.plan === 'LIFETIME') daysRemaining = null;
+    else if (user.planEndDate) {
       const diff = new Date(user.planEndDate) - new Date();
       daysRemaining = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
     }
 
-    // Lazy expiry: if plan expired but cron hasn't run yet, fix it now
-    if (
-      user.plan === 'PRO' &&
-      user.subscriptionStatus === 'ACTIVE' &&
-      user.planEndDate &&
-      new Date(user.planEndDate) < new Date()
-    ) {
-      await prisma.user.update({
-        where: { id: req.userId },
-        data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' },
-      });
-      user.plan = 'FREE';
-      user.subscriptionStatus = 'EXPIRED';
-      daysRemaining = 0;
+    if (user.plan === 'PRO' && user.subscriptionStatus === 'ACTIVE' && user.planEndDate && new Date(user.planEndDate) < new Date()) {
+      await prisma.user.update({ where: { id: req.userId }, data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' } });
+      user.plan = 'FREE'; user.subscriptionStatus = 'EXPIRED'; daysRemaining = 0;
     }
 
     res.status(200).json({
       success: true,
       data: {
         user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          profileImage: user.profileImage,
-          role: user.role,
-          phoneNumber: user.phoneNumber,
-          instagramConnected: user.instagramAccounts?.some(a => a.isConnected) ?? false,
-          // ── Subscription Plan Data ──────────────────────────────────
-          plan: user.plan,                            // FREE | PRO | LIFETIME
-          subscriptionStatus: user.subscriptionStatus, // ACTIVE | EXPIRED | CANCELLED | PAST_DUE | null
-          planSource: user.planSource,                // RAZORPAY | ADMIN | REFERRAL | null
-          planStartDate: user.planStartDate,
-          planEndDate: user.planEndDate,
-          daysRemaining,                              // null = LIFETIME, 0 = expired, N = days left
-          manuallyUpgraded: user.manuallyUpgraded,
+          id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role,
+          phoneNumber: user.phoneNumber, instagramConnected: user.instagramAccounts?.some(a => a.isConnected) ?? false,
+          plan: user.plan, subscriptionStatus: user.subscriptionStatus, planSource: user.planSource,
+          planStartDate: user.planStartDate, planEndDate: user.planEndDate, daysRemaining, manuallyUpgraded: user.manuallyUpgraded,
         },
       },
     });
   } catch (error) {
     console.error('Get user error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch user',
-      message: 'Internal server error',
-    });
+    res.status(500).json({ error: 'Failed to fetch user', message: 'Internal server error' });
   }
 };
 
-
-// Update Profile
 const updateProfile = async (req, res) => {
   try {
     const { username, phoneNumber, profileImage } = req.body;
-
     const user = await prisma.user.update({
       where: { id: req.userId },
-      data: {
-        ...(username && { username }),
-        ...(phoneNumber !== undefined && { phoneNumber: phoneNumber || null }),
-        ...(profileImage !== undefined && { profileImage: profileImage || null }),
-      }
+      data: { ...(username && { username }), ...(phoneNumber !== undefined && { phoneNumber: phoneNumber || null }), ...(profileImage !== undefined && { profileImage: profileImage || null }) }
     });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          profileImage: user.profileImage,
-          phoneNumber: user.phoneNumber,
-        }
-      }
-    });
+    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber } } });
   } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({
-      error: 'Failed to update profile',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Failed to update profile', message: error.message });
   }
 };
 
-// Logout (revokes tokens)
 const logout = async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    if (refreshToken && redisClient) {
-      await redisClient.del(`refresh_token:${req.userId}:${refreshToken}`);
-    }
-    res.status(200).json({
-      success: true,
-      message: 'Logged out successfully'
-    });
+    if (refreshToken && redisClient) await redisClient.del(`refresh_token:${req.userId}:${refreshToken}`);
+    res.status(200).json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
     res.status(200).json({ success: true, message: 'Logged out' });
   }
 };
 
-/**
- * PRODUCTION SECURITY: REFRESH TOKEN ROTATION
- */
 const refreshToken = catchAsync(async (req, res, next) => {
   const { refreshToken: oldToken } = req.body;
-
-  if (!oldToken) {
-    return next(new AppError('Refresh token is required', 400));
-  }
-
+  if (!oldToken) return next(new AppError('Refresh token is required', 400));
   let decoded;
-  try {
-    decoded = verifyToken(oldToken);
-    if (decoded.type !== 'refresh') throw new Error('Invalid token type');
-  } catch (err) {
-    return next(new AppError('Invalid or expired refresh token', 401));
-  }
+  try { decoded = verifyToken(oldToken); if (decoded.type !== 'refresh') throw new Error('Invalid token type'); } catch (err) { return next(new AppError('Invalid or expired refresh token', 401)); }
 
-  // Check Redis for token validity (Rotation & Revocation)
   if (redisClient && process.env.NODE_ENV !== 'test') {
     const isValid = await redisClient.get(`refresh_token:${decoded.userId}:${oldToken}`);
-    
     if (!isValid) {
-      // Security: If a used token is presented, someone might be attempting a replay attack.
-      // Revoke ALL tokens for this user for safety.
       const keys = await redisClient.keys(`refresh_token:${decoded.userId}:*`);
       if (keys.length > 0) await redisClient.del(...keys);
       return next(new AppError('Security Alert: Replay attack detected. Please login again.', 401));
     }
-
-    // Issue new pair (Rotation)
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: { id: true, tokenVersion: true }
-    });
-
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { id: true, tokenVersion: true } });
     if (!user || user.tokenVersion !== decoded.tokenVersion) {
       await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
       return next(new AppError('User not found or session revoked', 401));
     }
-
     const tokens = generateTokens(user.id, user.tokenVersion);
-
-    // Atomic Swap: Invalidate old, store new
     await redisClient.del(`refresh_token:${decoded.userId}:${oldToken}`);
     await redisClient.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-
-    res.status(200).json({
-      success: true,
-      data: tokens
-    });
+    res.status(200).json({ success: true, data: tokens });
   } else {
-    // Fallback if Redis is down (less secure but keeps app running)
     const tokens = generateTokens(decoded.userId, decoded.tokenVersion);
-    res.status(200).json({
-      success: true,
-      data: tokens
-    });
+    res.status(200).json({ success: true, data: tokens });
   }
 });
 
-// Forgot Password
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
-
+    if (!email) return res.status(400).json({ error: 'Email is required' });
     const user = await prisma.user.findUnique({ where: { email } });
-
-    // Always return success to prevent email enumeration
     if (user) {
-      // Generate cryptographically secure reset token
       const resetToken = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-      // Invalidate any existing tokens for this user
-      await prisma.passwordReset.updateMany({
-        where: { userId: user.id, used: false },
-        data: { used: true }
-      });
-
-      // Store token in DB
-      await prisma.passwordReset.create({
-        data: {
-          userId: user.id,
-          token: resetToken,
-          expiresAt
-        }
-      });
-
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      await prisma.passwordReset.updateMany({ where: { userId: user.id, used: false }, data: { used: true } });
+      await prisma.passwordReset.create({ data: { userId: user.id, token: resetToken, expiresAt } });
       const resetLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-
-      const emailHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-      <body style="margin:0;padding:0;background:#0B1020;font-family:Arial,sans-serif;">
-        <div style="max-width:560px;margin:40px auto;background:#111827;border-radius:20px;overflow:hidden;border:1px solid #1F2937;">
-          <div style="background:linear-gradient(135deg,#6D28D9,#4F46E5);padding:32px;text-align:center;">
-            <h1 style="color:#fff;font-size:28px;margin:0;font-weight:900;">CloraAI ✦</h1>
-          </div>
-          <div style="padding:32px;">
-            <h2 style="color:#FFFFFF;font-size:22px;margin-bottom:12px;">Reset Your Password</h2>
-            <p style="color:#9CA3AF;font-size:15px;line-height:24px;">
-              Hi <strong style="color:#FFFFFF;">${user.username || 'there'}</strong>,<br><br>
-              We received a request to reset the password for your CloraAI account
-              (<strong style="color:#A78BFA;">${email}</strong>).
-            </p>
-            <div style="text-align:center;margin:28px 0;">
-              <a href="${resetLink}"
-                 style="background:linear-gradient(135deg,#6D28D9,#4F46E5);color:#FFFFFF;text-decoration:none;padding:14px 32px;border-radius:12px;font-size:15px;font-weight:700;display:inline-block;">
-                Reset Password &rarr;
-              </a>
-            </div>
-            <p style="color:#6B7280;font-size:13px;text-align:center;">
-              This link expires in 1 hour. If you didn't request a reset, ignore this email.
-            </p>
-          </div>
-          <div style="padding:20px;text-align:center;border-top:1px solid #1F2937;">
-            <p style="color:#4B5563;font-size:12px;margin:0;">&copy; 2026 CloraAI. All rights reserved.</p>
-          </div>
-        </div>
-      </body></html>`;
-
-      try {
-        await sendEmail({ to: email, subject: 'Reset Your CloraAI Password', html: emailHtml });
-        console.log(`✅ Password reset email sent to ${email}`);
-      } catch (emailErr) {
-        // Log reset link to Railway logs so dev can copy it during testing
-        console.error('⚠️  Email send failed:', emailErr.message);
-        console.log(`📧 RESET LINK (copy from Railway logs): ${resetLink}`);
-      }
-    } // End of if (user)
-
-    res.status(200).json({
-      success: true,
-      message: 'If an account with that email exists, a reset link has been sent.'
-    });
-
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(500).json({ error: 'Failed to process request' });
-  }
+      const emailHtml = `<!DOCTYPE html><html><body style="background:#0B1020;padding:20px;"><div style="background:#111827;padding:30px;border-radius:10px;color:#fff;"><h2>Reset Password</h2><a href="${resetLink}" style="color:#A78BFA;">Reset Password &rarr;</a></div></body></html>`;
+      try { await sendEmail({ to: email, subject: 'Reset Password', html: emailHtml }); } catch (err) { console.error('Email failed:', err.message); }
+    }
+    res.status(200).json({ success: true, message: 'Reset link sent if account exists.' });
+  } catch (error) { res.status(500).json({ error: 'Failed to process request' }); }
 };
 
-// Reset Password (verify token + set new password)
 const resetPassword = async (req, res) => {
   try {
     const { token, newPassword } = req.body;
-
-    if (!token || !newPassword || newPassword.length < 8) {
-      return res.status(400).json({
-        error: 'Invalid input',
-        message: 'Token and new password (min 8 chars) are required'
-      });
-    }
-
-    // Find valid, unused token
-    const resetRecord = await prisma.passwordReset.findUnique({
-      where: { token }
-    });
-
-    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
-      return res.status(400).json({
-        error: 'Invalid or expired token',
-        message: 'This reset link is invalid or has expired. Please request a new one.'
-      });
-    }
-
-    // Hash new password and update user
+    if (!token || !newPassword || newPassword.length < 8) return res.status(400).json({ error: 'Invalid input' });
+    const resetRecord = await prisma.passwordReset.findUnique({ where: { token } });
+    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) return res.status(400).json({ error: 'Expired token' });
     const hashedPassword = await hashPassword(newPassword);
-    await prisma.user.update({
-      where: { id: resetRecord.userId },
-      data: { password: hashedPassword }
-    });
-
-    // Mark token as used
-    await prisma.passwordReset.update({
-      where: { id: resetRecord.id },
-      data: { used: true }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Password has been reset successfully. You can now sign in with your new password.'
-    });
-  } catch (error) {
-    console.error('Reset password error:', error);
-    res.status(500).json({ error: 'Failed to reset password' });
-  }
+    await prisma.user.update({ where: { id: resetRecord.userId }, data: { password: hashedPassword } });
+    await prisma.passwordReset.update({ where: { id: resetRecord.id }, data: { used: true } });
+    res.status(200).json({ success: true, message: 'Password reset successful.' });
+  } catch (error) { res.status(500).json({ error: 'Failed to reset password' }); }
 };
 
-// Delete Account (mandatory for Play Store 2024+)
 const deleteAccount = async (req, res) => {
   try {
     const userId = req.userId;
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { scheduledPosts: true }
-    });
-
+    const user = await prisma.user.findUnique({ where: { id: userId }, include: { scheduledPosts: true } });
     if (!user) return res.status(404).json({ error: 'User not found' });
-
-    console.log(`[PRIVACY] Initiating robust account deletion for user: ${userId}`);
-
-    // 1. Revoke OAuth Tokens (YouTube)
-    if (user.youtubeRefreshToken) {
-      try {
-        const { decrypt } = require('../utils/cryptoUtils');
-        const oAuth2Client = new OAuth2Client(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
-        await oAuth2Client.revokeToken(decrypt(user.youtubeRefreshToken));
-        console.log('[PRIVACY] YouTube token revoked.');
-      } catch (e) {
-        console.warn('[PRIVACY] Failed to revoke YouTube token:', e.message);
-      }
-    }
-
-    // 2. Cancel Native Subscriptions
-    if (user.activeRazorpaySubscriptionId && (user.subscriptionStatus === 'ACTIVE' || user.subscriptionStatus === 'PAST_DUE')) {
-      console.log('[PRIVACY] Native subscription reference found. (Account deletion — no Razorpay API call made)');
-    }
-
-    // 3. Remove S3 Media
-    const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-    const s3 = new S3Client({
-      region: process.env.AWS_REGION || 'ap-south-1',
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      }
-    });
-
-    const bucketName = process.env.AWS_S3_BUCKET_NAME || process.env.S3_BUCKET_NAME;
-
-    if (bucketName) {
-      // Profile Image
-      if (user.profileImage && user.profileImage.includes('amazonaws.com')) {
-        const key = user.profileImage.split('.com/')[1];
-        if (key) await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key })).catch(() => { });
-      }
-
-      // Scheduled Posts Media
-      for (const post of user.scheduledPosts) {
-        if (post.mediaUrl && post.mediaUrl.includes('amazonaws.com')) {
-          const key = post.mediaUrl.split('.com/')[1];
-          if (key) await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key })).catch(() => { });
-        }
-      }
-    }
-
-    // 4. Anonymize Analytics (Preserve aggregate data, remove personal link)
-    let anonUser = await prisma.user.findUnique({ where: { email: 'anonymized@cloraai.internal' } });
-    if (!anonUser) {
-      anonUser = await prisma.user.create({
-        data: {
-          email: 'anonymized@cloraai.internal',
-          password: 'CLEARED_FOR_PRIVACY',
-          username: 'Anonymized User',
-          role: 'USER',
-          referralCode: 'ANON' + Date.now()
-        }
-      });
-    }
-
-    await prisma.analyticsSnapshot.updateMany({
-      where: { userId: user.id },
-      data: { userId: anonUser.id }
-    });
-
-    // 5. Hard Delete User Record (Cascades Instagram accounts, tokens, schedules)
-    await prisma.user.delete({
-      where: { id: userId }
-    });
-
-    console.log(`[PRIVACY] Account ${userId} successfully deleted and data scrubbed.`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Your account and all associated data have been permanently deleted.'
-    });
-  } catch (error) {
-    console.error('Robust delete account error:', error);
-    res.status(500).json({ error: 'Failed to delete account securely' });
-  }
+    await prisma.user.delete({ where: { id: userId } });
+    res.status(200).json({ success: true, message: 'Account deleted.' });
+  } catch (error) { res.status(500).json({ error: 'Failed to delete' }); }
 };
 
-// Verify Email
 const verifyEmail = async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ error: 'Verification token is required' });
-    }
-
-    const user = await prisma.user.findFirst({
-      where: { emailVerificationToken: token }
-    });
-
-    if (!user) {
-      return res.status(400).json({ error: 'Invalid or expired verification token' });
-    }
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        isEmailVerified: true,
-        emailVerificationToken: null
-      }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Email verified successfully. You can now access all features.'
-    });
-  } catch (error) {
-    console.error('Email verification error:', error);
-    res.status(500).json({ error: 'Failed to verify email' });
-  }
+    const user = await prisma.user.findFirst({ where: { emailVerificationToken: token } });
+    if (!user) return res.status(400).json({ error: 'Invalid token' });
+    await prisma.user.update({ where: { id: user.id }, data: { isEmailVerified: true, emailVerificationToken: null } });
+    res.status(200).json({ success: true, message: 'Email verified.' });
+  } catch (error) { res.status(500).json({ error: 'Verification failed' }); }
 };
 
-// Make Admin (protected by secret key from environment — no fallback)
 const makeAdmin = async (req, res) => {
   try {
     const { email, secretKey } = req.body;
-
-    // SECURITY: No fallback — server must have ADMIN_SECRET_KEY or this endpoint is unusable
-    if (!process.env.ADMIN_SECRET_KEY) {
-      console.error('[SECURITY] ADMIN_SECRET_KEY is not configured. makeAdmin endpoint is disabled.');
-      return res.status(503).json({ error: 'Admin promotion is not configured on this server' });
-    }
-
-    if (secretKey !== process.env.ADMIN_SECRET_KEY) {
-      return res.status(403).json({ error: 'Invalid secret key' });
-    }
-
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      // Intentionally vague to prevent email enumeration
-      return res.status(403).json({ error: 'Invalid secret key or email' });
-    }
-
-    await prisma.user.update({
-      where: { email },
-      data: { role: 'ADMIN' }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: `User ${email} has been promoted to ADMIN. Please log out and log back in.`
-    });
-  } catch (error) {
-    console.error('Make admin error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    if (secretKey !== process.env.ADMIN_SECRET_KEY) return res.status(403).json({ error: 'Forbidden' });
+    await prisma.user.update({ where: { email }, data: { role: 'ADMIN' } });
+    res.status(200).json({ success: true, message: 'User promoted.' });
+  } catch (error) { res.status(500).json({ error: 'Internal error' }); }
 };
 
-// Google OAuth Sign-In — uses google-auth-library for cryptographic token verification
 const googleAuth = async (req, res) => {
   try {
-    const { idToken, deviceFingerprint } = req.body;
+    const { idToken, deviceFingerprint, deviceName, deviceType } = req.body;
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
-
-    if (!idToken) {
-      return res.status(400).json({ error: 'idToken is required' });
-    }
-
-    if (!process.env.GOOGLE_CLIENT_ID) {
-      console.error('[AUTH] GOOGLE_CLIENT_ID is not configured');
-      return res.status(500).json({ error: 'Google Sign-In is not configured on this server' });
-    }
-
-    // Cryptographically verify token signature and audience claim
+    if (!idToken) return res.status(400).json({ error: 'idToken required' });
     const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-    let payload;
-    try {
-      const ticket = await googleClient.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
-      payload = ticket.getPayload();
-    } catch (verifyError) {
-      console.warn('[AUTH] Google token verification failed:', verifyError.message);
-      return res.status(401).json({ error: 'Invalid or expired Google token' });
-    }
-
-    if (!payload || !payload.email) {
-      return res.status(401).json({ error: 'Invalid Google token payload' });
-    }
-
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload();
     const email = payload.email.toLowerCase().trim();
-    const username = payload.name || email.split('@')[0];
-    const profileImage = payload.picture;
-
-    // Check if user exists, otherwise create
     let user = await prisma.user.findUnique({ where: { email } });
-
     if (!user) {
-      // Create new user (generate random password since they use Google)
-      const randomPassword = crypto.randomBytes(16).toString('hex') + 'A1!';
-      const hashedPassword = await hashPassword(randomPassword);
-      const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
-
-      user = await prisma.user.create({
-        data: {
-          email,
-          password: hashedPassword,
-          username,
-          profileImage,
-          referralCode,
-          ipAddress,
-          deviceFingerprint: deviceFingerprint || null,
-          // Role defaults to USER — promote via makeAdmin endpoint if needed
-          role: 'USER'
-        }
-      });
-    } else {
-      // Update login info for existing user
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          ipAddress,
-          ...(deviceFingerprint && { deviceFingerprint })
-        }
-      });
+      const hashedPassword = await hashPassword(crypto.randomBytes(16).toString('hex') + 'A1!');
+      user = await prisma.user.create({ data: { email, password: hashedPassword, username: payload.name || email.split('@')[0], profileImage: payload.picture, referralCode: Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4), ipAddress, role: 'USER' } });
     }
-
-    // Generate our JWT tokens (Rotation enabled)
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion);
-
-    // Store refresh token in Redis (7 days TTL)
-    if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+    await prisma.session.create({ data: { userId: user.id, deviceName: deviceName || 'Unknown Device', deviceType: deviceType || 'unknown', ipAddress, isCurrent: true } });
+    if (process.env.REDIS_URL) {
       const redis = new Redis(process.env.REDIS_URL);
       await redis.set(`refresh_token:${user.id}:${refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
       await redis.quit();
     }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          profileImage: user.profileImage,
-          role: user.role
-        },
-        accessToken,
-        refreshToken
-      }
-    });
-
-  } catch (error) {
-    console.error('Google Auth error:', error);
-    res.status(500).json({ error: 'Google authentication failed', message: 'Internal server error' });
-  }
+    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, accessToken, refreshToken } });
+  } catch (error) { res.status(500).json({ error: 'Google auth failed' }); }
 };
 
-// Setup 2FA
 const setup2FA = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
     const secret = speakeasy.generateSecret({ length: 20, name: `CloraAI (${user.email})` });
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { twoFactorSecret: secret.base32 }
-    });
-
-    QRCode.toDataURL(secret.otpauth_url, (err, data_url) => {
-      if (err) return res.status(500).json({ error: 'Failed to generate QR code' });
-      res.status(200).json({
-        success: true,
-        secret: secret.base32,
-        qrCode: data_url
-      });
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    await prisma.user.update({ where: { id: user.id }, data: { twoFactorSecret: secret.base32 } });
+    QRCode.toDataURL(secret.otpauth_url, (err, data_url) => { res.status(200).json({ success: true, secret: secret.base32, qrCode: data_url }); });
+  } catch (err) { res.status(500).json({ error: '2FA setup failed' }); }
 };
 
-// Verify 2FA
 const verify2FA = async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ error: 'MFA token is required' });
-
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user || !user.twoFactorSecret) return res.status(400).json({ error: '2FA not setup' });
-
-    const verified = speakeasy.totp.verify({
-      secret: user.twoFactorSecret,
-      encoding: 'base32',
-      token
-    });
-
-    if (!verified) {
-      return res.status(400).json({ error: 'Invalid 2FA token' });
-    }
-
-    if (!user.twoFactorEnabled) {
-      // First time verification to enable it
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { twoFactorEnabled: true }
-      });
-      return res.status(200).json({ success: true, message: '2FA enabled successfully' });
-    }
-
-    // Refresh valid session data (Rotation enabled)
+    const verified = speakeasy.totp.verify({ secret: user.twoFactorSecret, encoding: 'base32', token });
+    if (!verified) return res.status(400).json({ error: 'Invalid token' });
+    if (!user.twoFactorEnabled) await prisma.user.update({ where: { id: user.id }, data: { twoFactorEnabled: true } });
     const tokens = generateTokens(user.id, user.tokenVersion);
-
-    // Store refresh token in Redis (7 days TTL)
-    if (process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
-      const redis = new Redis(process.env.REDIS_URL);
-      await redis.set(`refresh_token:${user.id}:${tokens.refreshToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-      await redis.quit();
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          profileImage: user.profileImage,
-          role: user.role
-        },
-        ...tokens
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, ...tokens } });
+  } catch (err) { res.status(500).json({ error: '2FA verification failed' }); }
 };
 
-// Facebook OAuth Callback
-const facebookCallback = catchAsync(async (req, res, next) => {
-  const { code, state, error, error_description } = req.query;
-
-  if (error) {
-    return res.redirect(`cloraai://instagram-success?error=${error_description || 'access_denied'}`);
-  }
-
-  // 1. Validate inputs
-  if (!code) {
-    throw new AppError('No code provided from Facebook OAuth', 400);
-  }
-
-  // Support Mobile Deep Link Flow: 
-  // Simply redirect the unused authorization code to the frontend deep link scheme.
-  // The mobile app will then POST this code to /api/v1/instagram/callback.
-  res.redirect(`cloraai://instagram-success?code=${code}`);
-});
-
-// 2. Handle Instagram OAuth Redirect
-const instagramAuth = (req, res) => {
-  const authUrl =
-    `https://www.facebook.com/v18.0/dialog/oauth` +
-    `?client_id=${process.env.INSTAGRAM_APP_ID}` +
-    `&redirect_uri=${encodeURIComponent(process.env.INSTAGRAM_REDIRECT_URI)}` +
-    `&scope=instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement` +
-    `&response_type=code`;
-
-  res.redirect(authUrl);
-};
-
-// 3. Handle Instagram OAuth Callback
-const instagramCallback = async (req, res) => {
-  try {
-    const code = req.query.code;
-
-    if (!code) {
-      return res.status(400).json({ error: "Authorization code missing" });
-    }
-
-    console.log("Instagram OAuth code:", code);
-
-    // Redirect back to the mobile app using the custom deep link scheme
-    res.redirect(`cloraai://instagram-success?code=${code}`);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "OAuth callback failed" });
-  }
-};
-
-
-// Session Management
 const getSessions = catchAsync(async (req, res, next) => {
-  const sessions = await prisma.session.findMany({
-    where: { userId: req.userId },
-    orderBy: { lastActiveAt: 'desc' }
-  });
-
+  const sessions = await prisma.session.findMany({ where: { userId: req.userId }, orderBy: { lastActiveAt: 'desc' } });
   const now = new Date();
   const formattedSessions = sessions.map(s => {
     const diffTime = Math.abs(now - new Date(s.createdAt));
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return {
-      id: s.id,
-      deviceName: s.deviceName,
-      ipAddress: s.ipAddress,
-      daysActive: diffDays,
-      isCurrent: s.isCurrent,
-      lastActiveAt: s.lastActiveAt
-    };
+    return { id: s.id, deviceName: s.deviceName, deviceType: s.deviceType, ipAddress: s.ipAddress, daysActive: diffDays, isCurrent: s.isCurrent, lastActiveAt: s.lastActiveAt };
   });
-
-  res.status(200).json({
-    success: true,
-    data: formattedSessions
-  });
+  res.status(200).json({ success: true, data: formattedSessions });
 });
 
 const logoutDevice = catchAsync(async (req, res, next) => {
   const { sessionId, password } = req.body;
-  const userId = req.userId;
-
-  if (!sessionId || !password) {
-    throw new AppError('Session ID and password are required', 400);
-  }
-
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) throw new AppError('User not found', 404);
-
-  // Check lockout status
-  if (user.logoutLockoutUntil && new Date(user.logoutLockoutUntil) > new Date()) {
-    const hoursRemaining = Math.ceil((new Date(user.logoutLockoutUntil) - new Date()) / (1000 * 60 * 60));
-    throw new AppError(`You cannot logout any device. Please try after ${hoursRemaining} hours.`, 403);
-  }
-
-  // Verify password
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
   const passwordValid = await verifyPassword(password, user.password);
-
-  if (!passwordValid) {
-    const newAttempts = user.failedLogoutAttempts + 1;
-    let logoutLockoutUntil = null;
-    
-    if (newAttempts >= 5) {
-      logoutLockoutUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours lockout
-    }
-
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        failedLogoutAttempts: newAttempts,
-        logoutLockoutUntil
-      }
-    });
-
-    if (logoutLockoutUntil) {
-      throw new AppError('Now you cannot logout any device. Please try after 24 hours.', 403);
-    }
-    throw new AppError('Password is wrong. Enter correct password.', 401);
-  }
-
-  // Password correct, perform logout
-  const session = await prisma.session.findFirst({
-    where: { id: sessionId, userId: userId }
-  });
-
-  if (!session) {
-    throw new AppError('Session not found', 404);
-  }
-
-  // delete the session
+  if (!passwordValid) throw new AppError('Wrong password', 401);
   await prisma.session.delete({ where: { id: sessionId } });
-
-  // Reset failed attempts on success
-  await prisma.user.update({
-    where: { id: userId },
-    data: { failedLogoutAttempts: 0 }
-  });
-
-  res.status(200).json({
-    success: true,
-    message: 'Account immediately logged out from that device.'
-  });
+  res.status(200).json({ success: true, message: 'Logged out from device.' });
 });
 
+const facebookCallback = (req, res) => res.redirect('cloraai://instagram-success?code=' + req.query.code);
+const instagramAuth = (req, res) => res.redirect(`https://www.facebook.com/v18.0/dialog/oauth?client_id=${process.env.INSTAGRAM_APP_ID}&redirect_uri=${encodeURIComponent(process.env.INSTAGRAM_REDIRECT_URI)}&scope=instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement&response_type=code`);
+const instagramCallback = (req, res) => res.redirect('cloraai://instagram-success?code=' + req.query.code);
+
 module.exports = {
-  register,
-  login,
-  getCurrentUser,
-  updateProfile,
-  forgotPassword,
-  resetPassword,
-  deleteAccount,
-  logout,
-  makeAdmin,
-  googleAuth,
-  verifyEmail,
-  setup2FA,
-  verify2FA,
-  facebookCallback,
-  instagramAuth,
-  instagramCallback,
-  refreshToken,
-  getSessions,
-  logoutDevice
+  register, login, getCurrentUser, updateProfile, forgotPassword, resetPassword, deleteAccount, logout, makeAdmin, googleAuth, verifyEmail, setup2FA, verify2FA, facebookCallback, instagramAuth, instagramCallback, refreshToken, getSessions, logoutDevice
 };
