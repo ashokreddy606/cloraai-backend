@@ -115,7 +115,7 @@ const register = catchAsync(async (req, res, next) => {
 const login = async (req, res) => {
   try {
     const email = (req.body.email || '').toLowerCase().trim();
-    const { password, deviceFingerprint } = req.body;
+    const { password, deviceFingerprint, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
 
     if (!email || !password) return res.status(400).json({ error: 'Invalid input', message: 'Email and password are required' });
@@ -147,10 +147,16 @@ const login = async (req, res) => {
     // Production Session Management
     const userAgent = req.headers['user-agent'] || '';
     const ipAddress = ip;
-    const deviceInfo = detectDevice(userAgent);
+    const detectedInfo = detectDevice(userAgent);
     const location = await getLocationFromIp(ipAddress);
     
-    const expiresAt = deviceInfo.deviceType === 'mobile' ? 
+    // Use requested device info if available (for mobile), fallback to detected info
+    const deviceName = reqDeviceName || detectedInfo.deviceModel;
+    const deviceType = reqDeviceType || detectedInfo.deviceType;
+    const os = reqOs || detectedInfo.os;
+    const browser = detectedInfo.browser;
+
+    const expiresAt = deviceType === 'mobile' ? 
       new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
@@ -167,10 +173,10 @@ const login = async (req, res) => {
 
     const currentSessionData = {
       userId: user.id,
-      deviceType: deviceInfo.deviceType,
-      deviceModel: deviceInfo.deviceModel,
-      browser: deviceInfo.browser,
-      os: deviceInfo.os,
+      deviceName,
+      deviceType,
+      os,
+      browser,
       ipAddress,
       city: location.city,
       region: location.region,
@@ -178,7 +184,9 @@ const login = async (req, res) => {
       timezone: location.timezone,
       sessionToken,
       expiresAt,
-      isCurrent: true
+      isCurrent: true,
+      loginTime: new Date(),
+      lastActive: new Date()
     };
 
     if (isSuspicious(latestSession, currentSessionData)) {
@@ -188,7 +196,7 @@ const login = async (req, res) => {
             userId: user.id,
             type: 'suspicious_login',
             title: 'New Login Detected',
-            body: `New login from ${deviceInfo.deviceModel} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
+            body: `New login from ${deviceName} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
             icon: 'shield-alert',
             color: '#EF4444'
           }
@@ -196,6 +204,7 @@ const login = async (req, res) => {
       } catch (err) { logger.error('Failed to create suspicious login notification:', err); }
     }
 
+    // Always create a NEW session record
     await prisma.loginSession.create({ data: currentSessionData });
 
     if (redisClient && process.env.NODE_ENV !== 'test') {
@@ -367,7 +376,7 @@ const makeAdmin = async (req, res) => {
 
 const googleAuth = async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
     const ipAddress = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
     
     if (!idToken) return res.status(400).json({ error: 'idToken required' });
@@ -396,10 +405,15 @@ const googleAuth = async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
     
     const userAgent = req.headers['user-agent'] || '';
-    const deviceInfo = detectDevice(userAgent);
+    const detectedInfo = detectDevice(userAgent);
     const location = await getLocationFromIp(ipAddress);
     
-    const expiresAt = deviceInfo.deviceType === 'mobile' ? 
+    const deviceName = reqDeviceName || detectedInfo.deviceModel;
+    const deviceType = reqDeviceType || detectedInfo.deviceType;
+    const os = reqOs || detectedInfo.os;
+    const browser = detectedInfo.browser;
+
+    const expiresAt = deviceType === 'mobile' ? 
       new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
@@ -416,10 +430,10 @@ const googleAuth = async (req, res) => {
 
     const currentSessionData = {
       userId: user.id,
-      deviceType: deviceInfo.deviceType,
-      deviceModel: deviceInfo.deviceModel,
-      browser: deviceInfo.browser,
-      os: deviceInfo.os,
+      deviceName,
+      deviceType,
+      os,
+      browser,
       ipAddress,
       city: location.city,
       region: location.region,
@@ -427,7 +441,9 @@ const googleAuth = async (req, res) => {
       timezone: location.timezone,
       sessionToken,
       expiresAt,
-      isCurrent: true
+      isCurrent: true,
+      loginTime: new Date(),
+      lastActive: new Date()
     };
 
     if (isSuspicious(latestSession, currentSessionData)) {
@@ -437,7 +453,7 @@ const googleAuth = async (req, res) => {
             userId: user.id,
             type: 'suspicious_login',
             title: 'New Login Detected',
-            body: `New login from ${deviceInfo.deviceModel} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
+            body: `New login from ${deviceName} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
             icon: 'shield-alert',
             color: '#EF4444'
           }
@@ -475,7 +491,7 @@ const setup2FA = async (req, res) => {
 
 const verify2FA = async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
     
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
@@ -491,10 +507,15 @@ const verify2FA = async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
     
     const userAgent = req.headers['user-agent'] || '';
-    const deviceInfo = detectDevice(userAgent);
+    const detectedInfo = detectDevice(userAgent);
     const location = await getLocationFromIp(ip);
     
-    const expiresAt = deviceInfo.deviceType === 'mobile' ? 
+    const deviceName = reqDeviceName || detectedInfo.deviceModel;
+    const deviceType = reqDeviceType || detectedInfo.deviceType;
+    const os = reqOs || detectedInfo.os;
+    const browser = detectedInfo.browser;
+
+    const expiresAt = deviceType === 'mobile' ? 
       new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
@@ -507,10 +528,10 @@ const verify2FA = async (req, res) => {
     await prisma.loginSession.create({
       data: {
         userId: user.id,
-        deviceType: deviceInfo.deviceType,
-        deviceModel: deviceInfo.deviceModel,
-        os: deviceInfo.os,
-        browser: deviceInfo.browser,
+        deviceName,
+        deviceType,
+        os,
+        browser,
         ipAddress: ip,
         city: location.city,
         region: location.region,
@@ -544,22 +565,19 @@ const verify2FA = async (req, res) => {
 
 const getSessions = catchAsync(async (req, res, next) => {
   const sessions = await prisma.loginSession.findMany({ 
-    where: { 
-      userId: req.userId,
-      OR: [
-        { expiresAt: null },
-        { expiresAt: { gt: new Date() } }
-      ]
-    }, 
+    where: { userId: req.userId }, 
     orderBy: { lastActive: 'desc' } 
   });
   
-  const current = sessions.find(s => s.isCurrent);
-  const other = sessions.filter(s => !s.isCurrent);
+  // Filtering out expired sessions if they have an expiration date
+  const activeSessions = sessions.filter(s => !s.expiresAt || new Date(s.expiresAt) > new Date());
+  
+  const current = activeSessions.find(s => s.isCurrent) || activeSessions[0];
+  const other = activeSessions.filter(s => s.id !== current?.id);
 
   const formatSession = (s) => ({
     sessionId: s.id,
-    device: s.deviceModel || 'Unknown Device',
+    device: s.deviceName || 'Unknown Device',
     os: s.os || 'Unknown',
     browser: s.browser || 'Unknown',
     location: (s.city && s.country) ? `${s.city}, ${s.country}` : 'Unknown Location',

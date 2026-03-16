@@ -136,8 +136,8 @@ model LoginSession {
   id           String   @id @default(auto()) @map("_id") @db.ObjectId
   userId       String   @db.ObjectId
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName   String?  // e.g., "iPhone 13", "Samsung Galaxy"
   deviceType   String?  // mobile, tablet, desktop
-  deviceModel  String?
   os           String?  // e.g., "iOS", "Windows"
   browser      String?  // e.g., "Chrome", "Safari"
   ipAddress    String?

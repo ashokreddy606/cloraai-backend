@@ -16,6 +16,9 @@ const loginSchema = z.object({
     body: z.object({
         email: z.string().email('Invalid email address format'),
         password: z.string().min(1, 'Password is required'),
+        deviceName: z.string().optional(),
+        deviceType: z.string().optional(),
+        os: z.string().optional(),
     })
 });
 
@@ -28,7 +31,10 @@ const resetPasswordSchema = z.object({
 
 const googleAuthSchema = z.object({
     body: z.object({
-        idToken: z.string().min(1, 'Google ID Token is required')
+        idToken: z.string().min(1, 'Google ID Token is required'),
+        deviceName: z.string().optional(),
+        deviceType: z.string().optional(),
+        os: z.string().optional(),
     })
 });
 
