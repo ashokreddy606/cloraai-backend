@@ -63,7 +63,7 @@ router.get('/instagram/callback', authController.instagramCallback);
 
 // Session Management
 router.get('/sessions', authenticate, authController.getSessions);
-router.delete('/sessions/:sessionId', authenticate, authController.logoutDevice);
+router.delete('/sessions/:sessionId', authenticate, authController.logoutSession);
 router.post('/logout-all', authenticate, authController.logoutAllDevices);
 
 module.exports = router;
