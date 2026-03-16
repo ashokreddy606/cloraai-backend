@@ -1062,30 +1062,20 @@ const sendDealNotifications = async (req, res) => {
             select: { id: true, pushToken: true }
         });
 
-        const pushMessages = [];
-        notifications.forEach(notif => {
-            const user = users.find(u => u.id === notif.userId);
-            if (user && user.pushToken) {
-                pushMessages.push({
-                    to: user.pushToken,
-                    title: notif.title,
-                    body: notif.body,
-                    data: { type: 'brand_deal', dealId: id }
-                });
-            }
-        });
+        const usersById = new Map(users.map((u) => [u.id, u.pushToken]));
+        await Promise.allSettled(
+            notifications.map((notif) => {
+                const token = usersById.get(notif.userId);
+                if (!token) return Promise.resolve();
 
-        if (pushMessages.length > 0) {
-            // Chunk or send via service
-            for (const msg of pushMessages) {
-                await pushNotificationService.sendPushNotification(
-                    [msg.to],
-                    msg.title,
-                    msg.body,
-                    msg.data
-                ).catch(err => logger.error('PUSH', `Admin notification failed: ${err.message}`));
-            }
-        }
+                return pushNotificationService.sendPushNotification(
+                    token,
+                    notif.title,
+                    notif.body,
+                    { type: 'brand_deal', dealId: id }
+                );
+            })
+        );
 
         res.json({ success: true, message: `Sent notifications to ${notifications.length} users` });
     } catch (error) {
@@ -1116,23 +1106,26 @@ const broadcastNotification = async (req, res) => {
             select: { id: true, pushToken: true },
         });
 
-        let nodeFetch;
-        try { nodeFetch = require('node-fetch'); } catch (e) { nodeFetch = null; }
-
         const results = await Promise.allSettled(
             users.map(async (u) => {
                 await prisma.notification.create({
                     data: { userId: u.id, type, icon: 'megaphone', color: '#7C3AED', title, body },
                 });
-                if (nodeFetch && u.pushToken && u.pushToken.startsWith('ExponentPushToken')) {
-                    await nodeFetch('https://exp.host/--/api/v2/push/send', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                        body: JSON.stringify({ to: u.pushToken, sound: 'default', title, body }),
-                    }).catch(() => { });
-                }
             })
         );
+
+        const pushTokens = users
+            .map((u) => u.pushToken)
+            .filter(Boolean);
+
+        if (pushTokens.length > 0) {
+            await pushNotificationService.sendPushNotification(
+                pushTokens,
+                title,
+                body,
+                { type: type || 'system' }
+            );
+        }
 
         const sent = results.filter(r => r.status === 'fulfilled').length;
         logAdminAction(req.userId, 'BROADCAST_NOTIFICATION', `target:${target}`);

@@ -6,8 +6,29 @@
  */
 const { Expo } = require('expo-server-sdk');
 const logger = require('../utils/logger');
+const prisma = require('../lib/prisma');
 
 const expo = new Expo();
+
+const isLikelyExpoToken = (token) => {
+    if (!token || typeof token !== 'string') return false;
+    return (
+        Expo.isExpoPushToken(token) ||
+        /^ExponentPushToken\[[^\]]+\]$/.test(token) ||
+        /^ExpoPushToken\[[^\]]+\]$/.test(token)
+    );
+};
+
+const removeInvalidPushTokens = async (tokens) => {
+    if (!tokens.length) return;
+
+    await Promise.allSettled(
+        tokens.map((token) => prisma.user.updateMany({
+            where: { pushToken: token },
+            data: { pushToken: null },
+        }))
+    );
+};
 
 /**
  * Send a push notification to one or more Expo push tokens.
@@ -20,11 +41,12 @@ const expo = new Expo();
  */
 const sendPushNotification = async (pushTokens, title, body, data = {}, options = {}) => {
     const tokens = Array.isArray(pushTokens) ? pushTokens : [pushTokens];
+    const uniqueTokens = [...new Set(tokens.filter(Boolean))];
 
     // Build messages for valid Expo push tokens
     const messages = [];
-    for (const pushToken of tokens) {
-        if (!pushToken || !Expo.isExpoPushToken(pushToken)) {
+    for (const pushToken of uniqueTokens) {
+        if (!isLikelyExpoToken(pushToken)) {
             logger.warn('PUSH', `Invalid Expo push token: ${pushToken}`);
             continue;
         }
@@ -44,22 +66,35 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
     const chunks = expo.chunkPushNotifications(messages);
     let sent = 0;
     let failed = 0;
+    const invalidTokens = new Set();
 
     for (const chunk of chunks) {
         try {
             const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-            for (const ticket of ticketChunk) {
+            for (let i = 0; i < ticketChunk.length; i++) {
+                const ticket = ticketChunk[i];
+                const token = chunk[i]?.to;
+
                 if (ticket.status === 'ok') {
                     sent++;
                 } else {
                     failed++;
                     logger.warn('PUSH', `Push ticket error: ${ticket.message}`, { details: ticket.details });
+
+                    if (ticket?.details?.error === 'DeviceNotRegistered' && token) {
+                        invalidTokens.add(token);
+                    }
                 }
             }
         } catch (err) {
             failed += chunk.length;
             logger.error('PUSH', 'Failed to send push notification chunk', { error: err.message });
         }
+    }
+
+    if (invalidTokens.size > 0) {
+        await removeInvalidPushTokens([...invalidTokens]);
+        logger.info('PUSH', `Cleared ${invalidTokens.size} invalid push token(s) from DB`);
     }
 
     logger.info('PUSH', `Notifications sent: ${sent}, failed: ${failed}`);

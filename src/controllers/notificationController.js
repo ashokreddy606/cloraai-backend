@@ -1,23 +1,9 @@
 const prisma = require('../lib/prisma');
+const pushNotificationService = require('../services/pushNotificationService');
 
-// Send real Expo push notification
-const sendExpoPush = async (pushToken, title, body) => {
-    if (!pushToken || !pushToken.startsWith('ExponentPushToken')) return;
-    try {
-        await fetch('https://exp.host/--/api/v2/push/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({
-                to: pushToken,
-                sound: 'default',
-                title,
-                body,
-                data: { type: 'notification' },
-            }),
-        });
-    } catch (e) {
-        console.warn('Push send error:', e.message);
-    }
+const isValidPushToken = (token) => {
+    if (!token || typeof token !== 'string') return false;
+    return /^Expo(nent)?PushToken\[[^\]]+\]$/.test(token);
 };
 
 // GET /api/notifications — list notifications for current user
@@ -39,6 +25,9 @@ const registerToken = async (req, res) => {
     try {
         const { pushToken } = req.body;
         if (!pushToken) return res.status(400).json({ error: 'pushToken is required' });
+        if (!isValidPushToken(pushToken)) {
+            return res.status(400).json({ error: 'Invalid Expo push token format' });
+        }
 
         await prisma.user.update({
             where: { id: req.userId },
@@ -50,13 +39,46 @@ const registerToken = async (req, res) => {
     }
 };
 
+// POST /api/notifications/test-push — send a real push to current user
+const testPush = async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.userId },
+            select: { pushToken: true },
+        });
+
+        if (!user?.pushToken) {
+            return res.status(400).json({
+                error: 'No push token registered for this account. Re-login and allow notifications first.',
+            });
+        }
+
+        await createNotification(req.userId, {
+            type: 'system',
+            icon: 'notifications',
+            color: '#6D28D9',
+            title: 'Test Push Delivered',
+            body: 'Your APK push notifications are working on this device.',
+        });
+
+        return res.json({ success: true, message: 'Test push sent' });
+    } catch (error) {
+        return res.status(500).json({ error: 'Failed to send test push', message: error.message });
+    }
+};
+
 // PATCH /api/notifications/:id/read — mark one as read
 const markRead = async (req, res) => {
     try {
-        await prisma.notification.update({
+        const result = await prisma.notification.updateMany({
             where: { id: req.params.id, userId: req.userId },
             data: { read: true },
         });
+
+        if (result.count === 0) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Failed to mark read', message: error.message });
@@ -93,7 +115,12 @@ const createNotification = async (userId, { type, icon, color, title, body }) =>
     // Send push if user has a token
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
     if (user?.pushToken) {
-        await sendExpoPush(user.pushToken, title, body);
+        await pushNotificationService.sendPushNotification(
+            user.pushToken,
+            title,
+            body,
+            { type: type || 'notification', notificationId: notif.id }
+        );
     }
     return notif;
 };
@@ -101,6 +128,7 @@ const createNotification = async (userId, { type, icon, color, title, body }) =>
 module.exports = {
     getNotifications,
     registerToken,
+    testPush,
     markRead,
     dismissNotification,
     clearAll,

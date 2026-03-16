@@ -2,7 +2,7 @@ const prisma = require('../lib/prisma');
 const OpenAI = require('openai');
 const logger = require('../utils/logger');
 const { logAIUsage } = require('../middleware/aiLimiter');
-const pushNotificationService = require('../services/pushNotificationService');
+const { createNotification } = require('./notificationController');
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
@@ -112,6 +112,15 @@ const analyzeAndSaveBrandDeal = async (message, senderUsername, userId) => {
                     dealCategory: analysis.dealCategory
                 }
             });
+
+            await createNotification(userId, {
+                type: 'brand_deal',
+                icon: 'briefcase',
+                color: '#F59E0B',
+                title: 'New Brand Deal Detected',
+                body: `A potential deal from @${senderUsername || 'brand'} was detected.`
+            }).catch((e) => logger.warn('NOTIFY', `Brand-deal notify failed: ${e.message}`));
+
             // Log token usage AFTER successful OpenAI response (from API metadata, not client)
             await logAIUsage(userId, 'brand_deal', tokensUsed);
             return saved;
@@ -177,6 +186,14 @@ const ignoreDeal = async (req, res) => {
             }
         });
 
+        await createNotification(userId, {
+            type: 'brand_deal',
+            icon: 'close-circle',
+            color: '#F59E0B',
+            title: 'Deal Hidden',
+            body: 'You chose to ignore this brand deal.'
+        }).catch((e) => logger.warn('NOTIFY', `Ignore-deal notify failed: ${e.message}`));
+
         res.status(200).json({ success: true, message: 'Deal ignored successfully' });
     } catch (error) {
         console.error('Ignore deal error:', error);
@@ -220,6 +237,14 @@ const replyToDeal = async (req, res) => {
                 pitch
             }
         });
+
+        await createNotification(userId, {
+            type: 'brand_deal',
+            icon: 'send',
+            color: '#22D3EE',
+            title: 'Pitch Sent',
+            body: 'Your brand deal pitch was submitted successfully.'
+        }).catch((e) => logger.warn('NOTIFY', `Reply-deal notify failed: ${e.message}`));
 
         res.status(201).json({ success: true, data: { reply } });
     } catch (error) {
