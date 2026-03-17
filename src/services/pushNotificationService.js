@@ -62,33 +62,48 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
 
     if (messages.length === 0) return { sent: 0, failed: 0 };
 
-    // Expo recommends chunking into batches of 100
-    const chunks = expo.chunkPushNotifications(messages);
+    // Group messages by experienceId to avoid Expo error:
+    // "All push notification messages in the same request must have the same experienceId"
+    const messagesByExperience = {};
+    for (const msg of messages) {
+        let expId = 'default';
+        const match = msg.to.match(/^ExponentPushToken\[([^/]+)\/.*\]$/);
+        if (match) expId = match[1];
+        
+        if (!messagesByExperience[expId]) messagesByExperience[expId] = [];
+        messagesByExperience[expId].push(msg);
+    }
+
     let sent = 0;
     let failed = 0;
     const invalidTokens = new Set();
 
-    for (const chunk of chunks) {
-        try {
-            const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-            for (let i = 0; i < ticketChunk.length; i++) {
-                const ticket = ticketChunk[i];
-                const token = chunk[i]?.to;
+    for (const expId in messagesByExperience) {
+        const expMessages = messagesByExperience[expId];
+        const chunks = expo.chunkPushNotifications(expMessages);
 
-                if (ticket.status === 'ok') {
-                    sent++;
-                } else {
-                    failed++;
-                    logger.warn('PUSH', `Push ticket error: ${ticket.message}`, { details: ticket.details });
+        for (const chunk of chunks) {
+            try {
+                const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                for (let i = 0; i < ticketChunk.length; i++) {
+                    const ticket = ticketChunk[i];
+                    const token = chunk[i]?.to;
 
-                    if (ticket?.details?.error === 'DeviceNotRegistered' && token) {
-                        invalidTokens.add(token);
+                    if (ticket.status === 'ok') {
+                        sent++;
+                    } else {
+                        failed++;
+                        logger.warn('PUSH', `Push ticket error: ${ticket.message}`, { details: ticket.details });
+
+                        if (ticket?.details?.error === 'DeviceNotRegistered' && token) {
+                            invalidTokens.add(token);
+                        }
                     }
                 }
+            } catch (err) {
+                failed += chunk.length;
+                logger.error('PUSH', `Failed to send push notification chunk for ${expId}`, { error: err.message });
             }
-        } catch (err) {
-            failed += chunk.length;
-            logger.error('PUSH', 'Failed to send push notification chunk', { error: err.message });
         }
     }
 
