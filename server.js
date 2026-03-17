@@ -90,6 +90,10 @@ app.get("/test", (req, res) => {
     res.send("Backend API is working");
 });
 
+app.get("/health", (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date() });
+});
+
 // ─── Security Enforcement ───────────────────────────────────────────────────
 // Check for critical missing environment variables.
 if (process.env.NODE_ENV === 'production') {
@@ -198,11 +202,20 @@ app.use(cors({
         // Allow explicitly whitelisted origins
         if (allowedOrigins.includes(origin)) return callback(null, true);
 
-        // Broaden matching for development environments ONLY
-        if (process.env.NODE_ENV !== 'production') {
-            if (origin.includes('expo.dev') || origin.includes('ngrok') || origin.includes('localhost')) {
-                return callback(null, true);
-            }
+        // Broaden matching for ALL development/local environments
+        // This is necessary for physical devices connecting to a local machine's IP
+        const isLocal = origin.startsWith('http://localhost') || 
+                        origin.startsWith('http://127.0.0.1') || 
+                        origin.startsWith('http://192.168.') || 
+                        origin.startsWith('http://10.');
+        
+        if (isLocal) {
+            return callback(null, true);
+        }
+
+        // Allow Expo dev domains
+        if (origin.includes('expo.dev') || origin.includes('ngrok')) {
+            return callback(null, true);
         }
 
         logger.warn('CORS', `Origin ${origin} blocked by security policy`);
