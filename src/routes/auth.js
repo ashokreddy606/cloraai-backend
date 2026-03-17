@@ -33,11 +33,12 @@ router.post('/forgot-password',
     authController.forgotPassword
 );
 
-router.post('/reset-password',
+router.post('/reset-password/:token',
     authLimiterForgot,
     validate(resetPasswordSchema),
     authController.resetPassword
 );
+
 
 router.post('/refresh-token', authController.refreshToken);
 router.get('/me', authenticate, authController.getCurrentUser);

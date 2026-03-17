@@ -11,6 +11,9 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
 const dayjs = require('dayjs');
+const bcrypt = require('bcryptjs');
+const User = require('../../models/User');
+const transporter = require('../config/mail');
 const relativeTime = require('dayjs/plugin/relativeTime');
 dayjs.extend(relativeTime);
 
@@ -353,32 +356,92 @@ const refreshToken = catchAsync(async (req, res, next) => {
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (user) {
-      const resetToken = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-      await prisma.passwordReset.updateMany({ where: { userId: user.id, used: false }, data: { used: true } });
-      await prisma.passwordReset.create({ data: { userId: user.id, token: resetToken, expiresAt } });
-      const resetLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-      const emailHtml = `<!DOCTYPE html><html><body style="background:#0B1020;padding:20px;"><div style="background:#111827;padding:30px;border-radius:10px;color:#fff;"><h2>Reset Password</h2><a href="${resetLink}" style="color:#A78BFA;">Reset Password &rarr;</a></div></body></html>`;
-      try { await sendEmail({ to: email, subject: 'Reset Password', html: emailHtml }); } catch (err) { console.error('Email failed:', err.message); }
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
     }
-    res.status(200).json({ success: true, message: 'Reset link sent if account exists.' });
-  } catch (error) { res.status(500).json({ error: 'Failed to process request' }); }
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    
+    // For security, don't reveal if user exists
+    if (!user) {
+      return res.status(200).json({ success: true, message: 'If an account exists with that email, a reset link has been sent.' });
+    }
+
+    // Generate secure token
+    const token = crypto.randomBytes(32).toString('hex');
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await user.save();
+
+    const resetUrl = `${process.env.BASE_URL}/reset-password/${token}`;
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <h2 style="color: #4F46E5; text-align: center;">CloraAI</h2>
+        <h3 style="color: #333 text-align: center;">Password Reset Request</h3>
+        <p style="color: #666; font-size: 16px; line-height: 1.5;">
+          You requested a password reset for your CloraAI account. Click the button below to reset it:
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetUrl}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Reset Password</a>
+        </div>
+        <p style="color: #666; font-size: 14px;">
+          This link will expire in 10 minutes. 
+        </p>
+        <p style="color: #999; font-size: 12px; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+          If you did not request this, please ignore this email.
+        </p>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: `"CloraAI" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'Password Reset Request - CloraAI',
+      html: emailHtml
+    });
+
+    res.status(200).json({ success: true, message: 'Reset link sent to your email.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to process request' });
+  }
 };
 
 const resetPassword = async (req, res) => {
   try {
-    const { token, newPassword } = req.body;
-    if (!token || !newPassword || newPassword.length < 8) return res.status(400).json({ error: 'Invalid input' });
-    const resetRecord = await prisma.passwordReset.findUnique({ where: { token } });
-    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) return res.status(400).json({ error: 'Expired token' });
-    const hashedPassword = await hashPassword(newPassword);
-    await prisma.user.update({ where: { id: resetRecord.userId }, data: { password: hashedPassword } });
-    await prisma.passwordReset.update({ where: { id: resetRecord.id }, data: { used: true } });
-    res.status(200).json({ success: true, message: 'Password reset successful.' });
-  } catch (error) { res.status(500).json({ error: 'Failed to reset password' }); }
+    const { token } = req.params;
+    const { password } = req.body;
+
+    if (!password || password.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+    }
+
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(password, salt);
+    
+    // Clear reset fields
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'Password reset successful. You can now login.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reset password' });
+  }
 };
 
 const deleteAccount = async (req, res) => {
