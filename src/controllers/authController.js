@@ -11,7 +11,6 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
 const dayjs = require('dayjs');
-const bcrypt = require('bcryptjs');
 const User = require('../../models/User');
 const transporter = require('../config/mail');
 const relativeTime = require('dayjs/plugin/relativeTime');
@@ -37,19 +36,13 @@ const sendEmail = async ({ to, subject, html }) => {
     return data;
   }
 
-  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
-    return transporter.sendMail({
-      from: process.env.EMAIL_FROM || `CloraAI <${process.env.SMTP_USER}>`,
-      to,
-      subject,
-      html,
-    });
-  }
-  throw new Error('No email provider configured. Set RESEND_API_KEY or SMTP_USER+SMTP_PASS on Railway.');
+  // Fallback to Nodemailer transporter from config
+  return transporter.sendMail({
+    from: process.env.EMAIL_FROM || `"CloraAI" <${process.env.EMAIL_USER}>`,
+    to,
+    subject,
+    html,
+  });
 };
 
 const register = catchAsync(async (req, res, next) => {
@@ -395,12 +388,12 @@ const forgotPassword = async (req, res) => {
       </div>
     `;
 
-    await transporter.sendMail({
-      from: `"CloraAI" <${process.env.EMAIL_USER}>`,
+    await sendEmail({
       to: email,
       subject: 'Password Reset Request - CloraAI',
       html: emailHtml
     });
+
 
     res.status(200).json({ success: true, message: 'Reset link sent to your email.' });
   } catch (error) {
@@ -428,8 +421,7 @@ const resetPassword = async (req, res) => {
     }
 
     // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(password, salt);
+    user.password = await hashPassword(password);
     
     // Clear reset fields
     user.resetPasswordToken = undefined;
