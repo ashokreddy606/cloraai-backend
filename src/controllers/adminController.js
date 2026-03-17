@@ -822,7 +822,7 @@ const createBrandDeal = async (req, res) => {
                         icon: 'briefcase',
                         color: '#F59E0B',
                         title: 'New Brand Deal Alert! 💸',
-                        body: `@${senderUsername} wants to collaborate! Tap to view details.`,
+                        body: 'You have a new brand deal! Open the app to see details.',
                     })),
                     skipDuplicates: true
                 });
@@ -830,7 +830,7 @@ const createBrandDeal = async (req, res) => {
                 await pushNotificationService.sendPushNotification(
                     tokens,
                     'New Brand Deal Alert! 💸',
-                    `@${senderUsername} wants to collaborate! Tap to view details.`,
+                    'You have a new brand deal! Open the app to see details.',
                     { type: 'brand_deal', dealId: deal.id }
                 );
             }
