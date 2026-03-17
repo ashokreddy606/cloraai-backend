@@ -388,17 +388,18 @@ const forgotPassword = async (req, res) => {
       </div>
     `;
 
-    await sendEmail({
+    // Use the Gmail transporter directly (bypasses Resend which has domain restrictions)
+    await transporter.sendMail({
+      from: `"CloraAI" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Password Reset Request - CloraAI',
       html: emailHtml
     });
 
-
     res.status(200).json({ success: true, message: 'Reset link sent to your email.' });
   } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(500).json({ success: false, message: 'Failed to process request' });
+    console.error('Forgot password error:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to send reset email. Please check server email configuration.' });
   }
 };
 
