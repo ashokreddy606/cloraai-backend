@@ -31,7 +31,7 @@ const cache = {
 
     async clearUserCache(userId) {
         try {
-            const patterns = [`*:${userId}:*`, `*${userId}*`];
+            const patterns = [`route:${userId}:*`];
             let allKeys = [];
             for (const p of patterns) {
                 const keys = await redisClient.keys(p);
