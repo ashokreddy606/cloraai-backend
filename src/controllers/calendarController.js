@@ -42,7 +42,7 @@ const createTask = async (req, res) => {
         await createNotification(req.userId, {
             type: 'schedule',
             icon: 'calendar',
-            color: '#6D28D9',
+            color: '#EC4899',
             title: 'Task Created Successfully ✅',
             body: `"${title}" has been added to your calendar.`
         }).catch(err => console.warn('Push notification failed for createTask:', err.message));

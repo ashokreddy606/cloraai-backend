@@ -818,7 +818,7 @@ const createBrandDeal = async (req, res) => {
                     tokens,
                     'New Brand Deal Alert! 💸',
                     `@${senderUsername} wants to collaborate! Tap to view details.`,
-                    { type: 'BRAND_DEAL_NEW', dealId: deal.id }
+                    { type: 'brand_deal', dealId: deal.id }
                 );
             }
         } catch (pushErr) {
