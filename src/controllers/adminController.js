@@ -814,19 +814,23 @@ const createBrandDeal = async (req, res) => {
             const tokens = usersWithTokens.map(u => u.pushToken).filter(pushNotificationService.isLikelyExpoToken);
 
             if (tokens.length > 0) {
-                // Create in-app notification records for all these users
-                await prisma.notification.createMany({
-                    data: usersWithTokens.map(u => ({
-                        userId: u.id,
-                        type: 'brand_deal',
-                        icon: 'briefcase',
-                        color: '#F59E0B',
-                        title: 'New Brand Deal Alert! 💸',
-                        body: 'You have a new brand deal! Open the app to see details.',
-                    })),
-                    skipDuplicates: true
-                });
+                // 1. Create in-app notification records for all these users
+                try {
+                    await prisma.notification.createMany({
+                        data: usersWithTokens.map(u => ({
+                            userId: u.id,
+                            type: 'brand_deal',
+                            icon: 'briefcase',
+                            color: '#F59E0B',
+                            title: 'New Brand Deal Alert! 💸',
+                            body: 'You have a new brand deal! Open the app to see details.',
+                        }))
+                    });
+                } catch (dbErr) {
+                    logger.warn('CREATE_BRAND_DEAL', `Failed to create DB notification records: ${dbErr.message}`);
+                }
 
+                // 2. Send Actual Push Notification
                 await pushNotificationService.sendPushNotification(
                     tokens,
                     'New Brand Deal Alert! 💸',
