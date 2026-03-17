@@ -36,6 +36,17 @@ const createTask = async (req, res) => {
                 platform: platform || 'general',
             }
         });
+
+        // Server-side Push Notification
+        const { createNotification } = require('./notificationController');
+        await createNotification(req.userId, {
+            type: 'schedule',
+            icon: 'calendar',
+            color: '#6D28D9',
+            title: 'Task Created Successfully ✅',
+            body: `"${title}" has been added to your calendar.`
+        }).catch(err => console.warn('Push notification failed for createTask:', err.message));
+
         await cache.clearUserCache(req.userId);
         res.status(201).json({ success: true, data: { task } });
     } catch (error) {

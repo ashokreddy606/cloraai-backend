@@ -246,7 +246,59 @@ const schedulerJob = cron.schedule('*/15 * * * *', async () => {
     }
 });
 
-schedulerTasks.push(schedulerJob);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CRON 3: Subscription Expiration Reminders (Daily @ 10 AM)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const subscriptionReminderJob = cron.schedule('0 10 * * *', async () => {
+    const acquired = await acquireLock('subscription-reminder');
+    if (!acquired) return;
+
+    logger.info('CRON:SUB-REMINDER', 'Running daily subscription expiration check...');
+    try {
+        const now = new Date();
+        const twoDaysFromNow = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+        const twoDaysPlusOneHour = new Date(twoDaysFromNow.getTime() + 60 * 60 * 1000);
+
+        // Find users with PRO/LIFETIME plan expiring in ~48 hours
+        // We look for users whose planEndDate is within a 1-hour window to avoid duplicates if run multiple times
+        // though the cron is set to run once per day.
+        const expiringUsers = await prisma.user.findMany({
+            where: {
+                plan: { in: ['PRO'] },
+                subscriptionStatus: 'ACTIVE',
+                planEndDate: {
+                    gte: twoDaysFromNow,
+                    lte: twoDaysPlusOneHour,
+                },
+                pushToken: { not: null },
+            },
+            select: { id: true, pushToken: true, planEndDate: true },
+        });
+
+        if (expiringUsers.length === 0) {
+            logger.info('CRON:SUB-REMINDER', 'No subscriptions expiring in 2 days.');
+            return;
+        }
+
+        logger.info('CRON:SUB-REMINDER', `Found ${expiringUsers.length} user(s) to notify.`);
+
+        const pushService = require('./pushNotificationService');
+        await Promise.allSettled(
+            expiringUsers.map((user) =>
+                pushService.notifySubscriptionRenewal(user.pushToken, 2).catch((e) =>
+                    logger.warn('CRON:SUB-REMINDER', `Failed to notify user ${user.id}: ${e.message}`)
+                )
+            )
+        );
+
+    } catch (error) {
+        logger.error('CRON:SUB-REMINDER', 'Worker-level failure', { error: error.message });
+    } finally {
+        await releaseLock('subscription-reminder');
+    }
+});
+
+schedulerTasks.push(schedulerJob, subscriptionReminderJob);
 
 logger.info('CRON', 'Scheduler and Token-Refresh cron jobs initialized.', { workerId: WORKER_ID });
 

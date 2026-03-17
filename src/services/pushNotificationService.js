@@ -151,6 +151,7 @@ const notifyAnalyticsMilestone = async (pushToken, milestone, value) => {
 
 module.exports = {
     sendPushNotification,
+    isLikelyExpoToken,
     notifyPostSuccess,
     notifyPostFailure,
     notifySubscriptionRenewal,

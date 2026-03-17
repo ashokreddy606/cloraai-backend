@@ -804,6 +804,27 @@ const createBrandDeal = async (req, res) => {
         const deal = await prisma.brandDeal.create({
             data: { senderUsername, dmContent, confidence, dealCategory, isBrandDeal },
         });
+
+        // Instagram-style Push Notification Broadcast
+        try {
+            const usersWithTokens = await prisma.user.findMany({
+                where: { pushToken: { not: null } },
+                select: { pushToken: true }
+            });
+            const tokens = usersWithTokens.map(u => u.pushToken).filter(pushNotificationService.isLikelyExpoToken);
+            
+            if (tokens.length > 0) {
+                await pushNotificationService.sendPushNotification(
+                    tokens,
+                    'New Brand Deal Alert! 💸',
+                    `@${senderUsername} wants to collaborate! Tap to view details.`,
+                    { type: 'BRAND_DEAL_NEW', dealId: deal.id }
+                );
+            }
+        } catch (pushErr) {
+            logger.warn('CREATE_BRAND_DEAL', `Failed to broadcast push: ${pushErr.message}`);
+        }
+
         logAdminAction(req.userId, 'CREATE_BRAND_DEAL', deal.id);
         res.json({ success: true, data: { deal } });
     } catch (error) {
