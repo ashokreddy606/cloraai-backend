@@ -809,11 +809,24 @@ const createBrandDeal = async (req, res) => {
         try {
             const usersWithTokens = await prisma.user.findMany({
                 where: { pushToken: { not: null } },
-                select: { pushToken: true }
+                select: { id: true, pushToken: true }
             });
             const tokens = usersWithTokens.map(u => u.pushToken).filter(pushNotificationService.isLikelyExpoToken);
-            
+
             if (tokens.length > 0) {
+                // Create in-app notification records for all these users
+                await prisma.notification.createMany({
+                    data: usersWithTokens.map(u => ({
+                        userId: u.id,
+                        type: 'brand_deal',
+                        icon: 'briefcase',
+                        color: '#F59E0B',
+                        title: 'New Brand Deal Alert! 💸',
+                        body: `@${senderUsername} wants to collaborate! Tap to view details.`,
+                    })),
+                    skipDuplicates: true
+                });
+
                 await pushNotificationService.sendPushNotification(
                     tokens,
                     'New Brand Deal Alert! 💸',
