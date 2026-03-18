@@ -29,6 +29,7 @@ const SCOPES = [
     'https://www.googleapis.com/auth/youtube.upload',
     'https://www.googleapis.com/auth/yt-analytics.readonly',
     'https://www.googleapis.com/auth/youtube.force-ssl',
+    'https://www.googleapis.com/auth/youtube',
 ];
 
 // Helper: get authenticated YouTube client for the current user
@@ -64,14 +65,15 @@ const getYoutubeClientForUser = async (userId) => {
             logger.info('YOUTUBE', 'Token automatically refreshed and saved', { userId });
         }
     } catch (refreshError) {
-        logger.error('YOUTUBE', 'Token refresh failed', { userId, error: refreshError.message });
+        logger.error('YOUTUBE', 'Token refresh failed', { userId: userId, error: refreshError.message });
         if (refreshError.message.includes('invalid_grant')) {
             throw new Error('YouTube session expired. Please reconnect your account in settings.');
         }
         throw new Error('Failed to refresh YouTube session: ' + refreshError.message);
     }
 
-    return google.youtube({ version: 'v3', auth: client });
+    const youtube = google.youtube({ version: 'v3', auth: client });
+    return { youtube, client };
 };
 
 exports.getAuthUrl = async (req, res) => {
@@ -423,8 +425,7 @@ exports.getAnalytics = async (req, res) => {
 
 exports.getChannelAnalytics = async (req, res) => {
     try {
-        const youtube = await getYoutubeClientForUser(req.userId);
-        const client = youtube.context._options.auth; // The OAuth2Client instance
+        const { youtube, client } = await getYoutubeClientForUser(req.userId);
         const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth: client });
 
         // Fetch channel metadata and lifetime stats
@@ -432,6 +433,7 @@ exports.getChannelAnalytics = async (req, res) => {
         const channelRes = await youtube.channels.list({
             part: 'snippet,statistics,contentDetails',
             mine: true,
+            auth: client // Explicitly pass client
         }).catch(err => {
             console.error('[YOUTUBE DEBUG] channels.list failed:', err.response?.data || err.message);
             throw new Error(`YouTube Data API failed: ${err.message}`);
@@ -600,14 +602,14 @@ exports.getChannelAnalytics = async (req, res) => {
 exports.getVideoAnalytics = async (req, res) => {
     try {
         const { videoId } = req.params;
-        const youtube = await getYoutubeClientForUser(req.userId);
-        const auth = youtube.context._options.auth;
+        const { youtube, client: auth } = await getYoutubeClientForUser(req.userId);
         const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth });
 
         // Basic meta
         const videoRes = await youtube.videos.list({
             part: 'snippet,statistics,contentDetails',
             id: videoId,
+            auth // Explicitly pass client
         });
 
         if (!videoRes.data.items || videoRes.data.items.length === 0) {
@@ -669,13 +671,14 @@ exports.getVideoAnalytics = async (req, res) => {
 
 exports.getUserVideos = async (req, res) => {
     try {
-        const youtube = await getYoutubeClientForUser(req.userId);
+        const { youtube, client } = await getYoutubeClientForUser(req.userId);
         const { maxResults = 20 } = req.query;
 
         // Get uploads playlist
         const channelRes = await youtube.channels.list({
             part: 'contentDetails',
             mine: true,
+            auth: client // Explicitly pass client
         });
         const uploadsPlaylistId = channelRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
 
@@ -687,6 +690,7 @@ exports.getUserVideos = async (req, res) => {
             part: 'snippet,contentDetails',
             playlistId: uploadsPlaylistId,
             maxResults: parseInt(maxResults),
+            auth: client // Explicitly pass client
         });
 
         const videoIds = playlistRes.data.items?.map(i => i.contentDetails.videoId).filter(Boolean) || [];
@@ -696,6 +700,7 @@ exports.getUserVideos = async (req, res) => {
         const videoStatsRes = await youtube.videos.list({
             part: 'snippet,statistics,status',
             id: videoIds.join(','),
+            auth: client // Explicitly pass client
         });
 
         const videos = (videoStatsRes.data.items || []).map(v => ({
@@ -721,7 +726,7 @@ exports.getUserVideos = async (req, res) => {
 exports.uploadVideo = async (req, res) => {
     let tempFilePath = null;
     try {
-        const youtube = await getYoutubeClientForUser(req.userId);
+        const { youtube, client: auth } = await getYoutubeClientForUser(req.userId);
         const { title, description, tags, privacyStatus = 'private', publishAt } = req.body;
 
         if (!title) {
@@ -758,7 +763,6 @@ exports.uploadVideo = async (req, res) => {
         }
 
         // Get the auth client and ensure it's used explicitly for the upload
-        const auth = youtube.context._options.auth;
         const mimeType = req.file?.mimetype || 'video/mp4'; // Fallback to mp4 if unknown
 
         logger.info('YOUTUBE', 'Initiating YouTube video insert', { 
@@ -832,7 +836,7 @@ exports.uploadVideo = async (req, res) => {
 
 exports.updateVideo = async (req, res) => {
     try {
-        const youtube = await getYoutubeClientForUser(req.userId);
+        const { youtube, client } = await getYoutubeClientForUser(req.userId);
         const { videoId } = req.params;
         const { title, description, tags, privacyStatus } = req.body;
 
@@ -840,6 +844,7 @@ exports.updateVideo = async (req, res) => {
         const currentRes = await youtube.videos.list({
             part: 'snippet,status',
             id: videoId,
+            auth: client // Explicitly pass client
         });
 
         if (!currentRes.data.items || currentRes.data.items.length === 0) {
@@ -881,7 +886,7 @@ exports.updateVideo = async (req, res) => {
 
 exports.deleteVideo = async (req, res) => {
     try {
-        const youtube = await getYoutubeClientForUser(req.userId);
+        const { youtube, client: auth } = await getYoutubeClientForUser(req.userId);
         const { videoId } = req.params;
 
         if (!videoId) {
@@ -892,7 +897,8 @@ exports.deleteVideo = async (req, res) => {
         // Fetch the video and check if it belongs to the authenticated user's channel
         const videoRes = await youtube.videos.list({
             part: 'snippet',
-            id: videoId
+            id: videoId,
+            auth // Explicitly pass client
         });
 
         if (!videoRes.data.items || videoRes.data.items.length === 0) {
@@ -904,7 +910,8 @@ exports.deleteVideo = async (req, res) => {
         // Fetch user's own channel ID
         const channelRes = await youtube.channels.list({
             part: 'id',
-            mine: true
+            mine: true,
+            auth // Explicitly pass client
         });
 
         const myChannelId = channelRes.data.items?.[0]?.id;
