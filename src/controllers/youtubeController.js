@@ -757,14 +757,20 @@ exports.uploadVideo = async (req, res) => {
             status.publishAt = new Date(publishAt).toISOString();
         }
 
+        // Get the auth client and ensure it's used explicitly for the upload
+        const auth = youtube.context._options.auth;
+        const mimeType = req.file?.mimetype || 'video/mp4'; // Fallback to mp4 if unknown
+
         logger.info('YOUTUBE', 'Initiating YouTube video insert', { 
             userId: req.userId, 
             title,
             source: s3Url ? 'S3' : 'Local Disk',
-            tempFile: tempFilePath ? path.basename(tempFilePath) : null
+            tempFile: tempFilePath ? path.basename(tempFilePath) : null,
+            mimeType
         });
         
         const uploadRes = await youtube.videos.insert({
+            auth, // Explicitly pass auth client
             part: 'snippet,status',
             requestBody: {
                 snippet: {
@@ -776,6 +782,7 @@ exports.uploadVideo = async (req, res) => {
                 status,
             },
             media: {
+                mimeType,
                 body: videoStream,
             },
         }, {
