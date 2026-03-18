@@ -1,3 +1,6 @@
+const path = require('path');
+const fs = require('fs');
+const axios = require('axios');
 const logger = require('../utils/logger');
 const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
@@ -730,7 +733,6 @@ exports.uploadVideo = async (req, res) => {
         // If it's an S3 URL, we can stream it directly to YouTube
         let videoStream;
         if (s3Url) {
-            const axios = require('axios');
             logger.info('YOUTUBE', 'Starting streaming upload from S3', { userId: req.userId, s3Url });
             const s3Response = await axios({
                 method: 'get',
@@ -739,7 +741,6 @@ exports.uploadVideo = async (req, res) => {
             });
             videoStream = s3Response.data;
         } else if (tempFilePath) {
-            const fs = require('fs');
             videoStream = fs.createReadStream(tempFilePath);
         } else {
             return res.status(400).json({ error: 'Video file or videoUrl is required' });
@@ -808,7 +809,6 @@ exports.uploadVideo = async (req, res) => {
     } finally {
         // Clean up temp file if it was a direct upload
         if (tempFilePath) {
-            const fs = require('fs');
             fs.unlink(tempFilePath, () => { });
         }
     }
