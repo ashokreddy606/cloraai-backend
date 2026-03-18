@@ -756,7 +756,12 @@ exports.uploadVideo = async (req, res) => {
             status.publishAt = new Date(publishAt).toISOString();
         }
 
-        logger.info('YOUTUBE', 'Initiating YouTube video insert', { userId: req.userId, title });
+        logger.info('YOUTUBE', 'Initiating YouTube video insert', { 
+            userId: req.userId, 
+            title,
+            source: s3Url ? 'S3' : 'Local Disk',
+            tempFile: tempFilePath ? path.basename(tempFilePath) : null
+        });
         
         const uploadRes = await youtube.videos.insert({
             part: 'snippet,status',
@@ -772,6 +777,14 @@ exports.uploadVideo = async (req, res) => {
             media: {
                 body: videoStream,
             },
+        }, {
+            // Optional: for large files, use resumable upload
+            onUploadProgress: (evt) => {
+                const progress = Math.round((evt.bytesRead / (req.file?.size || 1)) * 100);
+                if (progress % 20 === 0) { // Log every 20%
+                    logger.info('YOUTUBE', `Upload progress for ${req.userId}: ${progress}%`);
+                }
+            }
         });
 
         logger.info('YOUTUBE', 'YouTube upload successful', { userId: req.userId, videoId: uploadRes.data.id });

@@ -88,7 +88,18 @@ const createUpload = (storage, sizeLimit) => multer({
 
 const uploadImage = createUpload(getS3Storage('images'), 10 * 1024 * 1024);
 const uploadVideoS3 = createUpload(getS3Storage('videos'), 200 * 1024 * 1024);
-const uploadTempVideo = createUpload(multer({ dest: path.join(os.tmpdir(), 'cloraai-uploads') }), 200 * 1024 * 1024);
+const uploadTempVideo = createUpload(multer.diskStorage({
+    destination: (req, file, cb) => {
+        const tempPath = path.join(os.tmpdir(), 'cloraai-uploads');
+        if (!fs.existsSync(tempPath)) {
+            fs.mkdirSync(tempPath, { recursive: true });
+        }
+        cb(null, tempPath);
+    },
+    filename: (req, file, cb) => {
+        cb(null, generateSecureFileName(file));
+    }
+}), 200 * 1024 * 1024);
 const uploadLocal = createUpload(getLocalDiskStorage(''), 50 * 1024 * 1024);
 
 /**
