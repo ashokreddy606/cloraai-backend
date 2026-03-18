@@ -770,7 +770,6 @@ exports.uploadVideo = async (req, res) => {
         });
         
         const uploadRes = await youtube.videos.insert({
-            auth, // Explicitly pass auth client
             part: 'snippet,status',
             requestBody: {
                 snippet: {
@@ -784,13 +783,23 @@ exports.uploadVideo = async (req, res) => {
             media: {
                 mimeType,
                 body: videoStream,
+                resumable: true, // Enable resumable upload for stability
             },
         }, {
+            auth, // Explicitly pass auth client in options
             // Optional: for large files, use resumable upload
             onUploadProgress: (evt) => {
-                const progress = Math.round((evt.bytesRead / (req.file?.size || 1)) * 100);
-                if (progress % 20 === 0) { // Log every 20%
-                    logger.info('YOUTUBE', `Upload progress for ${req.userId}: ${progress}%`);
+                const totalBytes = req.file?.size || 0;
+                const progress = totalBytes > 0 
+                    ? Math.round((evt.bytesRead / totalBytes) * 100)
+                    : 'ongoing';
+                
+                if (typeof progress === 'number') {
+                    if (progress % 20 === 0) {
+                        logger.info('YOUTUBE', `Upload progress for ${req.userId}: ${progress}%`);
+                    }
+                } else {
+                    logger.info('YOUTUBE', `Upload in progress for ${req.userId}...`);
                 }
             }
         });
