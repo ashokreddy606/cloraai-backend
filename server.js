@@ -360,6 +360,37 @@ app.use('/api/v1/account', accountRoutes);
 // Webhook routes removed (Razorpay cleanup)
 console.log('YouTube routes mounted at /api/v1/youtube');
 
+// ================= WEBHOOK ROUTES START =================
+
+// 🔹 Webhook Verification (GET)
+app.get('/webhook', (req, res) => {
+  const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
+
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  console.log("VERIFY REQUEST:", mode, token);
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log("WEBHOOK VERIFIED SUCCESS");
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+
+// 🔹 Webhook Events (POST)
+app.post('/webhook', (req, res) => {
+  console.log("WEBHOOK_EVENT_RECEIVED");
+  console.log(JSON.stringify(req.body, null, 2));
+
+  res.status(200).send("EVENT_RECEIVED");
+});
+
+// ================= WEBHOOK ROUTES END =================
+
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {
     res.status(404).json({
