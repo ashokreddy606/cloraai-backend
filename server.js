@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const cors = require('cors');
 const helmet = require('helmet');
 const hpp = require('hpp');
@@ -362,6 +363,31 @@ console.log('YouTube routes mounted at /api/v1/youtube');
 
 // ================= WEBHOOK ROUTES START =================
 
+/**
+ * 🔹 Send Message Helper
+ * Sends a POST request to Meta Graph API to reply to a message.
+ */
+async function sendMessage(senderId, text) {
+  try {
+    const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+    if (!PAGE_ACCESS_TOKEN) {
+      console.error("ERROR: PAGE_ACCESS_TOKEN is not defined in .env");
+      return;
+    }
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+      {
+        recipient: { id: senderId },
+        message: { text: text }
+      }
+    );
+    console.log("LOG: Message sent successfully to", senderId, ":", response.data);
+  } catch (error) {
+    console.error("ERROR: Graph API Request Failed:", error.response ? error.response.data : error.message);
+  }
+}
+
 // 🔹 Webhook Verification (GET)
 app.get('/webhook', (req, res) => {
   const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
@@ -370,23 +396,49 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  console.log("VERIFY REQUEST:", mode, token);
+  console.log("VERIFY REQUEST RECEIVED:", mode, token);
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log("WEBHOOK VERIFIED SUCCESS");
+    console.log("WEBHOOK_VERIFIED_SUCCESS");
     return res.status(200).send(challenge);
   }
 
+  console.log("WEBHOOK_VERIFICATION_FAILED");
   return res.sendStatus(403);
 });
 
 
 // 🔹 Webhook Events (POST)
-app.post('/webhook', (req, res) => {
-  console.log("WEBHOOK_EVENT_RECEIVED");
-  console.log(JSON.stringify(req.body, null, 2));
+app.post('/webhook', async (req, res) => {
+  try {
+    const body = req.body;
+    console.log("WEBHOOK_EVENT_RECEIVED");
 
-  res.status(200).send("EVENT_RECEIVED");
+    if (body.object === 'page' || body.object === 'instagram') {
+      for (const entry of body.entry) {
+        if (!entry.messaging) continue;
+
+        for (const event of entry.messaging) {
+          if (event.message && event.message.text) {
+            const senderId = event.sender.id;
+            const messageText = event.message.text;
+
+            console.log(`LOG: Incoming message from ${senderId}: "${messageText}"`);
+
+            // Send Auto-Reply
+            const replyText = "Hello from CloraAI 🚀";
+            await sendMessage(senderId, replyText);
+          }
+        }
+      }
+      return res.status(200).send('EVENT_RECEIVED');
+    }
+
+    return res.sendStatus(404);
+  } catch (error) {
+    console.error("CRITICAL: Error processing webhook event:", error);
+    res.status(500).send("INTERNAL_SERVER_ERROR");
+  }
 });
 
 // ================= WEBHOOK ROUTES END =================
