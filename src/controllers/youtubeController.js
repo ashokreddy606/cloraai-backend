@@ -603,8 +603,18 @@ exports.getChannelAnalytics = async (req, res) => {
         res.json(responsePayload);
 
     } catch (error) {
+        const errorData = error.response?.data || error;
+        const errorMsg = typeof errorData === 'string' ? errorData : JSON.stringify(errorData);
+
         console.error('[YOUTUBE CRITICAL ERROR]', error);
-        logger.error('YOUTUBE', 'getChannelAnalytics Full Fail', { error: error.message, stack: error.stack });
+
+        if (errorMsg.includes('unauthorized_client')) {
+            logger.error('YOUTUBE', 'CRITICAL: YouTube Unauthorized Client error. Please verify YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, and YOUTUBE_REDIRECT_URI in GCP Console.', { error: errorMsg });
+        } else if (errorMsg.includes('YouTube Analytics API has not been used') || errorMsg.includes('PERMISSION_DENIED')) {
+            logger.warn('YOUTUBE', 'YouTube Analytics API is not enabled in Google Cloud Console. Some features will be unavailable.', { userId: req.userId });
+        } else {
+            logger.error('YOUTUBE', 'getChannelAnalytics Full Fail', { error: errorMsg, stack: error.stack });
+        }
 
         try {
             const user = await prisma.user.findUnique({ where: { id: req.userId } });
@@ -690,8 +700,17 @@ exports.getVideoAnalytics = async (req, res) => {
             }
         });
     } catch (error) {
-        logger.error('YOUTUBE', 'getVideoAnalytics', error);
-        res.status(500).json({ error: 'Error fetching video analytics' });
+        const errorData = error.response?.data || error;
+        const errorMsg = typeof errorData === 'string' ? errorData : JSON.stringify(errorData);
+
+        if (errorMsg.includes('unauthorized_client')) {
+            logger.error('YOUTUBE', 'CRITICAL: YouTube Unauthorized Client error. Please check GCP Console.', { error: errorMsg });
+        } else if (errorMsg.includes('YouTube Analytics API has not been used')) {
+            logger.warn('YOUTUBE', 'YouTube Analytics API not enabled.', { videoId });
+        } else {
+            logger.error('YOUTUBE', 'getVideoAnalytics fail', { error: errorMsg });
+        }
+        res.status(500).json({ error: 'Error fetching video analytics', details: errorMsg });
     }
 };
 

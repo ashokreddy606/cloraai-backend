@@ -114,10 +114,25 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        const metrics = ['views', 'reach', 'content_views', 'profile_views', 'follower_count', 'accounts_engaged'];
+        // Define supported periods for each metric
+        const metricSupport = {
+            'views': ['day', 'week', 'days_28', 'month'],
+            'reach': ['day', 'week', 'days_28', 'month'],
+            'impressions': ['day', 'week', 'days_28', 'month'],
+            'content_views': ['day'],
+            'profile_views': ['day'],
+            'follower_count': ['day'],
+            'accounts_engaged': ['day']
+        };
+
+        const allMetrics = ['views', 'reach', 'content_views', 'profile_views', 'follower_count', 'accounts_engaged', 'impressions'];
+        
+        // Filter metrics that support the requested period
+        const supportedMetrics = allMetrics.filter(m => metricSupport[m]?.includes(period));
+        
         let combinedInsights = {};
 
-        await Promise.all(metrics.map(async (metric) => {
+        await Promise.all(supportedMetrics.map(async (metric) => {
             try {
                 let params = {
                     metric,
@@ -141,7 +156,7 @@ class InstagramService {
             } catch (error) {
                 const errorMsg = error.response?.data?.error?.message || error.message;
                 // Log granularly to identify which metrics are actually supported
-                if (!errorMsg.includes('must be one of')) {
+                if (!errorMsg.includes('must be one of') && !errorMsg.includes('incompatible with the metric')) {
                     console.log(`[INSTAGRAM_SERVICE] Account Insight Failed: ${metric} (${period}) - ${errorMsg}`);
                 }
             }

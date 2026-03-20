@@ -61,7 +61,7 @@ router.post('/verify-2fa', authenticate, authController.verify2FA);
 
 // Meta OAuth Callbacks
 router.get('/facebook/callback', authController.facebookCallback);
-router.get('/instagram', authController.instagramAuth);
+router.get('/instagram', instagramController.initiateAuth);
 router.get('/instagram/callback', instagramController.handleOAuthCallback);
 router.get('/youtube/callback', youtubeController.handleCallback);
 

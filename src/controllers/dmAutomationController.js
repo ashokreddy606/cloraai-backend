@@ -194,8 +194,13 @@ const deleteRule = async (req, res) => {
         where: { id }
       });
     } catch (deleteError) {
-      // If already deleted or not found, we consider it a success for the user's intent
-      console.warn('Delete rule warning (possibly already deleted):', deleteError.message);
+      // P2025 = Record to delete does not exist.
+      // We ignore this as the desired outcome (record being gone) is still achieved.
+      if (deleteError.code === 'P2025') {
+        console.info(`[DM_AUTOMATION] Rule ${id} already deleted.`);
+      } else {
+        console.warn('Delete rule warning:', deleteError.message);
+      }
     }
 
     res.status(200).json({
