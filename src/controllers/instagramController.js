@@ -20,28 +20,58 @@ const initiateAuth = (req, res) => {
     const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
     const scope = 'instagram_basic,pages_show_list,pages_read_engagement,instagram_manage_insights,instagram_manage_messages,instagram_manage_comments,business_management';
 
-    // Use state for CSRF protection and to pass userId
-    const state = Buffer.from(JSON.stringify({ userId: req.userId })).toString('base64');
+    // Get userId from authenticated request OR query parameter (for public initiate)
+    const userId = req.userId || req.query.userId;
+    
+    if (!userId) {
+      return res.redirect(`${FRONTEND_URL}/instagram-error?message=Missing+User+ID`);
+    }
+
+    // Use state for CSRF protection and to pass userId back to the callback
+    const state = Buffer.from(JSON.stringify({ userId })).toString('base64');
 
     const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
 
-    res.status(200).json({
-      success: true,
-      data: { authUrl }
-    });
+    logger.info('INSTAGRAM', `Initiating OAuth for user ${userId}`);
+    res.redirect(authUrl);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to initiate OAuth' });
+    logger.error('INSTAGRAM', `Failed to initiate OAuth: ${error.message}`);
+    res.redirect(`${FRONTEND_URL}/instagram-error?message=Failed+to+initiate+OAuth`);
   }
 };
 
 // 2. Handle OAuth Callback
 const handleOAuthCallback = async (req, res) => {
-  const { code } = req.body;
-  const userId = req.userId;
+  const { code, state, error, error_description } = req.query;
 
-  if (!code) return res.status(400).json({ error: 'Code is required' });
+  if (error) {
+    logger.error('INSTAGRAM', `OAuth Error: ${error_description || error}`);
+    return res.redirect(`${FRONTEND_URL}/instagram-error?message=${encodeURIComponent(error_description || error)}`);
+  }
+
+  if (!code) {
+    return res.redirect(`${FRONTEND_URL}/instagram-error?message=No+code+received`);
+  }
 
   try {
+    // Decode userId from state
+    let userId;
+    try {
+      if (state) {
+        const decodedState = JSON.parse(Buffer.from(state, 'base64').toString());
+        userId = decodedState.userId;
+      }
+    } catch (e) {
+      logger.error('INSTAGRAM', `Failed to decode state: ${e.message}`);
+    }
+
+    // Final fallback for userId (if session exists)
+    if (!userId) userId = req.userId;
+
+    if (!userId) {
+      return res.redirect(`${FRONTEND_URL}/instagram-error?message=Missing+User+Context`);
+    }
+
     // 1. Exchange code for long-lived token
     const { accessToken, expiresIn } = await instagramService.exchangeCodeForToken(code);
 
@@ -75,13 +105,11 @@ const handleOAuthCallback = async (req, res) => {
 
     logger.info('INSTAGRAM', `Instagram Connected for user ${userId}`);
 
-    res.status(200).json({
-      success: true,
-      message: 'Instagram account connected successfully!'
-    });
+    // Redirect to success landing page
+    res.redirect(`${FRONTEND_URL}/instagram-success`);
   } catch (error) {
-    console.error("Instagram API error:", error.response?.data || error.message);
-    res.status(500).json({ error: 'OAuth failed', message: error.message });
+    logger.error('INSTAGRAM', `OAuth callback failed: ${error.message}`);
+    res.redirect(`${FRONTEND_URL}/instagram-error?message=Connection+Failed`);
   }
 };
 

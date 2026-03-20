@@ -4,8 +4,8 @@ const instagramController = require('../controllers/instagramController');
 const { authenticate } = require('../middleware/auth');
 
 // OAuth Flows
-router.get('/initiate', authenticate, instagramController.initiateAuth);
-router.post('/callback', authenticate, instagramController.handleOAuthCallback);
+router.get('/initiate', instagramController.initiateAuth);
+router.get('/callback', instagramController.handleOAuthCallback);
 
 // Account & Analytics
 router.get('/account', authenticate, instagramController.getAccountDetails);
