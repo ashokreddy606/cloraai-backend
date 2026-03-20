@@ -292,16 +292,7 @@ app.get(['/webhook', '/api/v1/webhook', '/api/webhook'], (req, res) => {
 });
 
 // 🔹 Webhook Payload Processing (POST)
-// We apply raw body capture specifically to these paths
-const webhookJsonMiddleware = express.json({
-    verify: (req, res, buf) => {
-        if (req.originalUrl && req.originalUrl.includes('/webhook')) {
-            console.log(`[SERIOUS DEBUG] Captured rawBody (${buf.length} bytes) for signature verification`);
-            req.rawBody = buf; 
-        }
-    },
-    limit: '50mb'
-});
+// (MiddleWare already declared above)
 
 const webhookController = require('./src/controllers/webhookController');
 
