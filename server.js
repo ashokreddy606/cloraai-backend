@@ -270,6 +270,17 @@ app.use('/api/v1/webhook', webhookJsonMiddleware);
 app.use('/api/webhook', webhookJsonMiddleware);
 app.use('/webhook', webhookJsonMiddleware);
 
+// Diagnostics: Test reachability via browser
+app.get(['/webhook', '/api/v1/webhook', '/api/webhook'], (req, res) => {
+    console.log(`[SERIOUS DEBUG] Diagnostic GET hit on ${req.originalUrl}`);
+    res.json({
+        status: 'active',
+        message: 'Webhook endpoint reached successfully via GET',
+        timestamp: new Date().toISOString(),
+        headers: req.headers
+    });
+});
+
 // Configure Express to parse query parameters literally (not nested)
 // This is critical for Meta Webhooks which use dotted parameters like hub.mode
 app.set('query parser', 'simple');
