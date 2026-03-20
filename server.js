@@ -294,7 +294,7 @@ app.get(['/webhook', '/api/v1/webhook', '/api/webhook'], (req, res) => {
 // 🔹 Webhook Payload Processing (POST)
 // (MiddleWare already declared above)
 
-const webhookController = require('./src/controllers/webhookController');
+// Controller already declared at the top of file
 
 // Define POST routes BEFORE global body-parsers or CSRF/Redirect middleware
 app.post(['/webhook', '/api/v1/webhook', '/api/webhook'], 
