@@ -262,13 +262,15 @@ const getPosts = async (req, res) => {
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
     const posts = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
-
-    const enrichedPosts = await Promise.all(posts.slice(0, 10).map(async (post) => {
+    
+    const enrichedPosts = await Promise.all(posts.slice(0, 50).map(async (post) => {
       try {
         const insights = await instagramService.getMediaInsights(post.id, account.instagramAccessToken, post.media_type);
-        return { ...post, ...insights };
+        // Create a display title from caption or metadata
+        const displayTitle = post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}`;
+        return { ...post, ...insights, title: displayTitle };
       } catch (err) {
-        return post;
+        return { ...post, title: post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}` };
       }
     }));
 
