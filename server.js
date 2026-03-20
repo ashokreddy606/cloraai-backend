@@ -250,13 +250,15 @@ if (process.env.NODE_ENV === 'production') {
 // Registered for both versioned and root webhook paths.
 const webhookJsonMiddleware = express.json({
     verify: (req, res, buf) => {
-        if (req.originalUrl.includes('/webhook')) {
-            req.rawBody = buf; // Buffer — used by verifyInstagramSignature()
+        // Capture raw body for ANY route ending in /webhook (e.g. /webhook, /api/v1/webhook)
+        if (req.originalUrl && req.originalUrl.includes('/webhook')) {
+            req.rawBody = buf; 
         }
     },
     limit: '50mb'
 });
 
+app.use('/api/v1/webhook', webhookJsonMiddleware);
 app.use('/api/webhook', webhookJsonMiddleware);
 app.use('/webhook', webhookJsonMiddleware);
 
@@ -497,9 +499,13 @@ app.use('/api/v1/account', accountRoutes);
 console.log('YouTube routes mounted at /api/v1/youtube');
 
 // 🔹 Webhook Verification (GET)
+app.get('/api/v1/webhook', webhookController.verifyWebhook);
+app.get('/api/webhook', webhookController.verifyWebhook);
 app.get('/webhook', webhookController.verifyWebhook);
 
 // 🔹 Webhook Events (POST)
+app.post('/api/v1/webhook', webhookController.handleWebhook);
+app.post('/api/webhook', webhookController.handleWebhook);
 app.post('/webhook', webhookController.handleWebhook);
 
 // ================= WEBHOOK ROUTES END =================

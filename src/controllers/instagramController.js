@@ -126,6 +126,14 @@ const handleOAuthCallback = async (req, res) => {
       { upsert: true, returnDocument: 'after' }
     );
 
+    // 5. Automated Webhook Subscription (Critical for Auto-DM)
+    if (facebookPageId && pageAccessToken) {
+        logger.info('INSTAGRAM', `Attempting to subscribe page ${facebookPageId} to webhooks...`);
+        instagramService.subscribePage(facebookPageId, pageAccessToken).catch(err => {
+            logger.error('INSTAGRAM:SUBSCRIBE_SILENT_FAIL', `Silent fail on subscription for page ${facebookPageId}`, { error: err.message });
+        });
+    }
+
     logger.info('INSTAGRAM', `Instagram Connected for user ${connectionUserId}`);
 
     // Redirect to success landing page

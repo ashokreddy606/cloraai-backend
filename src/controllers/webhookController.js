@@ -105,27 +105,33 @@ const handleWebhook = async (req, res) => {
     // 1. Signature Validation
     const signatureHeader = req.headers['x-hub-signature-256'];
     const isSignatureValid = verifyInstagramSignature(req.rawBody, signatureHeader);
-    console.log("WEBHOOK SIGNATURE VERIFICATION:", isSignatureValid ? "VALID" : "INVALID");
-
+    
     if (!isSignatureValid) {
-        logger.warn('WEBHOOK:SECURITY', 'Invalid signature rejected', { ip: req.ip });
+        logger.warn('WEBHOOK:SECURITY', 'Invalid signature rejected', { ip: req.ip, hasHeader: !!signatureHeader });
         return res.sendStatus(403);
     }
 
-    // 2. Immediate Acknowledgment
+    // 2. Immediate Acknowledgment (Meta requires 200 within 20s)
     res.status(200).send('EVENT_RECEIVED');
-
-    console.log("WEBHOOK RECEIVED");
-    console.log("WEBHOOK COMMENT EVENT:", JSON.stringify(req.body,null,2));
 
     try {
         const { body } = req;
-        if (!appConfig.featureFlags.autoDMEnabled) return;
+        console.log(`[WEBHOOK] Received ${body.object} event with ${body.entry?.length} entries`);
+        
+        if (!appConfig.featureFlags.autoDMEnabled) {
+            logger.info('WEBHOOK:SKIP', 'Auto-DM feature flag is disabled');
+            return;
+        }
 
         // Supported objects: 'instagram' (for DMs/Direct Comments) and 'page' (for Page Feed Comments)
-        if (body.object !== 'instagram' && body.object !== 'page') return;
+        if (body.object !== 'instagram' && body.object !== 'page') {
+            logger.debug('WEBHOOK:IGNORED_OBJECT', `Ignored object type: ${body.object}`);
+            return;
+        }
 
         for (const entry of body.entry) {
+            console.log(`[WEBHOOK] Processing entry ${entry.id}`);
+            
             // A. Handle Comments (Direct Instagram OR Page Feed)
             const changes = entry.changes || [];
             for (const change of changes) {
@@ -137,10 +143,15 @@ const handleWebhook = async (req, res) => {
                     const commentId = comment.id || comment.comment_id;
                     const mediaId = comment.media?.id || comment.media_id || comment.post_id;
                     const senderId = comment.from?.id;
+                    const text = comment.text || comment.message;
 
-                    logger.info('COMMENT:DETECTED', `New comment found`, { commentId, mediaId, senderId });
+                    logger.info('COMMENT:DETECTED', `New comment: "${text?.substring(0, 20)}..."`, { commentId, mediaId, senderId });
+                    console.log(`[WEBHOOK] Detected comment from ${senderId} on media ${mediaId}`);
 
-                    if (!senderId || !commentId) continue;
+                    if (!senderId || !commentId) {
+                        logger.warn('COMMENT:INCOMPLETE', 'Skipping incomplete comment data', { commentId, senderId });
+                        continue;
+                    }
 
                     // Resolve account: Resolve by entry.id (Account ID) or senderId (fallback)
                     const account = await findInstagramAccount(entry.id);

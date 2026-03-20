@@ -248,6 +248,27 @@ class InstagramService {
         
         return combinedInsights;
     }
+
+    /**
+     * Subscribe a Facebook Page (linked to IG) to the app's webhooks.
+     * Required to receive 'feed' (comments) and 'messages' events.
+     */
+    async subscribePage(pageId, pageAccessToken) {
+        try {
+            const url = `${GRAPH_API_URL}/${pageId}/subscribed_apps`;
+            const response = await axios.post(url, {
+                subscribed_fields: 'feed,messages,mention,comments'
+            }, {
+                params: { access_token: pageAccessToken }
+            });
+            logger.info('INSTAGRAM_SERVICE:SUBSCRIBE', `Successfully subscribed page ${pageId}`, { data: response.data });
+            return response.data;
+        } catch (error) {
+            logger.error('INSTAGRAM_SERVICE:SUBSCRIBE_ERROR', `Failed to subscribe page ${pageId}`, { error: error.response?.data || error.message });
+            // Do not throw, as this is a background enhancement
+            return null;
+        }
+    }
 }
 
 module.exports = new InstagramService();
