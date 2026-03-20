@@ -44,9 +44,9 @@ const initiateAuth = (req, res) => {
       return res.redirect(`${FRONTEND_URL}/instagram-error?message=Server+Configuration+Error`);
     }
 
-    // Use state for CSRF protection and to pass userId back to the callback
-    logger.info('INSTAGRAM', `Initiating OAuth. APP_ID: ${APP_ID?.substring(0, 4)}...${APP_ID?.slice(-4)}, REDIRECT: ${REDIRECT_URI}`);
-    const state = Buffer.from(JSON.stringify({ userId: userId || req.userId })).toString('base64');
+    // Use state to pass userId back to the callback
+    logger.info('INSTAGRAM', `Initiating OAuth for user ${userId}. APP_ID: ${APP_ID?.substring(0, 4)}...${APP_ID?.slice(-4)}, REDIRECT: ${REDIRECT_URI}`);
+    const state = userId;
 
     const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
 
@@ -85,21 +85,11 @@ const handleOAuthCallback = async (req, res) => {
   }
 
   try {
-    // Decode userId from state
-    let userId;
-    try {
-      if (state) {
-        const decodedState = JSON.parse(Buffer.from(state, 'base64').toString());
-        userId = decodedState.userId;
-      }
-    } catch (e) {
-      logger.error('INSTAGRAM', `Failed to decode state: ${e.message}`);
-    }
+    // Extract userId from state as per requirement
+    const userId = state;
 
-    // Final fallback for userId (if session exists)
-    if (!userId) userId = req.userId;
-
-    if (!userId) {
+    if (!state || !userId) {
+      logger.error('INSTAGRAM', 'Callback failed: Missing User Context (state)');
       return res.redirect(`${FRONTEND_URL}/instagram-error?message=Missing+User+Context`);
     }
 
