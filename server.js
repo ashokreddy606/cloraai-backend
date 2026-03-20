@@ -83,6 +83,22 @@ const webhookController = require('./src/controllers/webhookController');
 // Initialize Express app
 const app = express();
 
+console.log("[VERSION] SERVER VERSION: FORENSIC_X_RAY_ACTIVE");
+
+// 🚨 ULTIMATE DEBUG: Global Request Auditor
+// This is the absolute first thing that runs for EVERY request.
+app.use((req, res, next) => {
+    // Log EVERY SINGLE request for forensic tracing
+    console.log(`[AUDITOR] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
+    
+    if (req.method === 'POST') {
+        console.log(`[AUDITOR:POST] Headers: ${JSON.stringify(req.headers)}`);
+    } else if (req.url && (req.url.includes('webhook') || req.url.includes('fb'))) {
+        console.log(`[AUDITOR:WEBHOOK] Detected: ${req.method} ${req.url}`);
+    }
+    next();
+});
+
 // ─── Debug Routes ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
     res.send("CloraAI backend running");
@@ -258,28 +274,7 @@ const webhookJsonMiddleware = express.json({
     limit: '50mb'
 });
 
-// 🚨 ULTIMATE DEBUG: Global Request Auditor
-// This is the absolute first thing that runs for EVERY request.
-app.use((req, res, next) => {
-    // Log EVERY POST request to see what Meta is actually sending
-    if (req.method === 'POST') {
-        console.log(`[AUDITOR:POST] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
-        console.log(`[AUDITOR:POST] Headers: ${JSON.stringify(req.headers)}`);
-    } else if (req.url && (req.url.includes('webhook') || req.url.includes('fb'))) {
-        // Log any GET requests to webhook paths (handshakes)
-        console.log(`[AUDITOR:GET] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
-        console.log(`[AUDITOR:GET] Headers: ${JSON.stringify(req.headers)}`);
-    }
-    next();
-});
-
-// Enable Global Request Tracing at the very top for debugging
-app.use((req, res, next) => {
-    if (req.originalUrl && req.originalUrl.includes('/webhook')) {
-        console.log(`[SERIOUS DEBUG] GLOBAL WEBHOOK REACHED: ${req.method} ${req.originalUrl} from ${req.ip}`);
-    }
-    next();
-});
+// Global Request Auditor moved to top
 
 // 🔹 Webhook Verification (GET)
 // Meta Dashboard needs this to verify the endpoint
