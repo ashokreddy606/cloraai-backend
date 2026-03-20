@@ -7,19 +7,9 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { appConfig } = require('../config');
 
-// S3 Client Setup
-const awsAccessKeyId = (process.env.AWS_ACCESS_KEY_ID || 'dummy').trim();
-const awsSecretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || 'dummy').trim();
-const awsRegion = (process.env.AWS_REGION || 'us-east-1').trim();
-const awsBucketName = (process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets').trim();
+const { s3Client, awsConfig } = require('../config/aws');
 
-const s3 = new S3Client({
-    region: awsRegion,
-    credentials: {
-        accessKeyId: awsAccessKeyId,
-        secretAccessKey: awsSecretAccessKey
-    }
-});
+const awsBucketName = awsConfig.bucketName;
 
 /**
  * PRODUCTION SECURITY: EXTENSION WHITELIST & MAPPING
@@ -48,7 +38,7 @@ const generateSecureFileName = (file) => {
 
 // S3 Storage
 const getS3Storage = (folder) => multerS3({
-    s3: s3,
+    s3: s3Client,
     bucket: awsBucketName,
     contentType: multerS3.AUTO_CONTENT_TYPE,
     metadata: function (req, file, cb) {

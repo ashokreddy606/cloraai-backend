@@ -48,24 +48,16 @@ const s3Upload = async (req, res) => {
         }
 
         // Import necessary S3 parts here to keep scope clean or move to top
-        const { PutObjectCommand, S3Client } = require('@aws-sdk/client-s3');
+        const { PutObjectCommand } = require('@aws-sdk/client-s3');
         const fs = require('fs');
         const path = require('path');
         const { v4: uuidv4 } = require('uuid');
 
         // Check if we have a local path (from uploadTempVideo)
         if (req.file.path) {
-            const awsBucketName = (process.env.AWS_S3_BUCKET_NAME || 'cloraai-assets').trim();
-            const awsRegion = (process.env.AWS_REGION || 'us-east-1').trim();
-            
-            // Re-initialize/Reuse S3 client (Middleware already has one, but we need it here)
-            const s3Client = new S3Client({
-                region: awsRegion,
-                credentials: {
-                    accessKeyId: (process.env.AWS_ACCESS_KEY_ID || 'dummy').trim(),
-                    secretAccessKey: (process.env.AWS_SECRET_ACCESS_KEY || 'dummy').trim()
-                }
-            });
+            const { s3Client, awsConfig } = require('../config/aws');
+            const awsBucketName = awsConfig.bucketName;
+            const awsRegion = awsConfig.region;
 
             const fileStream = fs.createReadStream(req.file.path);
             const extension = path.extname(req.file.originalname).toLowerCase() || '.mp4';

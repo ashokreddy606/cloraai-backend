@@ -12,7 +12,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { google } = require('googleapis');
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { s3Client, awsConfig } = require('./config/aws');
+const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const mongoose = require('mongoose');
 
@@ -39,10 +40,10 @@ logger.info('WORKER', 'Starting background cron jobs...');
 
 // ─── S3 Environment Sync Check ───────────────────────────────────────────────
 const s3ConfigData = {
-    region: process.env.AWS_REGION || 'ap-south-2',
-    bucket: process.env.AWS_S3_BUCKET_NAME || 'NOT_SET',
-    hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
-    hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY
+    region: awsConfig.region,
+    bucket: awsConfig.bucketName,
+    hasAccessKey: !!awsConfig.credentials.accessKeyId,
+    hasSecretKey: !!awsConfig.credentials.secretAccessKey
 };
 logger.info('WORKER:S3_DEBUG', 'Verifying AWS S3 Configuration', s3ConfigData);
 
@@ -235,28 +236,18 @@ const instagramWorker = new Worker(QUEUES.INSTAGRAM, async (job) => {
         let mediaUrlForInstagram = post.mediaUrl;
         if (post.mediaUrl.includes('amazonaws.com') || (post.mediaUrl.includes('s3') && post.mediaUrl.includes('ap-south-2'))) {
             try {
-                const s3Config = {
-                    region: process.env.AWS_REGION || 'ap-south-2'
-                };
-
-                if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-                    s3Config.credentials = {
-                        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-                        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-                    };
+                if (awsConfig.credentials.accessKeyId && awsConfig.credentials.secretAccessKey) {
+                    // Using centralized s3Client from ./config/aws
+                    const url = new URL(post.mediaUrl);
+                    const bucketName = awsConfig.bucketName || url.hostname.split('.')[0];
+                    const key = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
+                    
+                    logger.info('WORKER:IG_S3', `Attempting signed URL: ${bucketName}/${key}`);
+                    
+                    const command = new GetObjectCommand({ Bucket: bucketName, Key: key });
+                    mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+                    logger.info('WORKER:IG_S3', 'Generated pre-signed URL successfully');
                 }
-
-                const s3Client = new S3Client(s3Config);
-                
-                const url = new URL(post.mediaUrl);
-                const bucketName = process.env.AWS_S3_BUCKET_NAME || url.hostname.split('.')[0];
-                const key = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
-                
-                logger.info('WORKER:IG_S3', `Attempting signed URL: ${bucketName}/${key}`);
-                
-                const command = new GetObjectCommand({ Bucket: bucketName, Key: key });
-                mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-                logger.info('WORKER:IG_S3', 'Generated pre-signed URL successfully');
             } catch (s3Err) {
                 logger.error('WORKER:IG_S3_FAIL', `S3 Signing Error: ${s3Err.message}`, { url: post.mediaUrl });
             }

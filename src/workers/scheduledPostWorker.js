@@ -49,7 +49,7 @@ const processScheduledPost = async (job) => {
 
     // 4. Publish via Instagram Graph API
     const axios = require('axios');
-    const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+    const { GetObjectCommand } = require('@aws-sdk/client-s3');
     const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
     const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -58,18 +58,15 @@ const processScheduledPost = async (job) => {
     
     if (post.mediaUrl.includes('amazonaws.com')) {
         try {
-            const s3Client = new S3Client({
-                region: process.env.AWS_REGION || 'ap-south-2',
-                credentials: {
-                    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-                }
-            });
+            const { s3Client, awsConfig } = require('../config/aws');
+            
+            if (awsConfig.credentials.accessKeyId && awsConfig.credentials.secretAccessKey) {
+                // Using centralized s3Client
 
             // Extract key from URL: https://bucket.s3.region.amazonaws.com/key
             const urlParts = new URL(post.mediaUrl);
             const key = urlParts.pathname.substring(1); // Remove leading slash
-            const bucket = urlParts.hostname.split('.')[0];
+            const bucket = awsConfig.bucketName || urlParts.hostname.split('.')[0];
 
             logger.info('WORKER:S3_SIGNED_URL', `Generating signed URL for key: ${key} in bucket: ${bucket}`);
             
@@ -77,7 +74,8 @@ const processScheduledPost = async (job) => {
             mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 hour
             
             logger.info('WORKER:S3_SIGNED_URL_SUCCESS', 'Generated pre-signed URL for Instagram');
-        } catch (s3Err) {
+        }
+    } catch (s3Err) {
             logger.error('WORKER:S3_SIGNED_URL_ERROR', 'Failed to generate signed URL', { error: s3Err.message });
             // Fallback to original URL
         }
