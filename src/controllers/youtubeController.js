@@ -101,27 +101,63 @@ exports.getAuthUrl = async (req, res) => {
 };
 
 exports.handleCallback = async (req, res) => {
+    logger.info('YOUTUBE_CALLBACK', 'Received OAuth callback from Google', { 
+        hasCode: !!req.query.code, 
+        hasState: !!req.query.state 
+    });
+
     try {
-        const { code, state } = req.query;
+        const { code, state, error: googleError } = req.query;
+
+        // 1. Handle explicit errors from Google (e.g. user cancelled)
+        if (googleError) {
+            logger.warn('YOUTUBE_CALLBACK', 'Google returned an error in callback', { error: googleError });
+            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=${encodeURIComponent(googleError)}`;
+            return res.redirect(errorRedirect);
+        }
 
         if (!code || !state) {
+            logger.warn('YOUTUBE_CALLBACK', 'Missing code or state in callback');
             return res.status(400).json({ error: 'Invalid callback parameters' });
         }
 
-        // Verify and decode the signed state JWT to extract userId securely
+        // 2. Verify and decode the signed state JWT to extract userId securely
         let userId;
         try {
             const decoded = jwt.verify(state, process.env.JWT_SECRET);
             userId = decoded.userId;
+            logger.info('YOUTUBE_CALLBACK', 'State verification successful', { userId });
         } catch (stateError) {
-            logger.warn('YOUTUBE', 'OAuth state JWT verification failed', { error: stateError.message });
-            return res.status(401).json({ error: 'Invalid or expired OAuth state. Please restart the connection flow.' });
+            logger.warn('YOUTUBE_CALLBACK', 'OAuth state JWT verification failed', { error: stateError.message });
+            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=invalid_state`;
+            return res.redirect(errorRedirect);
         }
 
+        // 3. Exchange code for tokens
         const client = getOAuth2Client();
-        const { tokens } = await client.getToken(code);
+        let tokens;
+        try {
+            logger.info('YOUTUBE_CALLBACK', 'Exchanging code for tokens...');
+            const response = await client.getToken(code);
+            tokens = response.tokens;
+            logger.info('YOUTUBE_CALLBACK', 'Token exchange successful', { 
+                hasAccessToken: !!tokens.access_token, 
+                hasRefreshToken: !!tokens.refresh_token 
+            });
+        } catch (tokenError) {
+            logger.error('YOUTUBE_CALLBACK', 'Token exchange failed', { 
+                message: tokenError.message,
+                response: tokenError.response?.data,
+                code: tokenError.code
+            });
+            const errorMsg = tokenError.response?.data?.error_description || tokenError.message || 'token_exchange_failed';
+            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=${encodeURIComponent(errorMsg)}`;
+            return res.redirect(errorRedirect);
+        }
+
         client.setCredentials(tokens);
 
+        // 4. Fetch Channel Data
         const youtube = google.youtube({ version: 'v3', auth: client });
         const channelRes = await youtube.channels.list({
             part: 'id,snippet,statistics',
@@ -129,13 +165,16 @@ exports.handleCallback = async (req, res) => {
         });
 
         if (!channelRes.data.items || channelRes.data.items.length === 0) {
-            return res.status(404).json({ error: 'No YouTube channel found for this account' });
+            logger.warn('YOUTUBE_CALLBACK', 'No YouTube channel found for account', { userId });
+            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=no_channel_found`;
+            return res.redirect(errorRedirect);
         }
 
         const channel = channelRes.data.items[0];
         const channelId = channel.id;
         const stats = channel.statistics;
 
+        // 5. Update User Record
         await prisma.user.update({
             where: { id: userId },
             data: {
@@ -149,28 +188,27 @@ exports.handleCallback = async (req, res) => {
             }
         });
 
-        // Migrate legacy rules (null channelId) to the newly connected channel
-        await prisma.youtubeAutomationRule.updateMany({
-            where: { userId, channelId: null },
-            data: { channelId }
-        });
+        // 6. Migrate legacy data
+        await Promise.all([
+            prisma.youtubeAutomationRule.updateMany({ where: { userId, channelId: null }, data: { channelId } }),
+            prisma.youtubeComment.updateMany({ where: { userId, channelId: null }, data: { channelId } }),
+            prisma.youtubeLead.updateMany({ where: { userId, channelId: null }, data: { channelId } })
+        ]);
 
-        // Migrate legacy comments and leads as well
-        await prisma.youtubeComment.updateMany({
-            where: { userId, channelId: null },
-            data: { channelId }
-        });
+        logger.info('YOUTUBE_CALLBACK', 'YouTube account connected successfully', { userId, channelId });
 
-        await prisma.youtubeLead.updateMany({
-            where: { userId, channelId: null },
-            data: { channelId }
-        });
+        // 7. Success Redirect
+        const successRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + '/youtube-success';
+        res.redirect(successRedirect);
 
-        const frontendUrl = process.env.FRONTEND_APP_SCHEME || 'cloraai://youtube-success';
-        res.redirect(frontendUrl);
     } catch (error) {
-        logger.error('YOUTUBE', 'Callback handler failed', error);
-        res.status(500).json({ error: 'OAuth callback failed' });
+        logger.error('YOUTUBE_CALLBACK', 'Critical failure in callback handler', {
+            message: error.message,
+            stack: error.stack,
+            response: error.response?.data
+        });
+        const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=internal_server_error`;
+        res.redirect(errorRedirect);
     }
 };
 
