@@ -258,6 +258,19 @@ const webhookJsonMiddleware = express.json({
     limit: '50mb'
 });
 
+// 🚨 ULTIMATE DEBUG: Global Request Auditor
+// This is the absolute first thing that runs for EVERY request.
+app.use((req, res, next) => {
+    // Log EVERY request to see what Meta is actually hitting
+    console.log(`[AUDITOR] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
+    
+    // If it looks like a webhook, log everything
+    if (req.url && (req.url.includes('webhook') || req.url.includes('fb'))) {
+        console.log(`[AUDITOR] WEBHOOK DETECTED! Headers: ${JSON.stringify(req.headers)}`);
+    }
+    next();
+});
+
 // Enable Global Request Tracing at the very top for debugging
 app.use((req, res, next) => {
     if (req.originalUrl && req.originalUrl.includes('/webhook')) {
