@@ -21,7 +21,7 @@ const initiateAuth = (req, res) => {
     const scope = 'instagram_basic,pages_show_list,pages_read_engagement,instagram_manage_insights,instagram_manage_messages,instagram_manage_comments,business_management';
 
     // Get userId from authenticated request OR query parameter (for public initiate)
-    const userId = req.userId || req.query.userId;
+    const userId = req.userId || req.query.userId || req.query.userid || req.query.userID;
     
     // Determine if we should return JSON based on Accept header or request type
     const acceptsJson = req.headers.accept && req.headers.accept.includes('application/json');
@@ -29,11 +29,19 @@ const initiateAuth = (req, res) => {
     const isMobileApp = acceptsJson || !acceptsHtml; // Mobile apps often send */* or application/json
 
     if (!userId) {
-      logger.error('INSTAGRAM', 'Initiate failed: Missing userId');
+      logger.error('INSTAGRAM', `Initiate failed: Missing userId. Query received: ${JSON.stringify(req.query)}`);
       if (isMobileApp) {
         return res.status(400).json({ error: 'Missing User ID' });
       }
       return res.redirect(`${FRONTEND_URL}/instagram-error?message=Missing+User+ID`);
+    }
+
+    if (!APP_ID || !REDIRECT_URI) {
+      logger.error('INSTAGRAM', `Missing Config: APP_ID=${!!APP_ID}, REDIRECT_URI=${!!REDIRECT_URI}`);
+      if (isMobileApp) {
+        return res.status(500).json({ error: 'Server configuration error' });
+      }
+      return res.redirect(`${FRONTEND_URL}/instagram-error?message=Server+Configuration+Error`);
     }
 
     // Use state for CSRF protection and to pass userId back to the callback
