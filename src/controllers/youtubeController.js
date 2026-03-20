@@ -17,6 +17,30 @@ const youtubeBreaker = createBreaker(async (fn) => {
 // Helper to get a new OAuth2Client instance
 const getOAuth2Client = () => getYoutubeOAuth2Client();
 
+/**
+ * Helper to construct a safe redirect URL, ensuring no missing slashes 
+ * between base and path. Handles both web URLs and app schemes.
+ */
+const getRedirectUrl = (path, params = {}) => {
+    let baseUrl = process.env.FRONTEND_URL || 'cloraai://';
+    
+    // For web URLs, ensure a trailing slash if missing
+    if (baseUrl.startsWith('http') && !baseUrl.endsWith('/')) {
+        baseUrl += '/';
+    }
+    
+    // For app schemes like 'cloraai://', avoid adding extra slashes if not needed
+    let finalUrl = baseUrl.endsWith('/') ? `${baseUrl}${path}` : `${baseUrl}/${path}`;
+    
+    // Handle query params
+    const query = new URLSearchParams(params).toString();
+    if (query) {
+        finalUrl += (finalUrl.includes('?') ? '&' : '?') + query;
+    }
+    
+    return finalUrl;
+};
+
 // Minimum required scopes for CloraAI YouTube features
 // Reduced from broad scopes to principle of least privilege
 const SCOPES = [
@@ -112,8 +136,7 @@ exports.handleCallback = async (req, res) => {
         // 1. Handle explicit errors from Google (e.g. user cancelled)
         if (googleError) {
             logger.warn('YOUTUBE_CALLBACK', 'Google returned an error in callback', { error: googleError });
-            const errorRedirect = (process.env.FRONTEND_URL || 'cloraai://') + `youtube-error?message=${encodeURIComponent(googleError)}`;
-            return res.redirect(errorRedirect);
+            return res.redirect(getRedirectUrl('youtube-error', { message: googleError }));
         }
 
         if (!code || !state) {
@@ -129,8 +152,7 @@ exports.handleCallback = async (req, res) => {
             logger.info('YOUTUBE_CALLBACK', 'State verification successful', { userId });
         } catch (stateError) {
             logger.warn('YOUTUBE_CALLBACK', 'OAuth state JWT verification failed', { error: stateError.message });
-            const errorRedirect = (process.env.FRONTEND_URL || 'cloraai://') + `youtube-error?message=invalid_state`;
-            return res.redirect(errorRedirect);
+            return res.redirect(getRedirectUrl('youtube-error', { message: 'invalid_state' }));
         }
 
         // 3. Exchange code for tokens
@@ -151,8 +173,7 @@ exports.handleCallback = async (req, res) => {
                 code: tokenError.code
             });
             const errorMsg = tokenError.response?.data?.error_description || tokenError.message || 'token_exchange_failed';
-            const errorRedirect = (process.env.FRONTEND_URL || 'cloraai://') + `youtube-error?message=${encodeURIComponent(errorMsg)}`;
-            return res.redirect(errorRedirect);
+            return res.redirect(getRedirectUrl('youtube-error', { message: errorMsg }));
         }
 
         client.setCredentials(tokens);
@@ -166,8 +187,7 @@ exports.handleCallback = async (req, res) => {
 
         if (!channelRes.data.items || channelRes.data.items.length === 0) {
             logger.warn('YOUTUBE_CALLBACK', 'No YouTube channel found for account', { userId });
-            const errorRedirect = (process.env.FRONTEND_URL || 'cloraai://') + `youtube-error?message=no_channel_found`;
-            return res.redirect(errorRedirect);
+            return res.redirect(getRedirectUrl('youtube-error', { message: 'no_channel_found' }));
         }
 
         const channel = channelRes.data.items[0];
@@ -198,8 +218,7 @@ exports.handleCallback = async (req, res) => {
         logger.info('YOUTUBE_CALLBACK', 'YouTube account connected successfully', { userId, channelId });
 
         // 7. Success Redirect
-        const successRedirect = (process.env.FRONTEND_URL || 'cloraai://') + 'youtube-success';
-        res.redirect(successRedirect);
+        res.redirect(getRedirectUrl('youtube-success'));
 
     } catch (error) {
         logger.error('YOUTUBE_CALLBACK', 'Critical failure in callback handler', {
@@ -207,8 +226,7 @@ exports.handleCallback = async (req, res) => {
             stack: error.stack,
             response: error.response?.data
         });
-        const errorRedirect = (process.env.FRONTEND_URL || 'cloraai://') + `youtube-error?message=internal_server_error`;
-        res.redirect(errorRedirect);
+        return res.redirect(getRedirectUrl('youtube-error', { message: 'internal_server_error' }));
     }
 };
 
