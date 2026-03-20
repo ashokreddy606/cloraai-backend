@@ -52,7 +52,7 @@ const initiateAuth = (req, res) => {
     logger.info('INSTAGRAM', `Initiating OAuth for user ${userId} (Mode: ${isMobileApp ? 'JSON' : 'Redirect'})`);
 
     if (isMobileApp) {
-      return res.status(200).json({ authUrl });
+      return res.status(200).json({ success: true, data: { authUrl } });
     } else {
       return res.redirect(authUrl);
     }
