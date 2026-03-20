@@ -6,7 +6,7 @@ const { cache } = require('../utils/cache');
 const { instagramBreaker } = require('./instagramController');
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
-console.log('--- analyticsController.js loaded (v3) ---');
+logger.info('ANALYTICS', 'Analytics Controller initialized');
 
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
@@ -67,49 +67,41 @@ const getDashboard = async (req, res) => {
           'days_28'
         );
 
-        totalImpressions = Math.max(
-          accountInsights.views || 0,
-          accountInsights30d.views || 0,
-          accountInsights.content_views || 0,
-          accountInsights30d.content_views || 0,
-          accountInsights.reach || 0,
-          accountInsights30d.reach || 0,
-          accountInsights.impressions || 0, // Fallback if supported
-          accountInsights30d.impressions || 0
-        );
-        totalReach = Math.max(accountInsights.reach || 0, accountInsights30d.reach || 0);
+        const accountDay = accountInsights.reach || 0;
+        const account28d = accountInsights30d.reach || 0;
+
+        totalReach = Math.max(accountDay, account28d);
+        totalImpressions = Math.max(accountInsights.impressions || 0, accountInsights30d.impressions || 0, totalReach);
 
         // Always fetch media insights for a "live" feel and aggregate them
         const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+        let totalMediaReach = 0;
+        let totalMediaImpressions = 0;
+        let totalPlays = 0;
+        let totalInteractions = 0;
+
         if (media && media.length > 0) {
           const topMedia = media.slice(0, 30);
 
-          // Fetch video_views independently (direct field) and insights (plays/replays/views)
+          // Fetch plays independently (direct field) and insights
           const videoItems = topMedia.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS');
-          const videoViewCounts = await Promise.all(
+          const videoPlayCounts = await Promise.all(
             videoItems.map(m => instagramService.getVideoViewCount(m.id, account.instagramAccessToken))
           );
-          const directVideoViews = videoViewCounts.reduce((sum, v) => sum + v, 0);
+          const directPlays = videoPlayCounts.reduce((sum, v) => sum + v, 0);
 
           const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
           
-          const mediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0) + (ins.views || 0), 0);
-          const mediaPlays = insights.reduce((sum, ins) => sum + (ins.plays || 0) + (ins.clips_replays_count || 0), 0);
-          const mediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
-          const mediaEngagement = insights.reduce((sum, ins) => sum + (ins.engagement || 0) + (ins.total_interactions || 0), 0);
+          totalMediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
+          totalPlays = insights.reduce((sum, ins) => sum + (ins.plays || 0), 0) + directPlays;
+          totalMediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
+          totalInteractions = insights.reduce((sum, ins) => sum + (ins.total_interactions || 0), 0);
           
-          console.log('[ANALYTICS] Final Source Breakdown:', {
-            accountDay: accountInsights.views || accountInsights.impressions,
-            account28d: accountInsights30d.views || accountInsights30d.impressions,
-            mediaImpressions,
-            mediaPlays,
-            mediaReach,
-            directVideoViews
-          });
+          logger.info('ANALYTICS', `Final Aggregation: Account[${accountDay}/${account28d}] Media[${totalMediaReach}/${totalMediaImpressions}/${totalPlays}] Interactions[${totalInteractions}]`);
 
-          // Take the highest value across all sources to be robust
-          totalImpressions = Math.max(totalImpressions, mediaImpressions, mediaPlays, mediaEngagement, directVideoViews);
-          totalReach = Math.max(totalReach, mediaReach);
+          // Take the highest value across relevant sources to be robust
+          totalImpressions = Math.max(totalImpressions, totalMediaImpressions, totalPlays);
+          totalReach = Math.max(totalReach, totalMediaReach);
         }
 
         // Create or Update snapshot
@@ -456,16 +448,15 @@ const debugViews = async (req, res) => {
     const videoItems = media.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS').slice(0, 5);
     results.videoChecks = await Promise.all(videoItems.map(async (m) => {
       const insights = await instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type);
-      const directViews = await instagramService.getVideoViewCount(m.id, account.instagramAccessToken);
+      const directPlays = await instagramService.getVideoViewCount(m.id, account.instagramAccessToken);
       return { 
         id: m.id, 
         type: m.media_type, 
-        direct_video_views: directViews,
+        direct_plays: directPlays,
         plays: insights.plays || 0,
-        views: insights.views || 0,
-        replays: insights.clips_replays_count || 0,
         impressions: insights.impressions || 0,
         reach: insights.reach || 0,
+        total_interactions: insights.total_interactions || 0,
         raw_insights: insights
       };
     }));

@@ -91,6 +91,7 @@ model User {
   referralTransactionsGot   ReferralTransaction[] @relation("ReceivedRewards")
 
   // ── YouTube Integration ───────────────────────────────────────────────
+  youtubeConnected    Boolean @default(false)
   youtubeChannelId    String?
   youtubeAccessToken  String?
   youtubeRefreshToken String?

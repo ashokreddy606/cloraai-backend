@@ -114,18 +114,16 @@ class InstagramService {
     }
 
     async getAccountInsights(igUserId, accessToken, period = 'day') {
-        // Define supported periods for each metric
+        // Define supported periods for each metric based on Instagram Graph API v18.0+
         const metricSupport = {
-            'views': ['day', 'week', 'days_28', 'month'],
-            'reach': ['day', 'week', 'days_28', 'month'],
-            'impressions': ['day', 'week', 'days_28', 'month'],
-            'content_views': ['day'],
+            'reach': ['day', 'days_28'],
+            'impressions': ['day'],
             'profile_views': ['day'],
-            'follower_count': ['day'],
-            'accounts_engaged': ['day']
+            'accounts_engaged': ['day'],
+            'follower_count': ['day']
         };
 
-        const allMetrics = ['views', 'reach', 'content_views', 'profile_views', 'follower_count', 'accounts_engaged', 'impressions'];
+        const allMetrics = ['reach', 'impressions', 'profile_views', 'accounts_engaged', 'follower_count'];
         
         // Filter metrics that support the requested period
         const supportedMetrics = allMetrics.filter(m => metricSupport[m]?.includes(period));
@@ -140,8 +138,8 @@ class InstagramService {
                     access_token: accessToken
                 };
 
-                // Specific parameter required for many metrics according to error logs
-                if (['profile_views', 'views', 'content_views', 'accounts_engaged'].includes(metric)) {
+                // Specific parameter required for several metrics
+                if (['profile_views', 'accounts_engaged'].includes(metric)) {
                     params.metric_type = 'total_value';
                 }
 
@@ -151,7 +149,7 @@ class InstagramService {
                     const values = response.data.data[0].values;
                     const value = values[values.length - 1].value;
                     combinedInsights[metric] = value;
-                    console.log(`[INSTAGRAM_SERVICE] Account Insight Success: ${metric} (${period}) = ${value}`);
+                    logger.info('INSTAGRAM_SERVICE', `Account Insight: ${metric} (${period}) = ${value}`);
                 }
             } catch (error) {
                 const errorMsg = error.response?.data?.error?.message || error.message;
@@ -195,29 +193,29 @@ class InstagramService {
         }
     }
 
-    // Fetch video_views, plays, views or play_count for a single VIDEO/REEL media item directly
+    // Fetch plays or play_count for a single VIDEO/REEL media item directly
     async getVideoViewCount(mediaId, accessToken) {
         try {
             const response = await axios.get(`${GRAPH_API_URL}/${mediaId}`, {
                 params: {
-                    fields: 'id,video_views,plays,play_count,views',
+                    fields: 'id,plays,play_count',
                     access_token: accessToken
                 }
             });
             const data = response.data;
-            const views = data.play_count || data.plays || data.views || data.video_views || 0;
-            if (views > 0) console.log(`[INSTAGRAM_SERVICE] Direct View Count for ${mediaId}: ${views}`);
+            const views = data.play_count || data.plays || 0;
+            if (views > 0) console.log(`[INSTAGRAM SUCCESS] Direct Play Count for ${mediaId}: ${views}`);
             return views;
         } catch (error) {
             const errorMsg = error.response?.data?.error?.message || error.message;
-            console.log(`[INSTAGRAM_SERVICE] Direct View Count Failed for ${mediaId}: ${errorMsg}`);
+            console.log(`[INSTAGRAM FAILED] Direct Play Count Failed for ${mediaId}: ${errorMsg}`);
             return 0;
         }
     }
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
         const metrics = (mediaType === 'VIDEO' || mediaType === 'REELS')
-            ? ['views', 'plays', 'reach', 'impressions', 'video_views', 'clips_replays_count', 'total_interactions']
+            ? ['plays', 'reach', 'impressions', 'total_interactions']
             : ['impressions', 'reach', 'total_interactions'];
 
         let combinedInsights = {};
@@ -235,11 +233,12 @@ class InstagramService {
                     const value = response.data.data[0].values[0].value;
                     combinedInsights[metric] = value;
                     if (value > 0) {
-                        console.log(`[INSTAGRAM_SERVICE] Media Insight Success: ${mediaId} ${metric} = ${value}`);
+                        console.log(`[INSTAGRAM SUCCESS] Media Insight: ${mediaId} ${metric} = ${value}`);
                     }
                 }
             } catch (error) {
-                // Silently skip
+                const errorMsg = error.response?.data?.error?.message || error.message;
+                console.log(`[INSTAGRAM FAILED] Media Insight: ${mediaId} ${metric} - ${errorMsg}`);
             }
         }));
         

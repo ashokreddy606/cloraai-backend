@@ -29,7 +29,7 @@ cron.schedule('* * * * *', async () => {
     try {
         const usersWithYoutube = await prisma.user.findMany({
             where: {
-                youtubeChannelId: { not: null },
+                youtubeConnected: true,
                 youtubeAccessToken: { not: null },
                 youtubeRules: { some: { isActive: true } }
             },
@@ -38,8 +38,10 @@ cron.schedule('* * * * *', async () => {
             }
         });
 
+        logger.info('YOUTUBE_WORKER', `Active users found for processing: ${usersWithYoutube.length}`);
+
         if (usersWithYoutube.length === 0) {
-            return logger.info('YOUTUBE_WORKER', 'No active users found for processing');
+            return logger.info('YOUTUBE_WORKER', 'No active users with youtubeConnected: true found');
         }
 
         for (const user of usersWithYoutube) {
