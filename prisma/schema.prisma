@@ -214,6 +214,8 @@ model InstagramAccount {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@map("instagramaccounts")
 }
 
 // ─── Payment History (Razorpay Audit Trail) ───────────────────────────────────
@@ -354,6 +356,8 @@ model AnalyticsSnapshot {
   @@index([userId])
   @@index([snapshotDate])
   @@index([userId, snapshotDate])
+
+  @@map("instagramanalytics")
 }
 
 // DM Automation Rules
