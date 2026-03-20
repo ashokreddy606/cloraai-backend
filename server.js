@@ -261,12 +261,14 @@ const webhookJsonMiddleware = express.json({
 // 🚨 ULTIMATE DEBUG: Global Request Auditor
 // This is the absolute first thing that runs for EVERY request.
 app.use((req, res, next) => {
-    // Log EVERY request to see what Meta is actually hitting
-    console.log(`[AUDITOR] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
-    
-    // If it looks like a webhook, log everything
-    if (req.url && (req.url.includes('webhook') || req.url.includes('fb'))) {
-        console.log(`[AUDITOR] WEBHOOK DETECTED! Headers: ${JSON.stringify(req.headers)}`);
+    // Log EVERY POST request to see what Meta is actually sending
+    if (req.method === 'POST') {
+        console.log(`[AUDITOR:POST] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
+        console.log(`[AUDITOR:POST] Headers: ${JSON.stringify(req.headers)}`);
+    } else if (req.url && (req.url.includes('webhook') || req.url.includes('fb'))) {
+        // Log any GET requests to webhook paths (handshakes)
+        console.log(`[AUDITOR:GET] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
+        console.log(`[AUDITOR:GET] Headers: ${JSON.stringify(req.headers)}`);
     }
     next();
 });
@@ -274,8 +276,7 @@ app.use((req, res, next) => {
 // Enable Global Request Tracing at the very top for debugging
 app.use((req, res, next) => {
     if (req.originalUrl && req.originalUrl.includes('/webhook')) {
-        console.log(`[SERIOUS DEBUG] GLOBAL TOP LEVEL: ${req.method} ${req.originalUrl} from ${req.ip}`);
-        console.log(`[SERIOUS DEBUG] HEADERS: ${JSON.stringify(req.headers)}`);
+        console.log(`[SERIOUS DEBUG] GLOBAL WEBHOOK REACHED: ${req.method} ${req.originalUrl} from ${req.ip}`);
     }
     next();
 });
