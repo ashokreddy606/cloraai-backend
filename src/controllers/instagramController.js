@@ -45,7 +45,8 @@ const initiateAuth = (req, res) => {
     }
 
     // Use state for CSRF protection and to pass userId back to the callback
-    const state = Buffer.from(JSON.stringify({ userId })).toString('base64');
+    logger.info('INSTAGRAM', `Initiating OAuth. APP_ID: ${APP_ID?.substring(0, 4)}...${APP_ID?.slice(-4)}, REDIRECT: ${REDIRECT_URI}`);
+    const state = Buffer.from(JSON.stringify({ userId: userId || req.userId })).toString('base64');
 
     const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
 
