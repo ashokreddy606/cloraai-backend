@@ -258,28 +258,60 @@ const webhookJsonMiddleware = express.json({
     limit: '50mb'
 });
 
-// Trace all hits to /webhook at the very top level
+// Enable Global Request Tracing at the very top for debugging
 app.use((req, res, next) => {
     if (req.originalUrl && req.originalUrl.includes('/webhook')) {
-        console.log(`[SERIOUS DEBUG] Inbound Webhook Hit: ${req.method} ${req.originalUrl} from ${req.ip}`);
+        console.log(`[SERIOUS DEBUG] GLOBAL TOP LEVEL: ${req.method} ${req.originalUrl} from ${req.ip}`);
+        console.log(`[SERIOUS DEBUG] HEADERS: ${JSON.stringify(req.headers)}`);
     }
     next();
 });
 
-app.use('/api/v1/webhook', webhookJsonMiddleware);
-app.use('/api/webhook', webhookJsonMiddleware);
-app.use('/webhook', webhookJsonMiddleware);
-
-// Diagnostics: Test reachability via browser
+// 🔹 Webhook Verification (GET)
+// Meta Dashboard needs this to verify the endpoint
 app.get(['/webhook', '/api/v1/webhook', '/api/webhook'], (req, res) => {
-    console.log(`[SERIOUS DEBUG] Diagnostic GET hit on ${req.originalUrl}`);
-    res.json({
-        status: 'active',
-        message: 'Webhook endpoint reached successfully via GET',
-        timestamp: new Date().toISOString(),
-        headers: req.headers
-    });
+    console.log(`[SERIOUS DEBUG] Handshake GET Check: hub.mode=${req.query['hub.mode']} hub.challenge=${req.query['hub.challenge']} hub.verify_token=${req.query['hub.verify_token']}`);
+    
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode && token) {
+        if (mode === 'subscribe' && token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
+            console.log('[SERIOUS DEBUG] Handshake Verified Successfully');
+            res.status(200).send(challenge);
+        } else {
+            console.log('[SERIOUS DEBUG] Handshake Token Mismatch');
+            res.sendStatus(403);
+        }
+    } else {
+        // Diagnostic mode
+        console.log('[SERIOUS DEBUG] Diagnostic Mode GET Hit');
+        res.json({ status: 'active', message: 'Ready to receive webhooks', endpoint: req.originalUrl });
+    }
 });
+
+// 🔹 Webhook Payload Processing (POST)
+// We apply raw body capture specifically to these paths
+const webhookJsonMiddleware = express.json({
+    verify: (req, res, buf) => {
+        if (req.originalUrl && req.originalUrl.includes('/webhook')) {
+            console.log(`[SERIOUS DEBUG] Captured rawBody (${buf.length} bytes) for signature verification`);
+            req.rawBody = buf; 
+        }
+    },
+    limit: '50mb'
+});
+
+const webhookController = require('./src/controllers/webhookController');
+
+// Define POST routes BEFORE global body-parsers or CSRF/Redirect middleware
+app.post(['/webhook', '/api/v1/webhook', '/api/webhook'], 
+    webhookJsonMiddleware, 
+    webhookController.handleWebhook
+);
+
+// ─── Security Enforcement ───────────────────────────────────────────────────
 
 // Configure Express to parse query parameters literally (not nested)
 // This is critical for Meta Webhooks which use dotted parameters like hub.mode
@@ -517,15 +549,7 @@ app.use('/api/v1/account', accountRoutes);
 // Webhook routes removed (Razorpay cleanup)
 console.log('YouTube routes mounted at /api/v1/youtube');
 
-// 🔹 Webhook Verification (GET)
-app.get('/api/v1/webhook', webhookController.verifyWebhook);
-app.get('/api/webhook', webhookController.verifyWebhook);
-app.get('/webhook', webhookController.verifyWebhook);
-
-// 🔹 Webhook Events (POST)
-app.post('/api/v1/webhook', webhookController.handleWebhook);
-app.post('/api/webhook', webhookController.handleWebhook);
-app.post('/webhook', webhookController.handleWebhook);
+// ─── Webhook Endpoints (Legacy Definitions Handled Above) ───────────────────
 
 // ================= WEBHOOK ROUTES END =================
 
