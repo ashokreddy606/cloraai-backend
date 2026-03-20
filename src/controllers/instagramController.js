@@ -45,12 +45,11 @@ const initiateAuth = (req, res) => {
     }
 
     // Use state to pass userId back to the callback
-    logger.info('INSTAGRAM', `Initiating OAuth for user ${userId}. APP_ID: ${APP_ID?.substring(0, 4)}...${APP_ID?.slice(-4)}, REDIRECT: ${REDIRECT_URI}`);
-    const state = userId;
-
+    const state = String(userId);
     const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
 
-    logger.info('INSTAGRAM', `Initiating OAuth for user ${userId} (Mode: ${isMobileApp ? 'JSON' : 'Redirect'})`);
+    logger.info('INSTAGRAM', `Initiating OAuth for user ${userId}. URL: ${authUrl.replace(APP_ID, 'REDACTED')}`);
+    logger.info('INSTAGRAM', `Mode: ${isMobileApp ? 'JSON' : 'Redirect'}`);
 
     if (isMobileApp) {
       return res.status(200).json({ success: true, data: { authUrl } });
