@@ -264,7 +264,8 @@ class InstagramService {
             logger.info('INSTAGRAM_SERVICE:SUBSCRIBE', `Successfully subscribed page ${pageId}`, { data: response.data });
             return response.data;
         } catch (error) {
-            logger.error('INSTAGRAM_SERVICE:SUBSCRIBE_ERROR', `Failed to subscribe page ${pageId}`, { error: error.response?.data || error.message });
+            const errData = error.response?.data || error.message;
+            logger.error('INSTAGRAM_SERVICE:SUBSCRIBE_ERROR', `Failed to subscribe page ${pageId}: ${typeof errData === 'object' ? JSON.stringify(errData) : errData}`);
             // Do not throw, as this is a background enhancement
             return null;
         }

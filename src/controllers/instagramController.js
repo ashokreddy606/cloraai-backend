@@ -18,7 +18,7 @@ const initiateAuth = (req, res) => {
   try {
     const APP_ID = process.env.INSTAGRAM_APP_ID;
     const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
-    const scope = 'instagram_basic,pages_show_list,pages_read_engagement,instagram_manage_insights,instagram_manage_messages,instagram_manage_comments,business_management';
+    const scope = 'instagram_basic,pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_manage_insights,instagram_manage_messages,instagram_manage_comments,business_management';
 
     // Get userId from authenticated request OR query parameter (for public initiate)
     const userId = req.userId || req.query.userId || req.query.userid || req.query.userID;
