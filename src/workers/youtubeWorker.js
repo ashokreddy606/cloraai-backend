@@ -4,14 +4,9 @@ const { google } = require('googleapis');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { acquireLock, releaseLock } = require('../utils/redisLock');
+const { getYoutubeOAuth2Client } = require('../config/youtube');
 
-const getOAuth2Client = () => {
-    return new google.auth.OAuth2(
-        process.env.YOUTUBE_CLIENT_ID,
-        process.env.YOUTUBE_CLIENT_SECRET,
-        process.env.YOUTUBE_REDIRECT_URI || 'http://localhost:5000/api/youtube/callback'
-    );
-};
+const getOAuth2Client = () => getYoutubeOAuth2Client();
 
 // Worker runs every 1 minute
 cron.schedule('* * * * *', async () => {

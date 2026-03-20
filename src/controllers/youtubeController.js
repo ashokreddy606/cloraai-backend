@@ -8,19 +8,14 @@ const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
 const dayjs = require('dayjs');
 const { createBreaker } = require('../utils/circuitBreaker');
+const { getYoutubeOAuth2Client } = require('../config/youtube');
 
 const youtubeBreaker = createBreaker(async (fn) => {
     return await fn();
 }, 'YouTube', { timeout: 15000 });
 
 // Helper to get a new OAuth2Client instance
-const getOAuth2Client = () => {
-    return new google.auth.OAuth2(
-        process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
-        process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
-        process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/api/v1/youtube/callback`
-    );
-};
+const getOAuth2Client = () => getYoutubeOAuth2Client();
 
 // Minimum required scopes for CloraAI YouTube features
 // Reduced from broad scopes to principle of least privilege

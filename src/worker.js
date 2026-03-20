@@ -16,6 +16,7 @@ const { s3Client, awsConfig } = require('./config/aws');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const mongoose = require('mongoose');
+const { getYoutubeOAuth2Client } = require('./config/youtube');
 const User = require('../models/User'); // Import Mongoose User model for debugging
 
 // Initialize Mongoose (required for Instagram Analytics)
@@ -220,11 +221,7 @@ const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
 
 // Helper for YouTube Client in Worker
 const getYoutubeClientForWorker = async (user) => {
-    const client = new google.auth.OAuth2(
-        process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
-        process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
-        process.env.YOUTUBE_REDIRECT_URI
-    );
+    const client = getYoutubeOAuth2Client();
 
     const credentials = {
         access_token: decrypt(user.youtubeAccessToken)
