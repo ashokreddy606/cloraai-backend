@@ -215,5 +215,3 @@ const handleWebhook = async (req, res) => {
 };
 
 module.exports = { verifyWebhook, handleWebhook };
-
-module.exports = { verifyWebhook, handleWebhook };

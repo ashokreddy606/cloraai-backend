@@ -75,6 +75,7 @@ const notificationRoutes = require('./src/routes/notification');
 const youtubeRoutes = require('./src/routes/youtube');
 const uploadRoutes = require('./src/routes/upload');
 const accountRoutes = require('./src/routes/account');
+const webhookController = require('./src/controllers/webhookController');
 
 // Initialize Prisma
 // (Now using shared instance from src/lib/prisma.js)
@@ -203,6 +204,33 @@ app.get('/instagram-error', (req, res) => {
 });
 
 // ─── Security Enforcement ───────────────────────────────────────────────────
+app.get('/privacy', (req, res) => {
+    res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Privacy Policy - CloraAI</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: -apple-system, system-ui, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; color: #374151; line-height: 1.5; }
+                h1 { color: #111827; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; }
+            </style>
+        </head>
+        <body>
+            <h1>Privacy Policy</h1>
+            <p><strong>Last Updated: March 20, 2026</strong></p>
+            <p>CloraAI respects your privacy. This policy explains how we handle your data when you use our Instagram and YouTube integration services.</p>
+            <h2>1. Data We Collect</h2>
+            <p>We only collect the data necessary to provide our services, such as your basic profile info and media insights (reach/impressions) if you explicitly grant us permission.</p>
+            <h2>2. How We Use Data</h2>
+            <p>We use your data to show you analytics and to provide automation features like Auto-DMs and comment management.</p>
+            <h2>3. Data Deletion</h2>
+            <p>You can disconnect your account at any time within the CloraAI app settings to delete our access and remove your data from our system.</p>
+        </body>
+        </html>
+    `);
+});
+
 // Check for critical missing environment variables.
 if (process.env.NODE_ENV === 'production') {
     if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 64) {
@@ -468,85 +496,11 @@ app.use('/api/v1/account', accountRoutes);
 // Webhook routes removed (Razorpay cleanup)
 console.log('YouTube routes mounted at /api/v1/youtube');
 
-// ================= WEBHOOK ROUTES START =================
-
-/**
- * 🔹 Send Message Helper
- * Sends a POST request to Meta Graph API to reply to a message.
- */
-async function sendMessage(senderId, text) {
-  try {
-    const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-    if (!PAGE_ACCESS_TOKEN) {
-      console.error("ERROR: PAGE_ACCESS_TOKEN is not defined in .env");
-      return;
-    }
-
-    const response = await axios.post(
-      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-      {
-        recipient: { id: senderId },
-        message: { text: text }
-      }
-    );
-    console.log("LOG: Message sent successfully to", senderId, ":", response.data);
-  } catch (error) {
-    console.error("ERROR: Graph API Request Failed:", error.response ? error.response.data : error.message);
-  }
-}
-
 // 🔹 Webhook Verification (GET)
-app.get('/webhook', (req, res) => {
-  const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
-
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  console.log("VERIFY REQUEST RECEIVED:", mode, token);
-
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log("WEBHOOK_VERIFIED_SUCCESS");
-    return res.status(200).send(challenge);
-  }
-
-  console.log("WEBHOOK_VERIFICATION_FAILED");
-  return res.sendStatus(403);
-});
-
+app.get('/webhook', webhookController.verifyWebhook);
 
 // 🔹 Webhook Events (POST)
-app.post('/webhook', async (req, res) => {
-  try {
-    const body = req.body;
-    console.log("WEBHOOK_EVENT_RECEIVED");
-
-    if (body.object === 'page' || body.object === 'instagram') {
-      for (const entry of body.entry) {
-        if (!entry.messaging) continue;
-
-        for (const event of entry.messaging) {
-          if (event.message && event.message.text) {
-            const senderId = event.sender.id;
-            const messageText = event.message.text;
-
-            console.log(`LOG: Incoming message from ${senderId}: "${messageText}"`);
-
-            // Send Auto-Reply
-            const replyText = "Hello from CloraAI 🚀";
-            await sendMessage(senderId, replyText);
-          }
-        }
-      }
-      return res.status(200).send('EVENT_RECEIVED');
-    }
-
-    return res.sendStatus(404);
-  } catch (error) {
-    console.error("CRITICAL: Error processing webhook event:", error);
-    res.status(500).send("INTERNAL_SERVER_ERROR");
-  }
-});
+app.post('/webhook', webhookController.handleWebhook);
 
 // ================= WEBHOOK ROUTES END =================
 
