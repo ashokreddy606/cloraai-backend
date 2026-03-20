@@ -85,10 +85,13 @@ const handleOAuthCallback = async (req, res) => {
 
   try {
     // Extract userId from state as per requirement
-    const userId = state;
+    const stateValue = req.query.state;
+    const connectionUserId = stateValue || req.userId;
 
-    if (!state || !userId) {
-      logger.error('INSTAGRAM', 'Callback failed: Missing User Context (state)');
+    logger.info('INSTAGRAM', `Processing callback. State: "${stateValue}" (Type: ${typeof stateValue}), Fallback ID: ${req.userId}, Final ID: ${connectionUserId}`);
+
+    if (!connectionUserId) {
+      logger.error('INSTAGRAM', `Callback failed: Missing User Context. Query keys: ${Object.keys(req.query)}`);
       return res.redirect(`${FRONTEND_URL}/instagram-error?message=Missing+User+Context`);
     }
 
@@ -106,7 +109,7 @@ const handleOAuthCallback = async (req, res) => {
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
     const accountData = {
-      userId,
+      userId: connectionUserId,
       instagramId: instagramBusinessAccountId,
       username: profileData.username || 'Instagram User',
       pageId: facebookPageId,
@@ -118,12 +121,12 @@ const handleOAuthCallback = async (req, res) => {
     };
 
     await InstagramAccount.findOneAndUpdate(
-      { userId },
+      { userId: connectionUserId },
       accountData,
       { upsert: true, returnDocument: 'after' }
     );
 
-    logger.info('INSTAGRAM', `Instagram Connected for user ${userId}`);
+    logger.info('INSTAGRAM', `Instagram Connected for user ${connectionUserId}`);
 
     // Redirect to success landing page
     res.redirect(`${FRONTEND_URL}/instagram-success`);
