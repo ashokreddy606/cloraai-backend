@@ -72,6 +72,7 @@ const initiateAuth = (req, res) => {
 // 2. Handle OAuth Callback
 const handleOAuthCallback = async (req, res) => {
   const { code, state, error, error_description } = req.query;
+  logger.info('INSTAGRAM', `Callback reached. Query: ${JSON.stringify(req.query)}`);
 
   if (error) {
     logger.error('INSTAGRAM', `OAuth Error: ${error_description || error}`);
