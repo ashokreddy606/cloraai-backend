@@ -103,6 +103,8 @@ const findInstagramAccount = async (id) => {
  * ROUTES: Handle Webhook Events (POST)
  */
 const handleWebhook = async (req, res) => {
+    console.log(`[SERIOUS DEBUG] handleWebhook POST reached. Body: ${JSON.stringify(req.body)}`);
+    
     logger.info('WEBHOOK:RECEIVED', 'Meta Webhook Event Received', { 
         object: req.body.object,
         entryCount: req.body.entry?.length 
