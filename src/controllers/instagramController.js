@@ -33,9 +33,18 @@ const initiateAuth = (req, res) => {
     const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
 
     logger.info('INSTAGRAM', `Initiating OAuth for user ${userId}`);
-    res.redirect(authUrl);
+
+    // Support both JSON (mobile) and Redirect (browser)
+    if (req.headers.accept && req.headers.accept.includes('application/json')) {
+      return res.status(200).json({ authUrl });
+    } else {
+      return res.redirect(authUrl);
+    }
   } catch (error) {
     logger.error('INSTAGRAM', `Failed to initiate OAuth: ${error.message}`);
+    if (req.headers.accept && req.headers.accept.includes('application/json')) {
+      return res.status(500).json({ error: 'Failed to initiate OAuth' });
+    }
     res.redirect(`${FRONTEND_URL}/instagram-error?message=Failed+to+initiate+OAuth`);
   }
 };
