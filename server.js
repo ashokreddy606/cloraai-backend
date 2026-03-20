@@ -250,12 +250,20 @@ if (process.env.NODE_ENV === 'production') {
 // Registered for both versioned and root webhook paths.
 const webhookJsonMiddleware = express.json({
     verify: (req, res, buf) => {
-        // Capture raw body for ANY route ending in /webhook (e.g. /webhook, /api/v1/webhook)
         if (req.originalUrl && req.originalUrl.includes('/webhook')) {
+            console.log(`[SERIOUS DEBUG] Captured rawBody (${buf.length} bytes) for ${req.originalUrl}`);
             req.rawBody = buf; 
         }
     },
     limit: '50mb'
+});
+
+// Trace all hits to /webhook at the very top level
+app.use((req, res, next) => {
+    if (req.originalUrl && req.originalUrl.includes('/webhook')) {
+        console.log(`[SERIOUS DEBUG] Inbound Webhook Hit: ${req.method} ${req.originalUrl} from ${req.ip}`);
+    }
+    next();
 });
 
 app.use('/api/v1/webhook', webhookJsonMiddleware);

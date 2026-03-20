@@ -43,11 +43,17 @@ const verifyInstagramSignature = (rawBody, signatureHeader) => {
         .digest('hex');
 
     try {
-        return crypto.timingSafeEqual(
+        const isValid = crypto.timingSafeEqual(
             Buffer.from(receivedSig, 'hex'),
             Buffer.from(expectedSig, 'hex')
         );
-    } catch {
+
+        if (!isValid) {
+            console.log(`[SERIOUS DEBUG] Signature mismatch! Secret starts with: ${INSTAGRAM_APP_SECRET.slice(0, 4)}...`);
+        }
+        return isValid;
+    } catch (err) {
+        console.error('[SERIOUS DEBUG] crypto.timingSafeEqual error:', err.message);
         return false;
     }
 };
@@ -102,8 +108,9 @@ const handleWebhook = async (req, res) => {
         entryCount: req.body.entry?.length 
     });
 
-    // 1. Signature Validation
     const signatureHeader = req.headers['x-hub-signature-256'];
+    console.log(`[SERIOUS DEBUG] handleWebhook hit. hasRawBody: ${!!req.rawBody}, hasSignature: ${!!signatureHeader}`);
+    
     const isSignatureValid = verifyInstagramSignature(req.rawBody, signatureHeader);
     
     if (!isSignatureValid) {
