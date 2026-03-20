@@ -2,6 +2,7 @@ const instagramService = require('../services/instagramService');
 const InstagramAccount = require('../../models/InstagramAccount');
 const InstagramAnalytics = require('../../models/InstagramAnalytics');
 const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
 const { cache } = require('../utils/cache');
 const { instagramBreaker } = require('./instagramController');
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
