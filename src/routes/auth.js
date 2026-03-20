@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
+const youtubeController = require('../controllers/youtubeController');
 const { authenticate, rateLimit } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const { registerSchema, loginSchema, resetPasswordSchema, googleAuthSchema } = require('../validators/auth');
@@ -61,6 +62,7 @@ router.post('/verify-2fa', authenticate, authController.verify2FA);
 router.get('/facebook/callback', authController.facebookCallback);
 router.get('/instagram', authController.instagramAuth);
 router.get('/instagram/callback', authController.instagramCallback);
+router.get('/youtube/callback', youtubeController.handleCallback);
 
 // Session Management
 router.get('/sessions', authenticate, authController.getSessions);
