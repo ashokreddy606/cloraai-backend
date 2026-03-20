@@ -6,7 +6,7 @@ const instagramService = require('../services/instagramService');
 const logger = require('../utils/logger');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://cloraai.com';
 
 const instagramBreaker = createBreaker(async (url) => {
   const response = await axios.get(url);

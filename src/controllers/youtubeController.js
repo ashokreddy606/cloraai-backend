@@ -112,7 +112,7 @@ exports.handleCallback = async (req, res) => {
         // 1. Handle explicit errors from Google (e.g. user cancelled)
         if (googleError) {
             logger.warn('YOUTUBE_CALLBACK', 'Google returned an error in callback', { error: googleError });
-            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=${encodeURIComponent(googleError)}`;
+            const errorRedirect = (process.env.FRONTEND_URL || 'https://cloraai.com') + `/youtube-error?message=${encodeURIComponent(googleError)}`;
             return res.redirect(errorRedirect);
         }
 
@@ -129,7 +129,7 @@ exports.handleCallback = async (req, res) => {
             logger.info('YOUTUBE_CALLBACK', 'State verification successful', { userId });
         } catch (stateError) {
             logger.warn('YOUTUBE_CALLBACK', 'OAuth state JWT verification failed', { error: stateError.message });
-            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=invalid_state`;
+            const errorRedirect = (process.env.FRONTEND_URL || 'https://cloraai.com') + `/youtube-error?message=invalid_state`;
             return res.redirect(errorRedirect);
         }
 
@@ -151,7 +151,7 @@ exports.handleCallback = async (req, res) => {
                 code: tokenError.code
             });
             const errorMsg = tokenError.response?.data?.error_description || tokenError.message || 'token_exchange_failed';
-            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=${encodeURIComponent(errorMsg)}`;
+            const errorRedirect = (process.env.FRONTEND_URL || 'https://cloraai.com') + `/youtube-error?message=${encodeURIComponent(errorMsg)}`;
             return res.redirect(errorRedirect);
         }
 
@@ -166,7 +166,7 @@ exports.handleCallback = async (req, res) => {
 
         if (!channelRes.data.items || channelRes.data.items.length === 0) {
             logger.warn('YOUTUBE_CALLBACK', 'No YouTube channel found for account', { userId });
-            const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=no_channel_found`;
+            const errorRedirect = (process.env.FRONTEND_URL || 'https://cloraai.com') + `/youtube-error?message=no_channel_found`;
             return res.redirect(errorRedirect);
         }
 
@@ -198,7 +198,7 @@ exports.handleCallback = async (req, res) => {
         logger.info('YOUTUBE_CALLBACK', 'YouTube account connected successfully', { userId, channelId });
 
         // 7. Success Redirect
-        const successRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + '/youtube-success';
+        const successRedirect = (process.env.FRONTEND_URL || 'https://cloraai.com') + '/youtube-success';
         res.redirect(successRedirect);
 
     } catch (error) {
@@ -207,7 +207,7 @@ exports.handleCallback = async (req, res) => {
             stack: error.stack,
             response: error.response?.data
         });
-        const errorRedirect = (process.env.FRONTEND_URL || 'http://localhost:3000') + `/youtube-error?message=internal_server_error`;
+        const errorRedirect = (process.env.FRONTEND_URL || 'https://cloraai.com') + `/youtube-error?message=internal_server_error`;
         res.redirect(errorRedirect);
     }
 };
