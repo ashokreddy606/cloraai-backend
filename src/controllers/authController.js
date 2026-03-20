@@ -3,6 +3,7 @@ const Redis = require('ioredis');
 const redisClient = require('../lib/redis');
 const logger = require('../utils/logger');
 const prisma = require('../lib/prisma');
+const { getRedirectUrl } = require('../utils/urlUtils');
 const { catchAsync, AppError } = require('../utils/errors');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
@@ -813,9 +814,9 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
   res.status(200).json({ success: true, message: 'Logged out from all other devices.' });
 });
 
-const facebookCallback = (req, res) => res.redirect('cloraai://instagram-success?code=' + req.query.code);
-const instagramAuth = (req, res) => res.redirect(`https://www.facebook.com/v18.0/dialog/oauth?client_id=${process.env.INSTAGRAM_APP_ID}&redirect_uri=${encodeURIComponent(process.env.INSTAGRAM_REDIRECT_URI)}&scope=instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement&response_type=code`);
-const instagramCallback = (req, res) => res.redirect('cloraai://instagram-success?code=' + req.query.code);
+const facebookCallback = (req, res) => res.redirect(getRedirectUrl('instagram-success', { code: req.query.code }));
+const instagramAuth = (req, res) => res.redirect(`https://www.facebook.com/v22.0/dialog/oauth?client_id=${process.env.INSTAGRAM_APP_ID}&redirect_uri=${encodeURIComponent(process.env.INSTAGRAM_REDIRECT_URI)}&scope=instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement&response_type=code`);
+const instagramCallback = (req, res) => res.redirect(getRedirectUrl('instagram-success', { code: req.query.code }));
 
 module.exports = {
   register, login, getCurrentUser, updateProfile, forgotPassword, resetPassword, deleteAccount, logout, makeAdmin, googleAuth, verifyEmail, setup2FA, verify2FA, facebookCallback, instagramAuth, instagramCallback, refreshToken, getSessions, logoutSession, logoutAllDevices

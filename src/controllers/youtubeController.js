@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 const dayjs = require('dayjs');
 const { createBreaker } = require('../utils/circuitBreaker');
 const { getYoutubeOAuth2Client } = require('../config/youtube');
+const { getRedirectUrl } = require('../utils/urlUtils');
 
 const youtubeBreaker = createBreaker(async (fn) => {
     return await fn();
@@ -16,30 +17,6 @@ const youtubeBreaker = createBreaker(async (fn) => {
 
 // Helper to get a new OAuth2Client instance
 const getOAuth2Client = () => getYoutubeOAuth2Client();
-
-/**
- * Helper to construct a safe redirect URL, ensuring no missing slashes 
- * between base and path. Handles both web URLs and app schemes.
- */
-const getRedirectUrl = (path, params = {}) => {
-    let baseUrl = process.env.FRONTEND_URL || 'cloraai://';
-    
-    // For web URLs, ensure a trailing slash if missing
-    if (baseUrl.startsWith('http') && !baseUrl.endsWith('/')) {
-        baseUrl += '/';
-    }
-    
-    // For app schemes like 'cloraai://', avoid adding extra slashes if not needed
-    let finalUrl = baseUrl.endsWith('/') ? `${baseUrl}${path}` : `${baseUrl}/${path}`;
-    
-    // Handle query params
-    const query = new URLSearchParams(params).toString();
-    if (query) {
-        finalUrl += (finalUrl.includes('?') ? '&' : '?') + query;
-    }
-    
-    return finalUrl;
-};
 
 // Minimum required scopes for CloraAI YouTube features
 // Reduced from broad scopes to principle of least privilege

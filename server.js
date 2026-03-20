@@ -149,6 +149,59 @@ app.get('/youtube-error', (req, res) => {
     `);
 });
 
+app.get('/instagram-success', (req, res) => {
+    res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Instagram Connected - CloraAI</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: -apple-system, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #fdf2f8; }
+                .card { background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); text-align: center; max-width: 90%; }
+                h1 { color: #db2777; }
+                p { color: #4b5563; }
+                .btn { display: inline-block; margin-top: 1.5rem; padding: 0.75rem 1.5rem; background: #2563eb; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 500; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>Success!</h1>
+                <p>Your Instagram account has been successfully connected to CloraAI.</p>
+                <a href="cloraai://instagram-success" class="btn">Return to App</a>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
+app.get('/instagram-error', (req, res) => {
+    const message = req.query.message || 'An unexpected error occurred during Instagram authentication.';
+    res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connection Failed - CloraAI</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: -apple-system, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #fef2f2; }
+                .card { background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); text-align: center; max-width: 90%; }
+                h1 { color: #dc2626; }
+                p { color: #4b5563; }
+                .btn { display: inline-block; margin-top: 1.5rem; padding: 0.75rem 1.5rem; background: #2563eb; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 500; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>Connection Failed</h1>
+                <p>${message}</p>
+                <a href="cloraai://instagram-error?message=${encodeURIComponent(message)}" class="btn">Retry in App</a>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
 // ─── Security Enforcement ───────────────────────────────────────────────────
 // Check for critical missing environment variables.
 if (process.env.NODE_ENV === 'production') {
