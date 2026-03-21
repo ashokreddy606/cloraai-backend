@@ -139,7 +139,11 @@ const getRules = async (req, res) => {
 const updateRule = async (req, res) => {
   try {
     const { id } = req.params;
-    const { keyword, autoReplyMessage, isActive, reelId, appendLinks, link1, link2, link3, link4 } = req.body;
+    const { 
+      keyword, autoReplyMessage, isActive, reelId, appendLinks, link1, link2, link3, link4,
+      isAI, triggerType, replyType, publicReplies, productName, productUrl, 
+      productDescription, productImage, mustFollow 
+    } = req.body;
 
     // Verify ownership
     const existingRule = await prisma.dMAutomation.findUnique({
