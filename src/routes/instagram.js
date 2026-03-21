@@ -3,9 +3,14 @@ const router = express.Router();
 const instagramController = require('../controllers/instagramController');
 const { authenticate } = require('../middleware/auth');
 
+const { uploadVideoS3, validateFileContent } = require('../middleware/upload');
+
 // OAuth Flows
 router.get('/initiate', instagramController.initiateAuth);
 router.get('/callback', instagramController.handleOAuthCallback);
+
+// Reel Upload (Synchronous/Reliable)
+router.post('/upload-reel', authenticate, uploadVideoS3.single('file'), validateFileContent, instagramController.uploadAndPostReel);
 
 // Account & Analytics
 router.get('/account', authenticate, instagramController.getAccountDetails);
@@ -13,6 +18,7 @@ router.post('/disconnect', authenticate, instagramController.disconnectAccount);
 router.get('/stats', authenticate, instagramController.getAnalytics);
 router.get('/media', authenticate, instagramController.getPosts);
 router.get('/media/:mediaId/insights', authenticate, instagramController.getPostInsights);
+
 // For historical trend data (stored in Mongoose)
 router.get('/history', authenticate, async (req, res) => {
     try {

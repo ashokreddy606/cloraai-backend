@@ -70,31 +70,47 @@ const s3Upload = async (req, res) => {
                 ContentType: req.file.verifiedMimeType || req.file.mimetype
             };
 
-            await s3Client.send(new PutObjectCommand(uploadParams));
-
-            // Clean up temp file
-            fs.unlink(req.file.path, (err) => {
-                if (err) logger.error('UPLOAD', 'Failed to delete temp file after S3 upload', { path: req.file.path, error: err.message });
+            logger.info('UPLOAD', `Step 1: Starting S3 upload to bucket ${awsBucketName}...`, { 
+                filename: req.file.originalname,
+                key: s3Key
             });
 
-            const publicUrl = `https://${awsBucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-
-            logger.info('UPLOAD', `File uploaded manually to S3 by user ${req.userId}`, { 
-                location: publicUrl,
-                key: s3Key,
-                size: req.file.size
-            });
-
-            return res.json({
-                success: true,
-                data: {
-                    publicUrl: publicUrl,
-                    key: s3Key,
-                    filename: req.file.originalname,
-                    mimetype: req.file.verifiedMimeType || req.file.mimetype,
-                    size: req.file.size
+            try {
+                const uploadResult = await s3Client.send(new PutObjectCommand(uploadParams));
+                
+                if (!uploadResult || uploadResult.$metadata.httpStatusCode !== 200) {
+                    throw new Error(`S3 upload failed with status ${uploadResult?.$metadata?.httpStatusCode}`);
                 }
-            });
+
+                const publicUrl = `https://${awsBucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+
+                logger.info('UPLOAD', `Step 2: S3 upload success for user ${req.userId}`, { 
+                    location: publicUrl,
+                    key: s3Key,
+                    size: req.file.size
+                });
+
+                // Clean up temp file immediately after success
+                if (req.file.path && fs.existsSync(req.file.path)) {
+                    fs.unlink(req.file.path, (err) => {
+                        if (err) logger.error('UPLOAD', 'Failed to delete temp file after success', { path: req.file.path, error: err.message });
+                    });
+                }
+
+                return res.json({
+                    success: true,
+                    data: {
+                        publicUrl: publicUrl,
+                        key: s3Key,
+                        filename: req.file.originalname,
+                        mimetype: req.file.verifiedMimeType || req.file.mimetype,
+                        size: req.file.size
+                    }
+                });
+            } catch (s3Error) {
+                logger.error('UPLOAD', 'S3 client send failure:', { error: s3Error.message, stack: s3Error.stack });
+                throw s3Error;
+            }
         }
 
         // Fallback for direct multer-s3 (if ever reverted)

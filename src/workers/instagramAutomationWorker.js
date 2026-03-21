@@ -5,6 +5,7 @@ const axios = require('axios');
 const prisma = require('../lib/prisma');
 const { appConfig } = require('../config');
 const { matchesKeyword } = require('../utils/automationUtils');
+const { generateAIReply } = require('../utils/aiUtils');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -83,7 +84,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         for (const rule of sortedRules) {
             // STEP 4: Verify Reel Filtering with flexibility
             const isMatchReel = !rule.reelId || (mediaId && mediaId.includes(rule.reelId));
-            const isMatchKeyword = matchesKeyword(incomingText, rule.keyword);
+            const isMatchKeyword = rule.triggerType === 'any' || matchesKeyword(incomingText, rule.keyword);
             
             logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, { 
                 jobId: job.id, 
@@ -115,11 +116,50 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             return { skipped: true, reason: 'Event claimed by another worker' };
         }
 
-        // 4. Prepare Reply
+        // 4. Prepare Reply (Private DM)
         let finalMessage = matchedRule.autoReplyMessage;
+        
+        // AI Generation override
+        if (matchedRule.isAI) {
+            const aiReply = await generateAIReply(incomingText, {
+                productName: matchedRule.productName,
+                productDescription: matchedRule.productDescription,
+                productUrl: matchedRule.productUrl,
+                isDM: isDM
+            });
+            if (aiReply) finalMessage = aiReply;
+        }
+
+        // Product Details formatting
+        if (matchedRule.replyType === 'product' && matchedRule.productName) {
+            const productBlock = `\n\nProduct: ${matchedRule.productName}${matchedRule.productUrl ? '\n' + matchedRule.productUrl : ''}`;
+            finalMessage += productBlock;
+        }
+
         if (matchedRule.appendLinks) {
             const links = [matchedRule.link1, matchedRule.link2, matchedRule.link3, matchedRule.link4].filter(Boolean);
             if (links.length > 0) finalMessage += '\n\n' + links.join('\n');
+        }
+
+        // Feature: "Follow before sending link"
+        if (matchedRule.mustFollow) {
+            logger.info('WORKER:FOLLOW_CHECK', `Checking if ${senderId} follows ${instagramId}`, { jobId: job.id });
+            // Note: In a production environment, this requires additional Meta permissions 
+            // and checking the friendship status. If not followed, we could prepend a message 
+            // like "Thanks for asking! I've sent the link, but make sure to follow for more updates!"
+        }
+
+        // Pick a public reply for comments
+        let publicReply = finalMessage; // Fallback to DM message
+        if (matchedRule.publicReplies) {
+            try {
+                const choices = JSON.parse(matchedRule.publicReplies);
+                if (Array.isArray(choices) && choices.length > 0) {
+                    publicReply = choices[Math.floor(Math.random() * choices.length)];
+                }
+            } catch (e) {
+                logger.warn('WORKER:PARSE_PUBLIC', 'Failed to parse public replies', { ruleId: matchedRule.id });
+            }
         }
 
         // 5. Execute API Calls (Private Reply then Public Reply for comments)
@@ -158,7 +198,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             const replyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${commentId}/replies`;
             try {
                 logger.info('WORKER:API_REPLY', `Sending public comment reply for ${commentId}`, { jobId: job.id });
-                const response = await axios.post(replyUrl, { message: finalMessage }, { params: { access_token: instagramAccessToken } });
+                const response = await axios.post(replyUrl, { message: publicReply }, { params: { access_token: instagramAccessToken } });
                 logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`, { 
                     jobId: job.id,
                     metaResponse: response.data 

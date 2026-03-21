@@ -366,11 +366,26 @@ model DMAutomation {
   userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  keyword          String
-  autoReplyMessage String
+  keyword          String?
+  autoReplyMessage String?
   isActive         Boolean @default(true)
 
   reelId           String? // Specific reel ID. If null, applies globally.
+  
+  // Advanced Features
+  isAI             Boolean @default(false)
+  triggerType      String  @default("keywords") // 'keywords' | 'any'
+  replyType        String  @default("text")     // 'text' | 'product'
+  
+  publicReplies    String? // JSON string store of array
+  
+  productName      String?
+  productUrl       String?
+  productDescription String?
+  productImage     String?
+  
+  mustFollow       Boolean @default(false)
+
   appendLinks      Boolean @default(false)
   link1            String?
   link2            String?

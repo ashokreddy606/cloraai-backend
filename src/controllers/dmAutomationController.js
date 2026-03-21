@@ -4,7 +4,11 @@ const { appConfig } = require('../config');
 // Create DM Automation Rule
 const createRule = async (req, res) => {
   try {
-    const { keyword, autoReplyMessage, reelId, appendLinks, link1, link2, link3, link4 } = req.body;
+    const { 
+      keyword, autoReplyMessage, reelId, appendLinks, link1, link2, link3, link4,
+      isAI, triggerType, replyType, publicReplies, productName, productUrl, 
+      productDescription, productImage, mustFollow 
+    } = req.body;
 
     if (!appConfig.featureFlags.autoDMEnabled) {
       return res.status(403).json({
@@ -13,11 +17,18 @@ const createRule = async (req, res) => {
       });
     }
 
-    if (!keyword || !autoReplyMessage) {
+    if (!isAI && !keyword && triggerType !== 'any') {
       return res.status(400).json({
         error: 'Missing required fields',
-        message: 'keyword and autoReplyMessage are required'
+        message: 'keyword is required when triggerType is not "any"'
       });
+    }
+
+    if (!isAI && !autoReplyMessage && replyType !== 'product') {
+        return res.status(400).json({
+          error: 'Missing required fields',
+          message: 'autoReplyMessage is required when replyType is not "product" and isAI is false'
+        });
     }
 
     // Check plan from User model (source of truth)
@@ -55,20 +66,31 @@ const createRule = async (req, res) => {
     }
 
     // ── PLAY STORE COMPLIANCE: Anti-Spam Safety Check ──
-    if (autoReplyMessage.length < 5 || /http|www|\.com/i.test(autoReplyMessage)) {
-      return res.status(400).json({
-        error: 'Policy Violation',
-        message: 'Auto-reply messages must be meaningful and cannot contain external links to prevent spam flags.'
-      });
+    if (autoReplyMessage && !isAI) {
+        if (autoReplyMessage.length < 5 || /http|www|\.com/i.test(autoReplyMessage)) {
+          return res.status(400).json({
+            error: 'Policy Violation',
+            message: 'Auto-reply messages must be meaningful and cannot contain external links to prevent spam flags.'
+          });
+        }
     }
 
     const rule = await prisma.dMAutomation.create({
       data: {
         userId: req.userId,
-        keyword,
-        autoReplyMessage,
+        keyword: keyword || null,
+        autoReplyMessage: autoReplyMessage || null,
         isActive: true,
         reelId: reelId || null,
+        isAI: !!isAI,
+        triggerType: triggerType || 'keywords',
+        replyType: replyType || 'text',
+        publicReplies: typeof publicReplies === 'string' ? publicReplies : JSON.stringify(publicReplies || []),
+        productName: productName || null,
+        productUrl: productUrl || null,
+        productDescription: productDescription || null,
+        productImage: productImage || null,
+        mustFollow: !!mustFollow,
         appendLinks: appendLinks || false,
         link1: link1 || null,
         link2: link2 || null,
@@ -140,10 +162,19 @@ const updateRule = async (req, res) => {
     const rule = await prisma.dMAutomation.update({
       where: { id },
       data: {
-        ...(keyword !== undefined && { keyword }),
-        ...(autoReplyMessage !== undefined && { autoReplyMessage }),
+        ...(keyword !== undefined && { keyword: keyword || null }),
+        ...(autoReplyMessage !== undefined && { autoReplyMessage: autoReplyMessage || null }),
         ...(isActive !== undefined && { isActive }),
         ...(reelId !== undefined && { reelId: reelId || null }),
+        ...(isAI !== undefined && { isAI: !!isAI }),
+        ...(triggerType !== undefined && { triggerType }),
+        ...(replyType !== undefined && { replyType }),
+        ...(publicReplies !== undefined && { publicReplies: typeof publicReplies === 'string' ? publicReplies : JSON.stringify(publicReplies || []) }),
+        ...(productName !== undefined && { productName: productName || null }),
+        ...(productUrl !== undefined && { productUrl: productUrl || null }),
+        ...(productDescription !== undefined && { productDescription: productDescription || null }),
+        ...(productImage !== undefined && { productImage: productImage || null }),
+        ...(mustFollow !== undefined && { mustFollow: !!mustFollow }),
         ...(appendLinks !== undefined && { appendLinks }),
         ...(link1 !== undefined && { link1: link1 || null }),
         ...(link2 !== undefined && { link2: link2 || null }),
