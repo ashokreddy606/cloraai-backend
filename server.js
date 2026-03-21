@@ -631,7 +631,9 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // Start server
-const PORT = process.env.PORT || 3000;
+// Start server - Railway uses process.env.PORT (often 8080 or random)
+// We prioritize process.env.PORT and fallback to 3000 for local dev
+const PORT = process.env.PORT || 8080; 
 
 if (require.main === module) {
     const server = app.listen(PORT, "0.0.0.0", () => {
