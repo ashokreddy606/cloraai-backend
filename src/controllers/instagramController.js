@@ -305,6 +305,48 @@ const getPosts = async (req, res) => {
   }
 };
 
+// Fetch insights for a specific post (/api/v1/instagram/media/:mediaId/insights)
+const getPostInsights = async (req, res) => {
+  try {
+    const { mediaId } = req.params;
+    const account = await InstagramAccount.findOne({ userId: req.userId });
+    
+    if (!account) {
+      return res.status(404).json({ error: 'Instagram account not connected' });
+    }
+
+    // Usually we'd need to know the media_type (IMAGE vs VIDEO) for correct metrics.
+    // If not provided in params, we can fetch basic metadata first or try to infer.
+    // getMediaInsights in service handles this if we pass mediaType.
+    
+    // 1. Fetch media basic info to get media_type
+    const accessToken = account.instagramAccessToken;
+    const mediaInfoRes = await axios.get(
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${mediaId}?fields=media_type&access_token=${accessToken}`
+    );
+    
+    const mediaType = mediaInfoRes.data.media_type;
+
+    // 2. Fetch enriched insights
+    const insights = await instagramService.getMediaInsights(mediaId, accessToken, mediaType);
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        mediaId,
+        mediaType,
+        insights
+      }
+    });
+  } catch (error) {
+    logger.error('INSTAGRAM', `Failed to fetch insights for media ${req.params.mediaId}: ${error.message}`);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch post insights',
+      message: error.response?.data?.error?.message || error.message
+    });
+  }
+};
+
 // Disconnect Instagram Account
 const disconnectAccount = async (req, res) => {
   try {
