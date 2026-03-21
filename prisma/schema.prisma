@@ -386,6 +386,13 @@ model DMAutomation {
   
   mustFollow       Boolean @default(false)
 
+  // Custom Follow Request (Image 1)
+  customFollowEnabled Boolean @default(false)
+  customFollowHeader  String?
+  customFollowSubtext String?
+  followButtonText    String?
+  followedButtonText  String?
+
   appendLinks      Boolean @default(false)
   link1            String?
   link2            String?
