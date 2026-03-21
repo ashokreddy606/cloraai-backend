@@ -375,7 +375,9 @@ const uploadAndPostReel = async (req, res) => {
       isAI, triggerType, replyType, productName, productUrl, 
       productDescription, productImage, mustFollow, dmButtonText,
       automationKeyword, automationReply, automationAppendLinks, automationLinks,
-      publicReplies
+      publicReplies,
+      customFollowEnabled, customFollowHeader, customFollowSubtext, 
+      followButtonText, followedButtonText, dmReplyEnabled
     } = req.body;
     const userId = req.userId;
 
@@ -531,6 +533,12 @@ const uploadAndPostReel = async (req, res) => {
                 mustFollow: mustFollow === 'true' || mustFollow === true,
                 dmButtonText: dmButtonText || null,
                 publicReplies: publicReplies || null,
+                customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
+                customFollowHeader: customFollowHeader || null,
+                customFollowSubtext: customFollowSubtext || null,
+                followButtonText: followButtonText || null,
+                followedButtonText: followedButtonText || null,
+                dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
             }
         });
 
@@ -558,7 +566,13 @@ const uploadAndPostReel = async (req, res) => {
                     productImage: scheduledPost.productImage,
                     mustFollow: scheduledPost.mustFollow,
                     dmButtonText: scheduledPost.dmButtonText,
-                    publicReplies: scheduledPost.publicReplies
+                    publicReplies: scheduledPost.publicReplies,
+                    customFollowEnabled: scheduledPost.customFollowEnabled,
+                    customFollowHeader: scheduledPost.customFollowHeader,
+                    customFollowSubtext: scheduledPost.customFollowSubtext,
+                    followButtonText: scheduledPost.followButtonText,
+                    followedButtonText: scheduledPost.followedButtonText,
+                    dmReplyEnabled: scheduledPost.dmReplyEnabled
                 }
             }).catch(err => logger.error('REEL_UPLOAD', "Failed to create DM automation rule", { error: err.message }));
         }

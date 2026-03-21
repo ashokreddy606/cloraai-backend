@@ -326,6 +326,14 @@ model ScheduledPost {
   mustFollow            Boolean @default(false)
   dmButtonText          String?
   publicReplies         String? // JSON string
+  
+  // Custom Follow Request
+  customFollowEnabled   Boolean @default(false)
+  customFollowHeader    String?
+  customFollowSubtext   String?
+  followButtonText      String?
+  followedButtonText    String?
+  dmReplyEnabled        Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -405,6 +413,7 @@ model DMAutomation {
   followButtonText    String?
   followedButtonText  String?
   dmButtonText        String?
+  dmReplyEnabled      Boolean @default(false)
 
   appendLinks      Boolean @default(false)
   link1            String?

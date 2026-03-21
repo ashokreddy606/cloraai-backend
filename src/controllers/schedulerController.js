@@ -11,7 +11,9 @@ const schedulePost = async (req, res) => {
       // Advanced Automation
       isAI, triggerType, replyType, productName, productUrl, 
       productDescription, productImage, mustFollow, dmButtonText, publicReplies,
-      automationKeyword, automationReply, automationAppendLinks, automationLinks 
+      automationKeyword, automationReply, automationAppendLinks, automationLinks,
+      customFollowEnabled, customFollowHeader, customFollowSubtext, 
+      followButtonText, followedButtonText, dmReplyEnabled
     } = req.body;
 
     if (!appConfig.featureFlags.reelSchedulerEnabled) {
@@ -102,6 +104,12 @@ const schedulePost = async (req, res) => {
         mustFollow: mustFollow === 'true' || mustFollow === true,
         dmButtonText: dmButtonText || null,
         publicReplies: publicReplies || null,
+        customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
+        customFollowHeader: customFollowHeader || null,
+        customFollowSubtext: customFollowSubtext || null,
+        followButtonText: followButtonText || null,
+        followedButtonText: followedButtonText || null,
+        dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
       }
     });
 
