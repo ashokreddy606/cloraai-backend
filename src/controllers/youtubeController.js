@@ -195,7 +195,9 @@ exports.handleCallback = async (req, res) => {
         logger.info('YOUTUBE_CALLBACK', 'YouTube account connected successfully', { userId, channelId });
 
         // 7. Success Redirect
-        res.redirect(getRedirectUrl('youtube-success'));
+        const redirectUrl = getRedirectUrl('youtube-success');
+        logger.info('YOUTUBE_CALLBACK', 'Redirecting after success', { userId, channelId, redirectUrl });
+        res.redirect(redirectUrl);
 
     } catch (error) {
         logger.error('YOUTUBE_CALLBACK', 'Critical failure in callback handler', {

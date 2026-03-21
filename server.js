@@ -134,6 +134,12 @@ app.get('/youtube-success', (req, res) => {
                 <p>Your YouTube account has been successfully connected to CloraAI.</p>
                 <a href="cloraai://youtube-success" class="btn">Return to App</a>
             </div>
+            <script>
+                // Automatically attempt to redirect back to the app after a short delay
+                setTimeout(function() {
+                    window.location.href = "cloraai://youtube-success";
+                }, 1500);
+            </script>
         </body>
         </html>
     `);
@@ -161,6 +167,12 @@ app.get('/youtube-error', (req, res) => {
                 <p>${message}</p>
                 <a href="cloraai://youtube-error?message=${encodeURIComponent(message)}" class="btn">Retry in App</a>
             </div>
+            <script>
+                // Automatically attempt to redirect back to the app after a short delay
+                setTimeout(function() {
+                    window.location.href = "cloraai://youtube-error?message=${encodeURIComponent(message)}";
+                }, 1500);
+            </script>
         </body>
         </html>
     `);
@@ -187,6 +199,12 @@ app.get('/instagram-success', (req, res) => {
                 <p>Your Instagram account has been successfully connected to CloraAI.</p>
                 <a href="cloraai://instagram-success" class="btn">Return to App</a>
             </div>
+            <script>
+                // Automatically attempt to redirect back to the app after a short delay
+                setTimeout(function() {
+                    window.location.href = "cloraai://instagram-success";
+                }, 1500);
+            </script>
         </body>
         </html>
     `);
@@ -214,6 +232,12 @@ app.get('/instagram-error', (req, res) => {
                 <p>${message}</p>
                 <a href="cloraai://instagram-error?message=${encodeURIComponent(message)}" class="btn">Retry in App</a>
             </div>
+            <script>
+                // Automatically attempt to redirect back to the app after a short delay
+                setTimeout(function() {
+                    window.location.href = "cloraai://instagram-error?message=${encodeURIComponent(message)}";
+                }, 1500);
+            </script>
         </body>
         </html>
     `);

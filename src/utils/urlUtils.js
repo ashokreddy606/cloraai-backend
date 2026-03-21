@@ -3,8 +3,8 @@
  * between base and path. Handles both web URLs (http/https) and app schemes (cloraai://).
  */
 const getRedirectUrl = (path, params = {}) => {
-    // Default to app scheme if FRONTEND_URL is not defined
-    let baseUrl = process.env.FRONTEND_URL || 'cloraai://';
+    // Handle comma-separated list of URLs (common for CORS config) by taking the first one
+    let baseUrl = (process.env.FRONTEND_URL || 'cloraai://').split(',')[0].trim();
     
     // For web URLs, ensure a trailing slash if missing
     if (baseUrl.startsWith('http') && !baseUrl.endsWith('/')) {
