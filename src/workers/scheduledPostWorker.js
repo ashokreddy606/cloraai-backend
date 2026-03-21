@@ -158,11 +158,13 @@ const processScheduledPost = async (job) => {
     });
 
     // 5b. Create DM Automation rule if requested
-    if (post.automationKeyword && post.automationReply && instagramPostId) {
+    if (post.triggerType && instagramPostId) {
         let links = [];
         if (post.automationLinks) {
             try {
-                links = JSON.parse(post.automationLinks);
+                links = typeof post.automationLinks === 'string' 
+                    ? JSON.parse(post.automationLinks) 
+                    : post.automationLinks;
             } catch (e) {
                 logger.warn('WORKER', `Failed to parse automationLinks for post ${postId}`);
             }
@@ -181,9 +183,20 @@ const processScheduledPost = async (job) => {
                     link2: links[1] || null,
                     link3: links[2] || null,
                     link4: links[3] || null,
+                    // Advanced fields
+                    isAI: post.isAI,
+                    triggerType: post.triggerType,
+                    replyType: post.replyType,
+                    productName: post.productName,
+                    productUrl: post.productUrl,
+                    productDescription: post.productDescription,
+                    productImage: post.productImage,
+                    mustFollow: post.mustFollow,
+                    dmButtonText: post.dmButtonText,
+                    publicReplies: post.publicReplies
                 }
             });
-            logger.info('WORKER', `Created DM Automation rule for reel ${instagramPostId}`);
+            logger.info('WORKER', `Created advanced DM Automation rule for reel ${instagramPostId}`);
         } catch (ruleErr) {
             logger.error('WORKER', `Failed to create DM Automation rule for reel ${instagramPostId}`, { error: ruleErr.message });
         }

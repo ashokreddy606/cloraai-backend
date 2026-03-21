@@ -310,10 +310,22 @@ model ScheduledPost {
   youtubeVideoId   String?
   errorMessage    String?
 
-  automationKeyword String?
-  automationReply   String?
+  automationKeyword     String?
+  automationReply       String?
   automationAppendLinks Boolean @default(false)
-  automationLinks String? // Store as JSON string or comma-separated
+  automationLinks       String? // Store as JSON string or comma-separated
+  
+  // Advanced Automation Integration
+  isAI                  Boolean @default(false)
+  triggerType           String? // keywords, any
+  replyType             String? // text, product
+  productName           String?
+  productUrl            String?
+  productDescription    String?
+  productImage          String?
+  mustFollow            Boolean @default(false)
+  dmButtonText          String?
+  publicReplies         String? // JSON string
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

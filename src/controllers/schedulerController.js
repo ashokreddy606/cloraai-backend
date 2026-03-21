@@ -6,7 +6,13 @@ const { instagramQueue, youtubeQueue, enqueueJob } = require('../utils/queue');
 // Schedule Post
 const schedulePost = async (req, res) => {
   try {
-    const { caption, hashtags, scheduledTime, mediaUrl, captionId, publishInstantly, automationKeyword, automationReply, automationAppendLinks, automationLinks } = req.body;
+    const { 
+      caption, hashtags, scheduledTime, mediaUrl, captionId, publishInstantly,
+      // Advanced Automation
+      isAI, triggerType, replyType, productName, productUrl, 
+      productDescription, productImage, mustFollow, dmButtonText, publicReplies,
+      automationKeyword, automationReply, automationAppendLinks, automationLinks 
+    } = req.body;
 
     if (!appConfig.featureFlags.reelSchedulerEnabled) {
       return res.status(403).json({
@@ -83,8 +89,19 @@ const schedulePost = async (req, res) => {
         automationKeyword: automationKeyword || null,
         automationReply: automationReply || null,
         automationAppendLinks: automationAppendLinks || false,
-        automationLinks: automationLinks ? JSON.stringify(automationLinks) : null,
-        platform: 'instagram' // Default to instagram for this controller
+        automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
+        platform: 'instagram', // Default to instagram for this controller
+        // Advanced Automation Integration
+        isAI: isAI === 'true' || isAI === true,
+        triggerType: triggerType || null,
+        replyType: replyType || null,
+        productName: productName || null,
+        productUrl: productUrl || null,
+        productDescription: productDescription || null,
+        productImage: productImage || null,
+        mustFollow: mustFollow === 'true' || mustFollow === true,
+        dmButtonText: dmButtonText || null,
+        publicReplies: publicReplies || null,
       }
     });
 

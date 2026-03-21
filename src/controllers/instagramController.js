@@ -368,7 +368,15 @@ const disconnectAccount = async (req, res) => {
 const uploadAndPostReel = async (req, res) => {
   let tempFilePath = null;
   try {
-    const { caption } = req.body;
+    const { 
+      caption,
+      // Advanced Automation
+      automationEnabled,
+      isAI, triggerType, replyType, productName, productUrl, 
+      productDescription, productImage, mustFollow, dmButtonText,
+      automationKeyword, automationReply, automationAppendLinks, automationLinks,
+      publicReplies
+    } = req.body;
     const userId = req.userId;
 
     if (!req.file) {
@@ -508,15 +516,26 @@ const uploadAndPostReel = async (req, res) => {
                 status: 'PUBLISHED',
                 publishedAt: new Date(),
                 instagramPostId,
-                automationKeyword: req.body.automationKeyword || null,
-                automationReply: req.body.automationReply || null,
-                automationAppendLinks: req.body.automationAppendLinks === 'true' || req.body.automationAppendLinks === true,
-                automationLinks: req.body.automationLinks ? (typeof req.body.automationLinks === 'string' ? req.body.automationLinks : JSON.stringify(req.body.automationLinks)) : null,
+                automationKeyword: automationKeyword || null,
+                automationReply: automationReply || null,
+                automationAppendLinks: automationAppendLinks === 'true' || automationAppendLinks === true,
+                automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
+                // New fields
+                isAI: isAI === 'true' || isAI === true,
+                triggerType: triggerType || null,
+                replyType: replyType || null,
+                productName: productName || null,
+                productUrl: productUrl || null,
+                productDescription: productDescription || null,
+                productImage: productImage || null,
+                mustFollow: mustFollow === 'true' || mustFollow === true,
+                dmButtonText: dmButtonText || null,
+                publicReplies: publicReplies || null,
             }
         });
 
         // 8. Create DM Automation rule if requested
-        if (scheduledPost.automationKeyword && scheduledPost.automationReply) {
+        if (automationEnabled === 'true' || automationEnabled === true) {
             await prisma.dMAutomation.create({
                 data: {
                     userId,
@@ -529,6 +548,17 @@ const uploadAndPostReel = async (req, res) => {
                     link2: links[1] || null,
                     link3: links[2] || null,
                     link4: links[3] || null,
+                    // Advanced fields
+                    isAI: scheduledPost.isAI,
+                    triggerType: scheduledPost.triggerType,
+                    replyType: scheduledPost.replyType,
+                    productName: scheduledPost.productName,
+                    productUrl: scheduledPost.productUrl,
+                    productDescription: scheduledPost.productDescription,
+                    productImage: scheduledPost.productImage,
+                    mustFollow: scheduledPost.mustFollow,
+                    dmButtonText: scheduledPost.dmButtonText,
+                    publicReplies: scheduledPost.publicReplies
                 }
             }).catch(err => logger.error('REEL_UPLOAD', "Failed to create DM automation rule", { error: err.message }));
         }
