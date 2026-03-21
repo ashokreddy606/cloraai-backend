@@ -84,7 +84,7 @@ exports.getAuthUrl = async (req, res) => {
         const client = getOAuth2Client();
         // Sign state with JWT so it can be cryptographically verified in callback
         const signedState = jwt.sign(
-            { userId },
+            { userId, returnTo: req.query.redirectUrl },
             process.env.JWT_SECRET,
             { expiresIn: '10m' }
         );
@@ -123,14 +123,29 @@ exports.handleCallback = async (req, res) => {
 
         // 2. Verify and decode the signed state JWT to extract userId securely
         let userId;
+        let returnTo;
         try {
             const decoded = jwt.verify(state, process.env.JWT_SECRET);
             userId = decoded.userId;
-            logger.info('YOUTUBE_CALLBACK', 'State verification successful', { userId });
+            returnTo = decoded.returnTo;
+            logger.info('YOUTUBE_CALLBACK', 'State verification successful', { userId, returnTo });
         } catch (stateError) {
             logger.warn('YOUTUBE_CALLBACK', 'OAuth state JWT verification failed', { error: stateError.message });
             return res.redirect(getRedirectUrl('youtube-error', { message: 'invalid_state' }));
         }
+
+        // Helper for consistent redirection (app-aware)
+        const redirectWithError = (msg) => {
+            if (returnTo) {
+                try {
+                    // Try to construct a deep link back to the app with the error
+                    const base = returnTo.replace('success', 'error');
+                    const separator = base.includes('?') ? '&' : '?';
+                    return res.redirect(`${base}${separator}message=${encodeURIComponent(msg)}`);
+                } catch (e) { /* fallback */ }
+            }
+            return res.redirect(getRedirectUrl('youtube-error', { message: msg }));
+        };
 
         // 3. Exchange code for tokens
         const client = getOAuth2Client();
@@ -150,7 +165,7 @@ exports.handleCallback = async (req, res) => {
                 code: tokenError.code
             });
             const errorMsg = tokenError.response?.data?.error_description || tokenError.message || 'token_exchange_failed';
-            return res.redirect(getRedirectUrl('youtube-error', { message: errorMsg }));
+            return redirectWithError(errorMsg);
         }
 
         client.setCredentials(tokens);
@@ -164,7 +179,7 @@ exports.handleCallback = async (req, res) => {
 
         if (!channelRes.data.items || channelRes.data.items.length === 0) {
             logger.warn('YOUTUBE_CALLBACK', 'No YouTube channel found for account', { userId });
-            return res.redirect(getRedirectUrl('youtube-error', { message: 'no_channel_found' }));
+            return redirectWithError('no_channel_found');
         }
 
         const channel = channelRes.data.items[0];
@@ -195,8 +210,16 @@ exports.handleCallback = async (req, res) => {
         logger.info('YOUTUBE_CALLBACK', 'YouTube account connected successfully', { userId, channelId });
 
         // 7. Success Redirect
-        const redirectUrl = getRedirectUrl('youtube-success');
-        logger.info('YOUTUBE_CALLBACK', 'Redirecting after success', { userId, channelId, redirectUrl });
+        // Use dynamic return URL from state if provided, otherwise fallback to default
+        const redirectUrl = returnTo || getRedirectUrl('youtube-success');
+        
+        logger.info('YOUTUBE_CALLBACK', 'Redirecting after success', { 
+            userId, 
+            channelId, 
+            redirectUrl,
+            isDynamic: !!returnTo 
+        });
+        
         res.redirect(redirectUrl);
 
     } catch (error) {
@@ -205,7 +228,7 @@ exports.handleCallback = async (req, res) => {
             stack: error.stack,
             response: error.response?.data
         });
-        return res.redirect(getRedirectUrl('youtube-error', { message: 'internal_server_error' }));
+        return redirectWithError('internal_server_error');
     }
 };
 
