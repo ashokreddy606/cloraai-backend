@@ -392,6 +392,7 @@ model DMAutomation {
   customFollowSubtext String?
   followButtonText    String?
   followedButtonText  String?
+  dmButtonText        String?
 
   appendLinks      Boolean @default(false)
   link1            String?

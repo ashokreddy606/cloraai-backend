@@ -9,7 +9,7 @@ const createRule = async (req, res) => {
       isAI, triggerType, replyType, publicReplies, productName, productUrl, 
       productDescription, productImage, mustFollow,
       customFollowEnabled, customFollowHeader, customFollowSubtext, 
-      followButtonText, followedButtonText
+      followButtonText, followedButtonText, dmButtonText
     } = req.body;
 
     if (!appConfig.featureFlags.autoDMEnabled) {
@@ -98,6 +98,7 @@ const createRule = async (req, res) => {
         customFollowSubtext: customFollowSubtext || null,
         followButtonText: followButtonText || null,
         followedButtonText: followedButtonText || null,
+        dmButtonText: dmButtonText || null,
         appendLinks: appendLinks || false,
         link1: link1 || null,
         link2: link2 || null,
@@ -147,10 +148,11 @@ const updateRule = async (req, res) => {
   try {
     const { id } = req.params;
     const { 
+      keyword, autoReplyMessage, isActive, reelId, appendLinks, link1, link2, link3, link4,
       isAI, triggerType, replyType, publicReplies, productName, productUrl, 
       productDescription, productImage, mustFollow,
       customFollowEnabled, customFollowHeader, customFollowSubtext, 
-      followButtonText, followedButtonText
+      followButtonText, followedButtonText, dmButtonText
     } = req.body;
 
     // Verify ownership
@@ -192,6 +194,7 @@ const updateRule = async (req, res) => {
         ...(customFollowSubtext !== undefined && { customFollowSubtext: customFollowSubtext || null }),
         ...(followButtonText !== undefined && { followButtonText: followButtonText || null }),
         ...(followedButtonText !== undefined && { followedButtonText: followedButtonText || null }),
+        ...(dmButtonText !== undefined && { dmButtonText: dmButtonText || null }),
         ...(appendLinks !== undefined && { appendLinks }),
         ...(link1 !== undefined && { link1: link1 || null }),
         ...(link2 !== undefined && { link2: link2 || null }),
