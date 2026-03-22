@@ -3,13 +3,17 @@
  */
 
 const nodemailer = require('nodemailer');
+const dns = require('dns');
 
-// ✅ Transporter (FORCE IPv4 - fixes ENETUNREACH)
+// 🚀 FORCE Node.js to resolve domain names to IPv4 first, rather than IPv6!
+// This definitively prevents the ENETUNREACH 2607:xxx (IPv6) error on Railway.
+dns.setDefaultResultOrder('ipv4first');
+
+// ✅ Transporter
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
     secure: false, // required for 587
-    family: 4,     // ⭐ VERY IMPORTANT (fixes Railway IPv6 issue)
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
