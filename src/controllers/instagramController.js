@@ -10,9 +10,9 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const { decryptToken } = require('../utils/cryptoUtils');
 const prisma = require('../lib/prisma');
 const { notifyPostSuccess } = require('../services/pushNotificationService');
+const { instagramQueue, enqueueJob } = require('../utils/queue');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://cloraai.com';
@@ -365,7 +365,7 @@ const disconnectAccount = async (req, res) => {
   }
 };
 
-// Synchronous Reel Upload and Post Flow (/api/v1/instagram/upload-reel)
+// Asynchronous Reel Upload and Post Flow (/api/v1/instagram/upload-reel)
 const uploadAndPostReel = async (req, res) => {
   let tempFilePath = null;
   try {
@@ -409,224 +409,76 @@ const uploadAndPostReel = async (req, res) => {
     logger.info('REEL_UPLOAD', `Step 2: Uploading to S3 bucket ${awsConfig.bucketName}...`);
     await s3Client.send(new PutObjectCommand(uploadParams));
     
-    // 2. Generate a signed URL for Instagram to access the private S3 file
-    const getCommand = new GetObjectCommand({ Bucket: awsConfig.bucketName, Key: s3Key });
-    const videoUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 }); // 1 hour
-    
-    logger.info('REEL_UPLOAD', `Step 2: S3 upload success + Signed URL generated`);
+    const videoUrl = `https://${awsConfig.bucketName}.s3.${awsConfig.region}.amazonaws.com/${s3Key}`;
+    logger.info('REEL_UPLOAD', `Step 2: S3 upload success`, { videoUrl });
 
-    // 2. Get Instagram Account
+    // 2. Get Instagram Account (Check if connected before enqueuing)
     const account = await InstagramAccount.findOne({ userId });
     if (!account) {
         throw new Error('Instagram account not connected. Please connect your account first.');
     }
 
-    const accessToken = decryptToken(account.instagramAccessToken);
-    const igUserId = account.instagramId;
-
-    if (!igUserId || !accessToken) {
-        throw new Error('Instagram account is missing critical credentials. Please reconnect.');
-    }
-
-    // 3. Create Media Container
-    logger.info('REEL_UPLOAD', `Step 3: Creating Instagram media container for ${igUserId}...`);
-    const containerRes = await axios.post(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${igUserId}/media`,
-      null,
-      {
-        params: {
-          media_type: 'REELS',
-          video_url: videoUrl,
-          caption: caption || '',
-          access_token: accessToken
-        }
-      }
-    );
-
-    const creationId = containerRes.data.id;
-    if (!creationId) {
-      logger.error('REEL_UPLOAD', "Instagram API did not return a creation_id", { response: containerRes.data });
-      throw new Error('Failed to create media container on Instagram');
-    }
-
-    // 4. Poll for status (Instagram processing can take time)
-    logger.info('REEL_UPLOAD', `Step 4: Polling for media status (creationId: ${creationId})...`);
-    let status = 'IN_PROGRESS';
-    let errorMessage = '';
-    let attempts = 0;
-    const maxAttempts = 20; // 20 * 20s = 400s (~6.6 mins)
-    const delay = 20000;
-
-    while ((status === 'IN_PROGRESS' || status === 'STARTED') && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, delay));
-      attempts++;
-
-      try {
-        const statusRes = await axios.get(
-          `https://graph.facebook.com/${META_GRAPH_VERSION}/${creationId}`,
-          {
-            params: {
-              fields: 'status_code,status,error_message',
-              access_token: accessToken
-            }
-          }
-        );
-        status = statusRes.data.status_code || statusRes.data.status;
-        errorMessage = statusRes.data.error_message || '';
-        
-        logger.info('REEL_UPLOAD', `Polling attempt ${attempts}: ${status}`, { errorMessage });
-        
-        if (status === 'ERROR' || status === 'REJECTED') {
-            break;
-        }
-      } catch (pollError) {
-        logger.warn('REEL_UPLOAD', `Polling error on attempt ${attempts}`, { error: pollError.message });
-      }
-    }
-
-    if (status !== 'FINISHED' && status !== 'READY') {
-      logger.error('REEL_UPLOAD', `Media processing failed or timed out`, { status, attempts, errorMessage });
-      throw new Error(`Instagram media processing failed or timed out (Status: ${status}). ${errorMessage} Please try again later.`);
-    }
-
-    // 5. Final Publish
-    logger.info('REEL_UPLOAD', `Step 5: Publishing Reel...`);
-    const publishRes = await axios.post(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${igUserId}/media_publish`,
-      null,
-      {
-        params: {
-          creation_id: creationId,
-          access_token: accessToken
-        }
-      }
-    );
-
-    const instagramMediaId = publishRes.data.id;
-    logger.info('REEL_UPLOAD', `Step 6: Success! Reel live`, { instagramMediaId });
-
-    // 7. Record in Database (for history/analytics)
-    try {
-        let links = [];
-        if (req.body.automationLinks) {
-            try {
-                links = typeof req.body.automationLinks === 'string' 
-                    ? JSON.parse(req.body.automationLinks) 
-                    : req.body.automationLinks;
-            } catch (e) {
-                logger.warn('REEL_UPLOAD', "Failed to parse automationLinks", { error: e.message });
-            }
-        }
-
-        const scheduledPost = await prisma.scheduledPost.create({
-            data: {
-                userId,
-                platform: 'instagram',
-                mediaUrl: videoUrl,
-                caption: caption || '',
-                scheduledAt: new Date(),
-                status: 'PUBLISHED',
-                publishedAt: new Date(),
-                instagramPostId,
-                automationKeyword: automationKeyword || null,
-                automationReply: automationReply || null,
-                automationAppendLinks: automationAppendLinks === 'true' || automationAppendLinks === true,
-                automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
-                // New fields
-                isAI: isAI === 'true' || isAI === true,
-                triggerType: triggerType || null,
-                replyType: replyType || null,
-                productName: productName || null,
-                productUrl: productUrl || null,
-                productDescription: productDescription || null,
-                productImage: productImage || null,
-                mustFollow: mustFollow === 'true' || mustFollow === true,
-                dmButtonText: dmButtonText || null,
-                publicReplies: publicReplies || null,
-                customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
-                customFollowHeader: customFollowHeader || null,
-                customFollowSubtext: customFollowSubtext || null,
-                followButtonText: followButtonText || null,
-                followedButtonText: followedButtonText || null,
-                dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
-            }
-        });
-
-        // 8. Create DM Automation rule if requested
-        if (automationEnabled === 'true' || automationEnabled === true) {
-            await prisma.dMAutomation.create({
-                data: {
-                    userId,
-                    keyword: scheduledPost.automationKeyword,
-                    autoReplyMessage: scheduledPost.automationReply,
-                    isActive: true,
-                    reelId: instagramPostId,
-                    appendLinks: scheduledPost.automationAppendLinks || false,
-                    link1: links[0] || null,
-                    link2: links[1] || null,
-                    link3: links[2] || null,
-                    link4: links[3] || null,
-                    // Advanced fields
-                    isAI: scheduledPost.isAI,
-                    triggerType: scheduledPost.triggerType,
-                    replyType: scheduledPost.replyType,
-                    productName: scheduledPost.productName,
-                    productUrl: scheduledPost.productUrl,
-                    productDescription: scheduledPost.productDescription,
-                    productImage: scheduledPost.productImage,
-                    mustFollow: scheduledPost.mustFollow,
-                    dmButtonText: scheduledPost.dmButtonText,
-                    publicReplies: scheduledPost.publicReplies,
-                    customFollowEnabled: scheduledPost.customFollowEnabled,
-                    customFollowHeader: scheduledPost.customFollowHeader,
-                    customFollowSubtext: scheduledPost.customFollowSubtext,
-                    followButtonText: scheduledPost.followButtonText,
-                    followedButtonText: scheduledPost.followedButtonText,
-                    dmReplyEnabled: scheduledPost.dmReplyEnabled
-                }
-            }).catch(err => logger.error('REEL_UPLOAD', "Failed to create DM automation rule", { error: err.message }));
-        }
-
-        // 9. Send success push notification
-        const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
-        if (user?.pushToken) {
-            notifyPostSuccess(user.pushToken, caption?.substring(0, 40) || 'Your Reel').catch(() => {});
-        }
-
-    } catch (dbError) {
-        logger.error('REEL_UPLOAD', "Failed to record post in database", { error: dbError.message });
-        // Don't fail the request since the Reel is already live on Instagram
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Reel posted successfully',
+    // 3. Create ScheduledPost record for asynchronous processing
+    logger.info('REEL_UPLOAD', `Step 3: Creating ScheduledPost record for asynchronous processing...`);
+    const scheduledPost = await prisma.scheduledPost.create({
       data: {
-        instagramMediaId,
-        videoUrl
+        user: { connect: { id: userId } },
+        caption: caption || 'Posted via CloraAI ✨',
+        mediaUrl: videoUrl,
+        scheduledAt: new Date(),
+        status: 'publishing',
+        platform: 'instagram',
+        automationKeyword: automationKeyword || null,
+        automationReply: automationReply || null,
+        automationAppendLinks: automationAppendLinks === 'true' || automationAppendLinks === true,
+        automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
+        // Advanced Automation Integration
+        isAI: isAI === 'true' || isAI === true,
+        triggerType: triggerType || null,
+        replyType: replyType || null,
+        productName: productName || null,
+        productUrl: productUrl || null,
+        productDescription: productDescription || null,
+        productImage: productImage || null,
+        mustFollow: mustFollow === 'true' || mustFollow === true,
+        dmButtonText: dmButtonText || null,
+        publicReplies: publicReplies || null,
+        customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
+        customFollowHeader: customFollowHeader || null,
+        customFollowSubtext: customFollowSubtext || null,
+        followButtonText: followButtonText || null,
+        followedButtonText: followedButtonText || null,
+        dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
       }
     });
 
-  } catch (error) {
-    logger.error('REEL_UPLOAD', 'CRITICAL FAILURE in uploadAndPostReel', { 
-      error: error.message, 
-      stack: error.stack,
-      details: error.response?.data || null 
+    // 4. Enqueue Job
+    logger.info('REEL_UPLOAD', `Step 4: Enqueueing publish job for postId ${scheduledPost.id}`);
+    await enqueueJob(instagramQueue, 'publish', { postId: scheduledPost.id, userId });
+
+    // 5. Respond immediately
+    res.status(202).json({
+      success: true,
+      message: 'Reel upload successful. It is now being processed and will be published shortly.',
+      data: {
+        postId: scheduledPost.id,
+        status: 'publishing'
+      }
     });
-    
-    const errorMessage = error.response?.data?.error?.message || error.message;
-    res.status(500).json({ 
-      error: 'Failed to post Reel', 
-      message: errorMessage 
-    });
-  } finally {
-    // 6. Cleanup temp file
+
+    // Clean up temp file
     if (tempFilePath && fs.existsSync(tempFilePath)) {
-      fs.unlink(tempFilePath, (err) => {
-        if (err) logger.error('REEL_UPLOAD', 'Failed to cleanup temp file', { path: tempFilePath, error: err.message });
-        else logger.debug('REEL_UPLOAD', `Cleaned up temp file: ${tempFilePath}`);
-      });
+      try { fs.unlinkSync(tempFilePath); } catch (e) {}
     }
+  } catch (error) {
+    logger.error('REEL_UPLOAD_ERROR', "Failed to upload and post reel", { error: error.message });
+    
+    // Clean up temp file on error
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try { fs.unlinkSync(tempFilePath); } catch (e) {}
+    }
+    
+    res.status(500).json({ error: 'Failed to upload and post reel', message: error.message });
   }
 };
 
