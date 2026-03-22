@@ -1,18 +1,28 @@
 /**
- * Email Service for CloraAI (Production Ready)
+ * Email Service for CloraAI (Gmail SMTP - Railway Fix)
  */
 
 const nodemailer = require('nodemailer');
 
-// ✅ Create transporter (NO fallback, clean config)
+// ✅ Transporter (FORCE IPv4 - fixes ENETUNREACH)
 const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,              // smtp.gmail.com
-    port: Number(process.env.EMAIL_PORT),      // 587 or 465
-    secure: Number(process.env.EMAIL_PORT) === 465, // true for 465, false for 587
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // required for 587
+    family: 4,     // ⭐ VERY IMPORTANT (fixes Railway IPv6 issue)
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
     },
+});
+
+// ✅ Verify connection (debug)
+transporter.verify((err, success) => {
+    if (err) {
+        console.log("❌ SMTP ERROR:", err);
+    } else {
+        console.log("✅ SMTP SERVER READY");
+    }
 });
 
 /**
@@ -30,7 +40,7 @@ const sendEmail = async (to, subject, html) => {
         console.log(`✅ Email sent to ${to}: ${info.messageId}`);
         return true;
     } catch (error) {
-        console.error("❌ EMAIL ERROR:", error);
+        console.error("❌ EMAIL SEND ERROR:", error);
         return false;
     }
 };
@@ -40,15 +50,17 @@ const sendEmail = async (to, subject, html) => {
  */
 const sendResetPasswordEmail = (user, resetLink) => {
     const subject = "Reset Your CloraAI Password";
+
     const html = `
     <h2>Hello ${user.username || "User"},</h2>
-    <p>You requested to reset your password.</p>
-    <p>Click the link below to reset it:</p>
+    <p>You requested a password reset.</p>
+    <p>Click below to reset your password:</p>
     <a href="${resetLink}" target="_blank">${resetLink}</a>
-    <p>If you didn't request this, ignore this email.</p>
-    <br/>
+    <br/><br/>
+    <p>If you didn’t request this, ignore this email.</p>
     <p>— Team CloraAI</p>
   `;
+
     return sendEmail(user.email, subject, html);
 };
 
@@ -56,45 +68,48 @@ const sendResetPasswordEmail = (user, resetLink) => {
  * 💰 Payment Success
  */
 const notifyPaymentSuccess = (user, planName) => {
-    const subject = "Welcome to CloraAI Pro 🚀";
-    const html = `
+    return sendEmail(
+        user.email,
+        "Welcome to CloraAI Pro 🚀",
+        `
     <h2>Hello ${user.username || "User"},</h2>
     <p>Your payment for <strong>${planName}</strong> was successful.</p>
     <p>You now have PRO access 🎉</p>
-    <br/>
     <p>— Team CloraAI</p>
-  `;
-    return sendEmail(user.email, subject, html);
+    `
+    );
 };
 
 /**
  * ❌ Payment Failed
  */
 const notifyPaymentFailed = (user, planName) => {
-    const subject = "Payment Failed - CloraAI";
-    const html = `
+    return sendEmail(
+        user.email,
+        "Payment Failed - CloraAI",
+        `
     <h2>Hello ${user.username || "User"},</h2>
     <p>Your payment for <strong>${planName}</strong> failed.</p>
     <p>Please retry to continue using PRO features.</p>
-    <br/>
     <p>— Team CloraAI</p>
-  `;
-    return sendEmail(user.email, subject, html);
+    `
+    );
 };
 
 /**
  * ⏳ Expiry Warning
  */
 const notifyExpiryWarning = (user, daysLeft) => {
-    const subject = "Your CloraAI Pro is Expiring Soon";
-    const html = `
+    return sendEmail(
+        user.email,
+        "Your CloraAI Subscription is Expiring",
+        `
     <h2>Hello ${user.username || "User"},</h2>
     <p>Your subscription expires in <strong>${daysLeft} days</strong>.</p>
-    <p>Renew now to avoid interruption.</p>
-    <br/>
+    <p>Renew now to continue enjoying premium features.</p>
     <p>— Team CloraAI</p>
-  `;
-    return sendEmail(user.email, subject, html);
+    `
+    );
 };
 
 module.exports = {
