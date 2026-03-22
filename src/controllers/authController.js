@@ -394,9 +394,8 @@ const forgotPassword = async (req, res) => {
       </div>
     `;
 
-    // Use the Gmail transporter directly (bypasses Resend which has domain restrictions)
-    await transporter.sendMail({
-      from: `"CloraAI" <${process.env.EMAIL_USER}>`,
+    // Use the unified sendEmail helper (falling back to Resend API if SMTP is blocked)
+    await sendEmail({
       to: email,
       subject: 'Password Reset Request - CloraAI',
       html: emailHtml
