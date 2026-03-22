@@ -112,6 +112,18 @@ app.get("/health", (req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
+// Diagnostic route for Webhook IP/Domain visibility
+app.get("/api/v1/webhook-test", (req, res) => {
+    console.log("[WEBHOOK_DIAGNOSTIC] Hit from IP:", req.ip);
+    console.log("[WEBHOOK_DIAGNOSTIC] Headers:", req.headers);
+    res.status(200).json({ 
+        success: true, 
+        message: 'Webhook diagnostic endpoint is reachable!',
+        yourIp: req.ip,
+        userAgent: req.headers['user-agent']
+    });
+});
+
 // ─── OAuth Landing Pages ──────────────────────────────────────────────────────
 app.get('/youtube-success', (req, res) => {
     res.status(200).send(`
