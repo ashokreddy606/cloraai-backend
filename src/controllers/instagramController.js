@@ -5,7 +5,8 @@ const { createBreaker } = require('../utils/circuitBreaker');
 const instagramService = require('../services/instagramService');
 const logger = require('../utils/logger');
 const { s3Client, awsConfig } = require('../config/aws');
-const { PutObjectCommand } = require('@aws-sdk/client-s3');
+const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -408,8 +409,11 @@ const uploadAndPostReel = async (req, res) => {
     logger.info('REEL_UPLOAD', `Step 2: Uploading to S3 bucket ${awsConfig.bucketName}...`);
     await s3Client.send(new PutObjectCommand(uploadParams));
     
-    const videoUrl = `https://${awsConfig.bucketName}.s3.${awsConfig.region}.amazonaws.com/${s3Key}`;
-    logger.info('REEL_UPLOAD', `Step 2: S3 upload success`, { videoUrl });
+    // 2. Generate a signed URL for Instagram to access the private S3 file
+    const getCommand = new GetObjectCommand({ Bucket: awsConfig.bucketName, Key: s3Key });
+    const videoUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 }); // 1 hour
+    
+    logger.info('REEL_UPLOAD', `Step 2: S3 upload success + Signed URL generated`);
 
     // 2. Get Instagram Account
     const account = await InstagramAccount.findOne({ userId });
@@ -448,9 +452,10 @@ const uploadAndPostReel = async (req, res) => {
     // 4. Poll for status (Instagram processing can take time)
     logger.info('REEL_UPLOAD', `Step 4: Polling for media status (creationId: ${creationId})...`);
     let status = 'IN_PROGRESS';
+    let errorMessage = '';
     let attempts = 0;
-    const maxAttempts = 30; // 30 * 5s = 150s (2.5 minutes)
-    const delay = 5000;
+    const maxAttempts = 20; // 20 * 20s = 400s (~6.6 mins)
+    const delay = 20000;
 
     while ((status === 'IN_PROGRESS' || status === 'STARTED') && attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -461,22 +466,27 @@ const uploadAndPostReel = async (req, res) => {
           `https://graph.facebook.com/${META_GRAPH_VERSION}/${creationId}`,
           {
             params: {
-              fields: 'status_code',
+              fields: 'status_code,status,error_message',
               access_token: accessToken
             }
           }
         );
-        status = statusRes.data.status_code;
-        logger.info('REEL_UPLOAD', `Polling attempt ${attempts}: ${status}`);
+        status = statusRes.data.status_code || statusRes.data.status;
+        errorMessage = statusRes.data.error_message || '';
+        
+        logger.info('REEL_UPLOAD', `Polling attempt ${attempts}: ${status}`, { errorMessage });
+        
+        if (status === 'ERROR' || status === 'REJECTED') {
+            break;
+        }
       } catch (pollError) {
         logger.warn('REEL_UPLOAD', `Polling error on attempt ${attempts}`, { error: pollError.message });
-        // Continue polling if it's a transient network error
       }
     }
 
-    if (status !== 'FINISHED') {
-      logger.error('REEL_UPLOAD', `Media processing failed or timed out`, { status, attempts });
-      throw new Error(`Instagram media processing failed or timed out (Status: ${status}). Please try again later.`);
+    if (status !== 'FINISHED' && status !== 'READY') {
+      logger.error('REEL_UPLOAD', `Media processing failed or timed out`, { status, attempts, errorMessage });
+      throw new Error(`Instagram media processing failed or timed out (Status: ${status}). ${errorMessage} Please try again later.`);
     }
 
     // 5. Final Publish
