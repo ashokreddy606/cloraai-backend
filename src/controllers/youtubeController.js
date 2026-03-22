@@ -213,6 +213,7 @@ exports.handleCallback = async (req, res) => {
                 youtubeChannelId: channelId,
                 youtubeAccessToken: encrypt(tokens.access_token),
                 ...(tokens.refresh_token && { youtubeRefreshToken: encrypt(tokens.refresh_token) }),
+                youtubeConnected: true,
                 youtubeSubscriberCount: parseInt(stats.subscriberCount || 0),
                 youtubeViewCount: parseInt(stats.viewCount || 0),
                 youtubeVideoCount: parseInt(stats.videoCount || 0),
@@ -285,7 +286,8 @@ exports.disconnect = async (req, res) => {
             data: {
                 youtubeChannelId: null,
                 youtubeAccessToken: null,
-                youtubeRefreshToken: null
+                youtubeRefreshToken: null,
+                youtubeConnected: false
             }
         });
         res.json({ success: true, message: 'Disconnected from YouTube' });
