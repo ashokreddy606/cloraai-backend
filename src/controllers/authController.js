@@ -274,12 +274,12 @@ const getCurrentUser = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        user: {
-          id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role,
-          phoneNumber: user.phoneNumber, instagramConnected: user.instagramAccounts?.some(a => a.isConnected) ?? false,
-          plan: user.plan, subscriptionStatus: user.subscriptionStatus, planSource: user.planSource,
-          planStartDate: user.planStartDate, planEndDate: user.planEndDate, daysRemaining, manuallyUpgraded: user.manuallyUpgraded,
-        },
+          user: {
+            id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role,
+            phoneNumber: user.phoneNumber, bio: user.bio, instagramConnected: user.instagramAccounts?.some(a => a.isConnected) ?? false,
+            plan: user.plan, subscriptionStatus: user.subscriptionStatus, planSource: user.planSource,
+            planStartDate: user.planStartDate, planEndDate: user.planEndDate, daysRemaining, manuallyUpgraded: user.manuallyUpgraded,
+          },
       },
     });
   } catch (error) {
@@ -290,12 +290,17 @@ const getCurrentUser = async (req, res) => {
 
 const updateProfile = async (req, res) => {
   try {
-    const { username, phoneNumber, profileImage } = req.body;
+    const { username, phoneNumber, profileImage, bio } = req.body;
     const user = await prisma.user.update({
       where: { id: req.userId },
-      data: { ...(username && { username }), ...(phoneNumber !== undefined && { phoneNumber: phoneNumber || null }), ...(profileImage !== undefined && { profileImage: profileImage || null }) }
+      data: { 
+        ...(username && { username }), 
+        ...(phoneNumber !== undefined && { phoneNumber: phoneNumber || null }), 
+        ...(profileImage !== undefined && { profileImage: profileImage || null }),
+        ...(bio !== undefined && { bio: bio || null })
+      }
     });
-    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber } } });
+    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber, bio: user.bio } } });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update profile', message: error.message });
   }

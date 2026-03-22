@@ -41,6 +41,7 @@ model User {
   profileImage String?
   pushToken    String? // Expo push token
   role         String  @default("USER") // USER | ADMIN | SUSPENDED | BANNED
+  bio          String?
   tokenVersion Int     @default(0) // Enforces forced-logout (Phase 1)
 
   // ── Account Security & Compliance ───────────────────────────────────────
