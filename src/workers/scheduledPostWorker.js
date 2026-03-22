@@ -12,6 +12,7 @@ const { connection, QUEUES } = require('../utils/queue');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { notifyPostSuccess, notifyPostFailure } = require('../services/pushNotificationService');
+const { generatePresignedUrl } = require('../config/s3Utils');
 
 const processScheduledPost = async (job) => {
     const { postId, userId } = job.data;
@@ -56,29 +57,9 @@ const processScheduledPost = async (job) => {
     // 4a. Generate a temporary pre-signed URL so Instagram can access the private S3 file
     let mediaUrlForInstagram = post.mediaUrl;
     
-    if (post.mediaUrl.includes('amazonaws.com')) {
-        try {
-            const { s3Client, awsConfig } = require('../config/aws');
-            
-            if (awsConfig.credentials.accessKeyId && awsConfig.credentials.secretAccessKey) {
-                // Using centralized s3Client
-
-            // Extract key from URL: https://bucket.s3.region.amazonaws.com/key
-            const urlParts = new URL(post.mediaUrl);
-            const key = urlParts.pathname.substring(1); // Remove leading slash
-            const bucket = awsConfig.bucketName || urlParts.hostname.split('.')[0];
-
-            logger.info('WORKER:S3_SIGNED_URL', `Generating signed URL for key: ${key} in bucket: ${bucket}`);
-            
-            const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-            mediaUrlForInstagram = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 hour
-            
-            logger.info('WORKER:S3_SIGNED_URL_SUCCESS', 'Generated pre-signed URL for Instagram');
-        }
-    } catch (s3Err) {
-            logger.error('WORKER:S3_SIGNED_URL_ERROR', 'Failed to generate signed URL', { error: s3Err.message });
-            // Fallback to original URL
-        }
+    if (post.mediaUrl.includes('amazonaws.com') || post.mediaUrl.includes('s3')) {
+        mediaUrlForInstagram = await generatePresignedUrl(post.mediaUrl, 3600);
+        logger.info('WORKER:S3_SIGNED_URL', 'Generated pre-signed URL (if applicable)');
     }
 
     logger.info('WORKER:META_API_START', `Creating media container for post ${postId}`, { 
@@ -257,68 +238,6 @@ const processScheduledPost = async (job) => {
     return { success: true, postId };
 };
 
-// Create the BullMQ Worker
-const scheduledPostWorker = new Worker(
-    QUEUES.INSTAGRAM,
-    processScheduledPost,
-    {
-        connection,
-        concurrency: 5, // process up to 5 posts simultaneously
-        // Retry policy: 3 attempts with exponential backoff
-        defaultJobOptions: {
-            attempts: 3,
-            backoff: {
-                type: 'exponential',
-                delay: 5000,
-            },
-        },
-    }
-);
-
-// Success event
-scheduledPostWorker.on('completed', (job, result) => {
-    logger.info('WORKER', `Job ${job.id} completed`, result);
-});
-
-// Failure event — dead-letter handling
-scheduledPostWorker.on('failed', async (job, err) => {
-    logger.error('WORKER', `Job ${job.id} failed permanently after ${job.attemptsMade} attempts`, {
-        error: err.message,
-        postId: job?.data?.postId,
-        userId: job?.data?.userId,
-    });
-
-    // Mark post as permanently failed in DB
-    if (job?.data?.postId) {
-        try {
-            await prisma.scheduledPost.update({
-                where: { id: job.data.postId },
-                data: { status: 'FAILED', errorMessage: err.message }
-            });
-
-            // Send failure push notification
-            const user = await prisma.user.findUnique({
-                where: { id: job.data.userId },
-                select: { pushToken: true }
-            });
-            if (user?.pushToken) {
-                const post = await prisma.scheduledPost.findUnique({ where: { id: job.data.postId } });
-                await notifyPostFailure(
-                    user.pushToken,
-                    post?.caption?.substring(0, 40) || 'Your post',
-                    err.message
-                );
-            }
-        } catch (dbErr) {
-            logger.error('WORKER', 'Failed to update post status after job failure', { error: dbErr.message });
-        }
-    }
-});
-
-scheduledPostWorker.on('error', (err) => {
-    logger.error('WORKER', 'Worker encountered an error', { error: err.message });
-});
-
-logger.info('WORKER', '✅ Scheduled Post Worker initialized');
-
-module.exports = scheduledPostWorker;
+module.exports = {
+    processScheduledPost
+};
