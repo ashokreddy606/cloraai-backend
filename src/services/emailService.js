@@ -9,10 +9,16 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.ethereal.email',
     port: process.env.EMAIL_PORT || 587,
+    family: 4, // Force IPv4 to avoid ENETUNREACH on Railway/IPv6 systems
     auth: {
         user: process.env.EMAIL_USER || 'mock_user',
         pass: process.env.EMAIL_PASS || 'mock_pass',
     },
+    // Required for Gmail SMTP in some environments
+    secure: process.env.EMAIL_PORT == 465,
+    tls: {
+        rejectUnauthorized: false
+    }
 });
 
 /**

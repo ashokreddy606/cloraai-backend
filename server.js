@@ -598,35 +598,36 @@ app.use(errorHandler);
 // Background Workers (Bypassed in tests to avoid Redis/Cron interference)
 if (process.env.NODE_ENV !== 'test') {
     try {
-        require('./src/workers/youtubeWorker'); // Initialize YouTube cron job
+        const { Worker } = require('bullmq');
+        const { connection, QUEUES } = require('./src/utils/queue');
+        const { processScheduledPost } = require('./src/workers/scheduledPostWorker');
+        const { processYoutubeUpload } = require('./src/workers/youtubeUploadWorker');
+
+        // 1. Instagram Publishing Worker
+        new Worker(QUEUES.INSTAGRAM, processScheduledPost, { 
+            connection, 
+            concurrency: 5 
+        }).on('failed', (job, err) => {
+            logger.error('WORKER', `Instagram publish job ${job.id} failed`, { error: err.message });
+        });
+
+        // 2. YouTube Upload Worker
+        new Worker(QUEUES.YOUTUBE, processYoutubeUpload, { 
+            connection, 
+            concurrency: 3 
+        }).on('failed', (job, err) => {
+            logger.error('WORKER', `YouTube upload job ${job.id} failed`, { error: err.message });
+        });
+
+        // 3. Instagram Analytics, Automation & Token Refresh Workers
+        require('./src/workers/instagramAnalyticsWorker');
+        require('./src/workers/instagramAutomationWorker');
+        require('./src/workers/refreshInstagramTokenWorker');
+        require('./src/workers/youtubeWorker'); // YouTube comment automation
+
+        logger.info('SERVER', '✅ All background workers initialized (unified process).');
     } catch (err) {
-        logger.error('SERVER', 'Failed to initialize YouTube worker:', { error: err.message, stack: err.stack });
-        console.error('FAILED TO INITIALIZE YOUTUBE WORKER:', err);
-    }
-    try {
-        // Redundant: src/worker.js now handles the instagram-publish queue
-        // require('./src/workers/scheduledPostWorker'); 
-        logger.info('SERVER', 'Scheduled post worker disabled (handled by dedicated worker service).');
-    } catch (err) {
-        logger.error('SERVER', 'Failed to initialize scheduled post worker:', { error: err.message });
-    }
-    try {
-        require('./src/workers/instagramAnalyticsWorker'); // Start Instagram daily analytics cron
-        logger.info('SERVER', 'Instagram analytics worker initialized.');
-    } catch (err) {
-        logger.error('SERVER', 'Failed to initialize Instagram analytics worker:', { error: err.message });
-    }
-    try {
-        require('./src/workers/instagramAutomationWorker'); // Start Instagram automation worker
-        logger.info('SERVER', 'Instagram automation worker initialized.');
-    } catch (err) {
-        logger.error('SERVER', 'Failed to initialize Instagram automation worker:', { error: err.message });
-    }
-    try {
-        require('./src/workers/refreshInstagramTokenWorker'); // Start Instagram token refresh cron
-        logger.info('SERVER', 'Instagram token refresh worker initialized.');
-    } catch (err) {
-        logger.error('SERVER', 'Failed to initialize Instagram token refresh worker:', { error: err.message });
+        logger.error('SERVER', 'Failed to initialize background workers:', { error: err.message });
     }
 }
 
