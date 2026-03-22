@@ -7,13 +7,12 @@ const maintenanceMiddleware = (req, res, next) => {
     }
 
     // Explicitly allow admin routes so the admin panel still works
-    if (req.path.startsWith('/api/admin')) {
+    if (req.path.startsWith('/api/admin') || req.path.startsWith('/api/v1/admin')) {
         return next();
     }
 
-    // Explicitly allow auth routes so admin can log in (and users get standard auth responses if needed, or we block user auth but allow admin auth - simpler to just allow all auth, the app is unusable anyway)
-    // To be perfectly safe, let's allow all auth but frontend should show maintenance screen
-    if (req.path.startsWith('/api/auth')) {
+    // Explicitly allow auth routes
+    if (req.path.startsWith('/api/auth') || req.path.startsWith('/api/v1/auth')) {
         return next();
     }
 
