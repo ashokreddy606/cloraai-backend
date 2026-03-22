@@ -106,6 +106,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         if (!matchedRule) {
+            console.log(`[WORKER:SKIPPED] No matching rule for text: ${incomingText.substring(0, 30)}...`);
             logger.info('WORKER:SKIPPED', `No matching rule for ${isDM ? 'DM' : 'comment'} ${eventId}`, { jobId: job.id, incomingText });
             return { success: true, matched: false };
         }
@@ -185,6 +186,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 jobId: job.id,
                 metaResponse: response.data 
             });
+            console.log(`[WORKER:API_SUCCESS] DM Sent for event ${eventId}`);
             console.log("DM SENT");
             logger.increment('dmSent');
         } catch (err) {

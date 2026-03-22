@@ -257,7 +257,7 @@ class InstagramService {
         try {
             const url = `${GRAPH_API_URL}/${pageId}/subscribed_apps`;
             const response = await axios.post(url, {
-                subscribed_fields: 'feed,messages,messaging_postbacks,mention'
+                subscribed_fields: 'feed,messages,messaging_postbacks,mention,conversations,comments'
             }, {
                 params: { access_token: pageAccessToken }
             });

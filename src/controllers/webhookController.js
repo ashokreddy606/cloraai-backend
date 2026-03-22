@@ -31,6 +31,7 @@ const verifyInstagramSignature = (rawBody, signatureHeader) => {
     if (!signatureHeader || !signatureHeader.startsWith('sha256=')) {
         return false;
     }
+
     if (!rawBody) {
         logger.error('WEBHOOK:SECURITY', 'Signature verification failed: rawBody missing. Ensure middleware is correctly configured.');
         return false;
@@ -103,14 +104,22 @@ const findInstagramAccount = async (id) => {
  * ROUTES: Handle Webhook Events (POST)
  */
 const handleWebhook = async (req, res) => {
-    console.log(`[SERIOUS DEBUG] handleWebhook POST reached. Body: ${JSON.stringify(req.body)}`);
+    // 🚨 ULTIMATE ENTRY LOG: Trap ANY hit to this function
+    console.log(`[WEBHOOK:ENTRY_POINT] Method: ${req.method}, Path: ${req.originalUrl || req.url}`);
+    
+    const signatureHeader = req.headers['x-hub-signature-256'];
+    const ua = req.headers['user-agent'];
+    
+    console.log(`[WEBHOOK:ENTRY_POINT] Method: ${req.method}, Path: ${req.originalUrl || req.url}`);
+    console.log(`[WEBHOOK:DEBUG] Headers: Signature=${!!signatureHeader}, UA=${ua}`);
+    console.log(`[WEBHOOK:DEBUG] Payload Preview: ${JSON.stringify(req.body).substring(0, 500)}`);
     
     logger.info('WEBHOOK:RECEIVED', 'Meta Webhook Event Received', { 
         object: req.body.object,
         entryCount: req.body.entry?.length 
     });
 
-    const signatureHeader = req.headers['x-hub-signature-256'];
+    // Remove redudant declaration here
     console.log(`[SERIOUS DEBUG] handleWebhook hit. hasRawBody: ${!!req.rawBody}, hasSignature: ${!!signatureHeader}`);
     
     const isSignatureValid = verifyInstagramSignature(req.rawBody, signatureHeader);
@@ -192,6 +201,7 @@ const handleWebhook = async (req, res) => {
                             senderId
                         });
                     } else {
+                        console.warn(`[WEBHOOK:FAILED_ACCOUNT] Could not find account for ID: ${entry.id}. Payload Object: ${body.object}`);
                         logger.warn('WEBHOOK:ACCOUNT_NOT_FOUND', `Could not resolve Instagram account for entry/page ${entry.id}`, { entryId: entry.id });
                     }
                 }
