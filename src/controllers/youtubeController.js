@@ -59,11 +59,16 @@ const getYoutubeClientForUser = async (userId) => {
         if (token && token !== credentials.access_token) {
             await prisma.user.update({
                 where: { id: userId },
-                data: { youtubeAccessToken: encrypt(token) }
+                data: { 
+                    youtubeAccessToken: encrypt(token),
+                    youtubeConnected: true // Ensure it is true if refresh works
+                }
             });
             logger.info('YOUTUBE:REFRESH', 'Token automatically refreshed and saved', { userId });
         } else {
             logger.info('YOUTUBE:TOKEN', 'Token still valid or no refresh needed', { userId });
+            // Even if no refresh needed, if it was false, we might want to check if it's actually valid.
+            // For now, assume if getAccessToken works, it's connected.
         }
     } catch (refreshError) {
         logger.error('YOUTUBE:REFRESH_FAILED', 'Token refresh failed', { 
@@ -71,8 +76,14 @@ const getYoutubeClientForUser = async (userId) => {
             error: refreshError.message,
             hasRefreshToken: !!user.youtubeRefreshToken
         });
-        if (refreshError.message.includes('invalid_grant')) {
-            throw new Error('YouTube session expired. Please reconnect your account in settings.');
+        
+        // If it's a permanent auth failure, mark as disconnected
+        if (refreshError.message.includes('invalid_grant') || refreshError.message.includes('Unauthorized')) {
+            await prisma.user.update({
+                where: { id: userId },
+                data: { youtubeConnected: false }
+            }).catch(() => {});
+            throw new Error('YouTube session expired. Please disconnect and reconnect your YouTube account in settings.');
         }
         throw new Error('Failed to refresh YouTube session: ' + refreshError.message);
     }
@@ -244,11 +255,19 @@ exports.handleCallback = async (req, res) => {
 exports.getStatus = async (req, res) => {
     try {
         const user = await prisma.user.findUnique({ where: { id: req.userId } });
-        if (!user || !user.youtubeChannelId || !user.youtubeAccessToken) {
+        
+        // Check both database flag and presence of token
+        if (!user || (!user.youtubeConnected && !!user.youtubeAccessToken)) {
+            // If DB says disconnected but we have tokens, it means it's a stale/invalid session
+            return res.json({ connected: false, message: 'Session expired. Please reconnect.' });
+        }
+        
+        if (!user.youtubeChannelId || !user.youtubeAccessToken) {
             return res.json({ connected: false });
         }
+        
         res.json({
-            connected: true,
+            connected: user.youtubeConnected,
             channelId: user.youtubeChannelId,
             subscriberCount: user.youtubeSubscriberCount,
             viewCount: user.youtubeViewCount,
@@ -922,11 +941,23 @@ exports.uploadVideo = async (req, res) => {
             }
         });
     } catch (error) {
+        const isAuthError = error.message.includes('invalid_authentication_credentials') || 
+                           error.message.includes('Unauthenticated') || 
+                           error.response?.status === 401;
+        
+        if (isAuthError) {
+            logger.warn('YOUTUBE:AUTH_FAIL', 'Upload failed due to auth, marking as disconnected', { userId: req.userId });
+            await prisma.user.update({
+                where: { id: req.userId },
+                data: { youtubeConnected: false }
+            }).catch(() => {});
+        }
+
         logger.error('YOUTUBE', 'uploadVideo failed', { userId: req.userId, error: error.message, details: error.response?.data });
         res.status(500).json({ 
-            error: 'Error uploading video', 
-            message: error.message,
-            details: error.response?.data?.error?.message || null 
+            error: 'YouTube Authentication Error', 
+            message: isAuthError ? 'Your YouTube session has expired. Please disconnect and reconnect your account in settings.' : 'Error uploading video',
+            details: error.response?.data?.error?.message || error.message
         });
     } finally {
         // Clean up temp file if it was a direct upload
