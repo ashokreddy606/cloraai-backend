@@ -53,7 +53,7 @@ const getYoutubeClientForUser = async (userId) => {
     // FIX: Automatically refresh token if expired
     // getAccessToken() will automatically refresh if a refresh_token is available and the access_token has expired.
     try {
-        const { token } = await client.getAccessToken();
+        const { token, res } = await client.getAccessToken();
 
         // If token was refreshed, update DB
         if (token && token !== credentials.access_token) {
@@ -61,10 +61,16 @@ const getYoutubeClientForUser = async (userId) => {
                 where: { id: userId },
                 data: { youtubeAccessToken: encrypt(token) }
             });
-            logger.info('YOUTUBE', 'Token automatically refreshed and saved', { userId });
+            logger.info('YOUTUBE:REFRESH', 'Token automatically refreshed and saved', { userId });
+        } else {
+            logger.info('YOUTUBE:TOKEN', 'Token still valid or no refresh needed', { userId });
         }
     } catch (refreshError) {
-        logger.error('YOUTUBE', 'Token refresh failed', { userId: userId, error: refreshError.message });
+        logger.error('YOUTUBE:REFRESH_FAILED', 'Token refresh failed', { 
+            userId: userId, 
+            error: refreshError.message,
+            hasRefreshToken: !!user.youtubeRefreshToken
+        });
         if (refreshError.message.includes('invalid_grant')) {
             throw new Error('YouTube session expired. Please reconnect your account in settings.');
         }

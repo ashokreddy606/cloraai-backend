@@ -78,7 +78,11 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         logger.debug('WORKER:RULES_LOADED', `Loaded ${rules.length} active rules`, { jobId: job.id });
 
         // Rules prioritized by keyword length (most specific first)
-        const sortedRules = rules.sort((a, b) => b.keyword.length - a.keyword.length);
+        const sortedRules = rules.sort((a, b) => {
+            const lenA = (a.keyword || '').length;
+            const lenB = (b.keyword || '').length;
+            return lenB - lenA;
+        });
 
         let matchedRule = null;
         for (const rule of sortedRules) {

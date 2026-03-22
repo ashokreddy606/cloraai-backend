@@ -183,24 +183,21 @@ const processScheduledPost = async (job) => {
         data: { status: 'PUBLISHED', publishedAt: new Date(), instagramPostId }
     });
 
-    // 5b. Create DM Automation rule if requested
-    if (post.triggerType && instagramPostId) {
-        let links = [];
-        if (post.automationLinks) {
-            try {
-                links = typeof post.automationLinks === 'string' 
-                    ? JSON.parse(post.automationLinks) 
-                    : post.automationLinks;
-            } catch (e) {
-                logger.warn('WORKER', `Failed to parse automationLinks for post ${postId}`);
-            }
-        }
-        
+    // 5. Link/Create DM Automation rule if post has automation data
+    if (post.automationKeyword && post.automationReply) {
         try {
+            logger.info('WORKER:IG_RULE', `Creating DM Automation rule for reel ${instagramPostId}`, {
+                keyword: post.automationKeyword,
+                triggerType: post.triggerType,
+                replyType: post.replyType
+            });
+
+            const links = post.automationLinks ? post.automationLinks.split(',').map(l => l.trim()) : [];
+            
             await prisma.dMAutomation.create({
                 data: {
                     userId,
-                    keyword: post.automationKeyword,
+                    keyword: post.automationKeyword.toLowerCase(),
                     autoReplyMessage: post.automationReply,
                     isActive: true,
                     reelId: instagramPostId,
@@ -209,20 +206,25 @@ const processScheduledPost = async (job) => {
                     link2: links[1] || null,
                     link3: links[2] || null,
                     link4: links[3] || null,
-                    // Advanced fields
-                    isAI: post.isAI,
-                    triggerType: post.triggerType,
-                    replyType: post.replyType,
-                    productName: post.productName,
-                    productUrl: post.productUrl,
-                    productDescription: post.productDescription,
-                    productImage: post.productImage,
-                    mustFollow: post.mustFollow,
-                    dmButtonText: post.dmButtonText,
-                    publicReplies: post.publicReplies
+                    isAI: post.isAI || false,
+                    triggerType: post.triggerType || 'keywords',
+                    replyType: post.replyType || 'text',
+                    productName: post.productName || null,
+                    productUrl: post.productUrl || null,
+                    productDescription: post.productDescription || null,
+                    productImage: post.productImage || null,
+                    mustFollow: post.mustFollow || false,
+                    dmButtonText: post.dmButtonText || null,
+                    publicReplies: post.publicReplies || null,
+                    customFollowEnabled: post.customFollowEnabled || false,
+                    customFollowHeader: post.customFollowHeader || null,
+                    customFollowSubtext: post.customFollowSubtext || null,
+                    followButtonText: post.followButtonText || null,
+                    followedButtonText: post.followedButtonText || null,
+                    dmReplyEnabled: post.dmReplyEnabled || false
                 }
             });
-            logger.info('WORKER', `Created advanced DM Automation rule for reel ${instagramPostId}`);
+            logger.info('WORKER:IG_RULE_SUCCESS', `DM Automation rule linked to reel ${instagramPostId}`);
         } catch (ruleErr) {
             logger.error('WORKER', `Failed to create DM Automation rule for reel ${instagramPostId}`, { error: ruleErr.message });
         }
