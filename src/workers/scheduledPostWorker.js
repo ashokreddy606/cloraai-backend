@@ -118,10 +118,55 @@ const processScheduledPost = async (job) => {
 
     logger.info('WORKER:META_API_A_SUCCESS', `Container created: ${containerId}. Waiting for processing...`);
 
-    // Step B: Poll for container status or wait 
-    // Reels take time to process. Let's wait longer or poll.
-    // Simple approach: longer wait + retry logic (worker does 3 retries)
-    await new Promise(resolve => setTimeout(resolve, 30000)); // Increase to 30s for Reels
+    // Step B: Poll for container status
+    // Reels take time to process. We MUST poll for 'FINISHED' status before publishing.
+    let status = 'IN_PROGRESS';
+    let attempts = 0;
+    const maxAttempts = 20; // 20s * 20 = 400s (~6.6 mins)
+    
+    while (status !== 'FINISHED' && status !== 'READY' && attempts < maxAttempts) {
+        attempts++;
+        logger.info('WORKER:META_API_B_POLL', `Polling container status (Attempt ${attempts}/${maxAttempts})...`, { containerId });
+        
+        // Wait before first poll and between polls
+        await new Promise(resolve => setTimeout(resolve, 20000));
+        
+        try {
+            const statusRes = await axios.get(
+                `https://graph.facebook.com/${META_GRAPH_VERSION}/${containerId}`,
+                {
+                    params: {
+                        fields: 'status_code,status',
+                        access_token: accessToken
+                    }
+                }
+            );
+            
+            // Meta returns status_code in newer versions, status in older
+            status = statusRes.data.status_code || statusRes.data.status;
+            logger.info('WORKER:META_API_B_STATUS', `Status: ${status}`, { containerId });
+            
+            if (status === 'FINISHED' || status === 'READY') break;
+            
+            if (status === 'ERROR' || status === 'EXPIRED') {
+                const errorMsg = statusRes.data.error_message || 'Unknown processing error';
+                throw new Error(`Instagram Processing Failed: ${errorMsg}`);
+            }
+        } catch (pollErr) {
+            // If we've hit an error but have attempts left, we keep going (network blips)
+            // Unless it's an explicit "Instagram Processing Failed" from above
+            if (pollErr.message.includes('Instagram Processing Failed')) throw pollErr;
+            
+            logger.warn('WORKER:META_API_B_WARN', 'Status poll failed, will retry', { 
+                error: pollErr.message,
+                attempt: attempts 
+            });
+        }
+    }
+    
+    if (status !== 'FINISHED' && status !== 'READY') {
+        throw new Error(`Media processing timeout. Status is still ${status} after 6+ minutes.`);
+    }
 
     // Step C: Publish the container
     logger.info('WORKER:META_API_C_START', `Publishing container ${containerId}`);

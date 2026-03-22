@@ -10,6 +10,9 @@ const dayjs = require('dayjs');
 const { createBreaker } = require('../utils/circuitBreaker');
 const { getYoutubeOAuth2Client } = require('../config/youtube');
 const { getRedirectUrl } = require('../utils/urlUtils');
+const { GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { s3Client, awsConfig } = require('../config/aws');
 
 const youtubeBreaker = createBreaker(async (fn) => {
     return await fn();
@@ -810,10 +813,31 @@ exports.uploadVideo = async (req, res) => {
         // If it's an S3 URL, we can stream it directly to YouTube
         let videoStream;
         if (s3Url) {
-            logger.info('YOUTUBE', 'Starting streaming upload from S3', { userId: req.userId, s3Url });
+            let finalVideoUrl = s3Url;
+            
+            // SECURITY: If S3 URL is from our own bucket, generate a pre-signed URL 
+            // to bypass private bucket restrictions.
+            if (s3Url.includes('amazonaws.com')) {
+                try {
+                    const urlParts = new URL(s3Url);
+                    const key = urlParts.pathname.substring(1); // Remove leading slash
+                    const bucket = awsConfig.bucketName || urlParts.hostname.split('.')[0];
+                    
+                    logger.info('YOUTUBE:S3_SIGN', `Signing S3 URL for YouTube: ${key}`, { bucket });
+                    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+                    finalVideoUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+                } catch (s3Err) {
+                    logger.warn('YOUTUBE:S3_SIGN_FAIL', 'Failed to sign S3 URL, falling back to raw', { error: s3Err.message });
+                }
+            }
+
+            logger.info('YOUTUBE', 'Starting streaming upload to YouTube', { 
+                userId: req.userId, 
+                isS3: s3Url.includes('amazonaws.com')
+            });
             const s3Response = await axios({
                 method: 'get',
-                url: s3Url,
+                url: finalVideoUrl,
                 responseType: 'stream'
             });
             videoStream = s3Response.data;

@@ -172,7 +172,9 @@ const handleWebhook = async (req, res) => {
                             continue;
                         }
 
-                        const decryptedToken = decryptToken(account.instagramAccessToken);
+                        const decryptedUserToken = decryptToken(account.instagramAccessToken);
+                        const decryptedPageToken = account.pageAccessToken ? decryptToken(account.pageAccessToken) : null;
+
                         await enqueueJob(commentQueue, 'process-comment', {
                             mediaId,
                             commentId,
@@ -180,7 +182,8 @@ const handleWebhook = async (req, res) => {
                             instagramId: account.instagramId,
                             senderId,
                             userId: account.userId,
-                            instagramAccessToken: decryptedToken
+                            instagramAccessToken: decryptedUserToken,
+                            pageAccessToken: decryptedPageToken
                         });
                         console.log("QUEUE JOB CREATED");
                         logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId} for user ${account.userId}`, { 
@@ -213,14 +216,17 @@ const handleWebhook = async (req, res) => {
                 if (senderId === account.instagramId) continue;
 
                 // Enqueue DM processing
-                const decryptedToken = decryptToken(account.instagramAccessToken);
+                const decryptedUserToken = decryptToken(account.instagramAccessToken);
+                const decryptedPageToken = account.pageAccessToken ? decryptToken(account.pageAccessToken) : null;
+
                 await enqueueJob(commentQueue, 'process-dm', {
                     messageId,
                     text: event.message.text,
                     senderId,
                     instagramId: account.instagramId,
                     userId: account.userId,
-                    instagramAccessToken: decryptedToken
+                    instagramAccessToken: decryptedUserToken,
+                    pageAccessToken: decryptedPageToken
                 });
                 console.log("QUEUE JOB CREATED");
                 logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId} for user ${account.userId}`, { 

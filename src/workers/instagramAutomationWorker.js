@@ -43,7 +43,7 @@ const handleMetaError = async (error, userId, instagramId) => {
  * WORKER: Process Comments & DMs
  */
 const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
-    const { mediaId, commentId, commentText, messageId: dmMessageId, text: dmText, instagramId, senderId, instagramAccessToken, userId } = job.data;
+    const { mediaId, commentId, commentText, messageId: dmMessageId, text: dmText, instagramId, senderId, instagramAccessToken, pageAccessToken, userId } = job.data;
     
     // Standardize identification
     const isDM = !!dmMessageId;
@@ -163,7 +163,9 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         // 5. Execute API Calls (Private Reply then Public Reply for comments)
-        const dmUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${instagramAccessToken}`;
+        // DMs and Private Replies to comments MUST use the Page Access Token for Messenger-on-Instagram API
+        const apiTokenForDM = pageAccessToken || instagramAccessToken;
+        const dmUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForDM}`;
         const dmRecipient = isDM ? { id: senderId } : { comment_id: commentId };
 
         try {
