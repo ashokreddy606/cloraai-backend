@@ -4,13 +4,14 @@ const instagramController = require('../controllers/instagramController');
 const { authenticate } = require('../middleware/auth');
 
 const { uploadVideoS3, uploadTempVideo, validateFileContent } = require('../middleware/upload');
+const checkUploadLimit = require('../middleware/checkUploadLimit');
 
 // OAuth Flows
 router.get('/initiate', instagramController.initiateAuth);
 router.get('/callback', instagramController.handleOAuthCallback);
 
 // Reel Upload (Synchronous/Reliable)
-router.post('/upload-reel', authenticate, uploadTempVideo.single('file'), validateFileContent, instagramController.uploadAndPostReel);
+router.post('/upload-reel', authenticate, checkUploadLimit, uploadTempVideo.single('file'), validateFileContent, instagramController.uploadAndPostReel);
 
 // Account & Analytics
 router.get('/account', authenticate, instagramController.getAccountDetails);

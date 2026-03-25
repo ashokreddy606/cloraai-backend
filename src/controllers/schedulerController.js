@@ -41,7 +41,6 @@ const schedulePost = async (req, res) => {
       });
     }
 
-    // Check plan from User model (source of truth)
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
       select: { plan: true, subscriptionStatus: true, planEndDate: true },
@@ -49,36 +48,6 @@ const schedulePost = async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const isPro =
-      user.plan === 'LIFETIME' ||
-      (
-        user.plan === 'PRO' &&
-        ['ACTIVE', 'CANCELLED'].includes(user.subscriptionStatus) &&
-        user.planEndDate &&
-        new Date(user.planEndDate) > new Date()
-      );
-
-    if (!isPro) {
-      // FREE users: max 1 upload per day
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const dailyCount = await prisma.scheduledPost.count({
-        where: {
-          userId: req.userId,
-          createdAt: { gte: startOfDay },
-        },
-      });
-
-      if (dailyCount >= 1) {
-        return res.status(403).json({
-          error: 'Free plan limit reached',
-          message: 'Free plan allows 1 video upload per day. Upgrade to Pro for unlimited uploads.',
-          code: 'PLAN_LIMIT',
-          limit: 1,
-          used: dailyCount,
-        });
-      }
-    }
 
     const { platform: reqPlatform } = req.body;
     const isInstant = !!publishInstantly;

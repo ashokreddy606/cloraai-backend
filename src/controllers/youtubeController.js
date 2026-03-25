@@ -960,8 +960,22 @@ exports.uploadVideo = async (req, res) => {
                     title 
                 });
 
-                // Optional: Send a notification if you have a service for it
+                // Create ScheduledPost record for tracking and history
                 if (req.userId) {
+                    await prisma.scheduledPost.create({
+                        data: {
+                            userId: req.userId,
+                            title: title,
+                            caption: description || '',
+                            mediaUrl: s3Url || 'direct-upload', // For tracking
+                            platform: 'youtube',
+                            status: 'published',
+                            publishedAt: new Date(),
+                            youtubeVideoId: uploadRes.data.id,
+                            scheduledAt: new Date(),
+                        }
+                    }).catch(e => logger.warn('YOUTUBE:TRACKING_FAIL', 'Failed to create ScheduledPost record for YouTube upload', { error: e.message }));
+
                     await prisma.notification.create({
                         data: {
                             userId: req.userId,
