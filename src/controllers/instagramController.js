@@ -394,37 +394,13 @@ const uploadAndPostReel = async (req, res) => {
       path: tempFilePath 
     });
 
-    // 1. Upload to S3
-    const extension = path.extname(req.file.originalname).toLowerCase() || '.mp4';
-    const s3Key = `videos/${uuidv4()}${extension}`;
-    const fileStream = fs.createReadStream(tempFilePath);
-
-    const uploadParams = {
-      Bucket: awsConfig.bucketName,
-      Key: s3Key,
-      Body: fileStream,
-      ContentType: req.file.verifiedMimeType || req.file.mimetype || 'video/mp4'
-    };
-
-    logger.info('REEL_UPLOAD', `Step 2: Uploading to S3 bucket ${awsConfig.bucketName}...`);
-    await s3Client.send(new PutObjectCommand(uploadParams));
-    
-    const videoUrl = `https://${awsConfig.bucketName}.s3.${awsConfig.region}.amazonaws.com/${s3Key}`;
-    logger.info('REEL_UPLOAD', `Step 2: S3 upload success`, { videoUrl });
-
-    // 2. Get Instagram Account (Check if connected before enqueuing)
-    const account = await InstagramAccount.findOne({ userId });
-    if (!account) {
-        throw new Error('Instagram account not connected. Please connect your account first.');
-    }
-
-    // 3. Create ScheduledPost record for asynchronous processing
-    logger.info('REEL_UPLOAD', `Step 3: Creating ScheduledPost record for asynchronous processing...`);
+    // 1. Create PRELIMINARY ScheduledPost record synchronously for limit enforcement
+    logger.info('REEL_UPLOAD', `Step 1: Creating preliminary ScheduledPost record for user ${userId}`);
     const scheduledPost = await prisma.scheduledPost.create({
       data: {
         user: { connect: { id: userId } },
         caption: caption || 'Posted via CloraAI ✨',
-        mediaUrl: videoUrl,
+        mediaUrl: 'pending-s3-upload', // Temporary placeholder
         scheduledAt: new Date(),
         status: 'publishing',
         platform: 'instagram',
@@ -451,6 +427,37 @@ const uploadAndPostReel = async (req, res) => {
         dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
       }
     });
+
+    // 2. Upload to S3
+    const extension = path.extname(req.file.originalname).toLowerCase() || '.mp4';
+    const s3Key = `videos/${uuidv4()}${extension}`;
+    const fileStream = fs.createReadStream(tempFilePath);
+
+    const uploadParams = {
+      Bucket: awsConfig.bucketName,
+      Key: s3Key,
+      Body: fileStream,
+      ContentType: req.file.verifiedMimeType || req.file.mimetype || 'video/mp4'
+    };
+
+    logger.info('REEL_UPLOAD', `Step 2: Uploading to S3 bucket ${awsConfig.bucketName}...`);
+    await s3Client.send(new PutObjectCommand(uploadParams));
+    
+    const videoUrl = `https://${awsConfig.bucketName}.s3.${awsConfig.region}.amazonaws.com/${s3Key}`;
+    logger.info('REEL_UPLOAD', `Step 2: S3 upload success`, { videoUrl });
+
+    // Update record with the final S3 URL
+    await prisma.scheduledPost.update({
+      where: { id: scheduledPost.id },
+      data: { mediaUrl: videoUrl }
+    });
+
+    // 3. Discover Instagram Account
+    const account = await InstagramAccount.findOne({ userId });
+    if (!account) {
+        throw new Error('Instagram account not connected.');
+    }
+
 
     // 4. Enqueue Job
     logger.info('REEL_UPLOAD', `Step 4: Enqueueing publish job for postId ${scheduledPost.id}`);

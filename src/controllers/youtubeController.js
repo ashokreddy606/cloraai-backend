@@ -915,22 +915,33 @@ exports.uploadVideo = async (req, res) => {
         // Get the auth client and ensure it's used explicitly for the upload
         const mimeType = req.file?.mimetype || 'video/mp4'; 
 
-        logger.info('YOUTUBE', 'Initiating YouTube background upload', { 
-            userId: req.userId, 
-            title,
-            source: s3Url ? 'S3' : 'Local Disk',
-            mimeType
-        });
-        
-        // Respond TO USER IMMEDIATELY to prevent timeouts and feel faster
+        // ── Step 1: Create ScheduledPost record synchronously for tracking & limit enforcement ──
+        let scheduledPost;
+        if (req.userId) {
+            scheduledPost = await prisma.scheduledPost.create({
+                data: {
+                    userId: req.userId,
+                    title: title,
+                    caption: description || '',
+                    mediaUrl: s3Url || 'direct-upload',
+                    platform: 'youtube',
+                    status: 'publishing', // Initial status
+                    scheduledAt: new Date(),
+                }
+            }).catch(e => {
+                logger.warn('YOUTUBE:TRACKING_FAIL', 'Failed to create pre-upload record', { error: e.message });
+            });
+        }
+
+        // ── Step 2: Respond TO USER IMMEDIATELY to prevent timeouts ──
         res.status(202).json({
             success: true,
             status: 'processing',
-            message: 'Video upload started in background. It will appear on your channel shortly.',
-            video: { title }
+            message: 'Video upload started in background.',
+            video: { title, postId: scheduledPost?.id }
         });
 
-        // BACKGROUND TASK: Now we do the heavy lifting without blocking the user
+        // ── Step 3: BACKGROUND TASK ──
         (async () => {
             try {
                 const uploadRes = await youtube.videos.insert({
@@ -948,40 +959,34 @@ exports.uploadVideo = async (req, res) => {
                         mimeType,
                         body: videoStream,
                         resumable: true,
-                        chunkSize: 64 * 1024 * 1024, // 64MB chunks for MUCH faster server-to-server transfer
+                        chunkSize: 64 * 1024 * 1024,
                     },
                 }, {
                     auth,
                 });
 
-                logger.info('YOUTUBE:BG_SUCCESS', 'Background upload complete', { 
-                    userId: req.userId, 
-                    videoId: uploadRes.data.id,
-                    title 
-                });
+                const videoId = uploadRes.data.id;
+                logger.info('YOUTUBE:BG_SUCCESS', 'Background upload complete', { userId: req.userId, videoId });
 
-                // Create ScheduledPost record for tracking and history
-                if (req.userId) {
-                    await prisma.scheduledPost.create({
+                // Update the record to published
+                if (scheduledPost) {
+                    await prisma.scheduledPost.update({
+                        where: { id: scheduledPost.id },
                         data: {
-                            userId: req.userId,
-                            title: title,
-                            caption: description || '',
-                            mediaUrl: s3Url || 'direct-upload', // For tracking
-                            platform: 'youtube',
                             status: 'published',
                             publishedAt: new Date(),
-                            youtubeVideoId: uploadRes.data.id,
-                            scheduledAt: new Date(),
+                            youtubeVideoId: videoId
                         }
-                    }).catch(e => logger.warn('YOUTUBE:TRACKING_FAIL', 'Failed to create ScheduledPost record for YouTube upload', { error: e.message }));
+                    }).catch(() => {});
+                }
 
+                if (req.userId) {
                     await prisma.notification.create({
                         data: {
                             userId: req.userId,
                             type: 'system',
                             title: 'YouTube Upload Complete',
-                            body: `"${title}" has been successfully published to YouTube.`,
+                            body: `"${title}" has been published to YouTube.`,
                             icon: 'logo-youtube',
                             color: '#EF4444'
                         }
@@ -989,30 +994,34 @@ exports.uploadVideo = async (req, res) => {
                 }
 
             } catch (bgError) {
-                logger.error('YOUTUBE:BG_FAIL', 'Background upload failed', { 
-                    userId: req.userId, 
-                    error: bgError.message,
-                    title 
-                });
+                logger.error('YOUTUBE:BG_FAIL', 'Background upload failed', { userId: req.userId, error: bgError.message });
                 
+                // Update record to failed
+                if (scheduledPost) {
+                    await prisma.scheduledPost.update({
+                        where: { id: scheduledPost.id },
+                        data: {
+                            status: 'failed',
+                            errorMessage: bgError.message
+                        }
+                    }).catch(() => {});
+                }
+
                 if (req.userId) {
                     await prisma.notification.create({
                         data: {
                             userId: req.userId,
                             type: 'error',
                             title: 'YouTube Upload Failed',
-                            body: `Failed to upload "${title}". Error: ${bgError.message}. Please try again.`,
+                            body: `Failed to upload "${title}".`,
                             icon: 'alert-circle',
                             color: '#EF4444'
                         }
                     }).catch(() => {});
                 }
             } finally {
-                // IMPORTANT: Clean up the file ONLY AFTER the background upload finishes
                 if (tempFilePath) {
-                    fs.unlink(tempFilePath, (err) => {
-                        if (err) logger.warn('YOUTUBE:CLEANUP', 'Failed to delete temp file', { tempFilePath, error: err.message });
-                    });
+                    fs.unlink(tempFilePath, () => { });
                 }
             }
         })();
