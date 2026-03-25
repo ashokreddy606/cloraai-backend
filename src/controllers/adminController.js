@@ -684,12 +684,41 @@ const deleteScheduledPost = async (req, res) => {
 
 const pauseSchedulingGlobally = async (req, res) => {
     try {
-        appConfig.featureFlags.reelSchedulerEnabled = !appConfig.featureFlags.reelSchedulerEnabled;
-        const state = appConfig.featureFlags.reelSchedulerEnabled;
+        const { appConfig, saveConfig } = require('../config');
+        const currentState = appConfig.featureFlags.reelSchedulerEnabled;
+        const newState = !currentState;
+        
+        appConfig.featureFlags.reelSchedulerEnabled = newState;
+        // If we are pausing, also enable the emergency stop flag to kill active background tasks
+        appConfig.featureFlags.emergencyStopPosts = !newState; 
+        
         saveConfig();
-        logAdminAction(req.userId, state ? 'RESUME_SCHEDULER' : 'PAUSE_SCHEDULER');
-        res.json({ success: true, message: state ? 'Scheduler resumed' : 'Scheduler paused globally', enabled: state });
+
+        if (!newState) {
+            // ATOMIC STOP: Mark all currently active or scheduled posts as failed so they don't proceed
+            const { count } = await prisma.scheduledPost.updateMany({
+                where: {
+                    status: { in: ['scheduled', 'publishing'] }
+                },
+                data: {
+                    status: 'failed',
+                    errorMessage: 'Stopped by Administrator (Global Pause)'
+                }
+            });
+            logger.info('ADMIN:STOP_ALL', `Globally paused scheduling and stopped ${count} active/pending posts.`);
+        }
+
+        logAdminAction(req.userId, newState ? 'RESUME_SCHEDULER' : 'PAUSE_SCHEDULER');
+        
+        res.json({ 
+            success: true, 
+            message: newState 
+                ? 'Scheduler resumed. New posts will be processed.' 
+                : 'Scheduler PAUSED globally. All active uploads have been terminated.', 
+            enabled: newState 
+        });
     } catch (error) {
+        logger.error('ADMIN:PAUSE_FAIL', 'Failed to toggle scheduler', error);
         res.status(500).json({ error: 'Failed to toggle scheduler', message: error.message });
     }
 };
@@ -761,13 +790,18 @@ const stopAllAutomations = async (req, res) => {
         const { count: igCount } = await prisma.dMAutomation.updateMany({ data: { isActive: false } });
         const { count: ytCount } = await prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } });
         
+        const { appConfig, saveConfig } = require('../config');
         appConfig.featureFlags.autoDMEnabled = false;
         appConfig.featureFlags.youtubeAutomationEnabled = false;
         saveConfig();
         
         logAdminAction(req.userId, 'STOP_ALL_DM_AND_YT');
-        res.json({ success: true, message: `Stopped ${igCount} Instagram and ${ytCount} YouTube automation(s) globally.` });
+        res.json({ 
+            success: true, 
+            message: `Emergency Stop Successful: ${igCount} Instagram and ${ytCount} YouTube automation rules have been disabled globally.` 
+        });
     } catch (error) {
+        logger.error('ADMIN:STOP_AUTO_FAIL', 'Failed to stop automations', error);
         res.status(500).json({ error: 'Failed to stop automations', message: error.message });
     }
 };

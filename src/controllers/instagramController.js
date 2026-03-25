@@ -381,6 +381,14 @@ const uploadAndPostReel = async (req, res) => {
       followButtonText, followedButtonText, dmReplyEnabled
     } = req.body;
     const userId = req.userId;
+    const { appConfig } = require('../config');
+
+    if (appConfig.featureFlags.emergencyStopPosts) {
+        return res.status(503).json({ 
+            error: 'Service Paused', 
+            message: 'All uploads are currently stopped by the administrator.' 
+        });
+    }
 
     if (!req.file) {
       logger.error('REEL_UPLOAD', "No file provided in request");

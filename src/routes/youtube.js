@@ -4,7 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const youtubeController = require('../controllers/youtubeController');
 const { youtubeGuard, youtubeAutomationGuard } = require('../middleware/youtubeGuard');
 const checkProAccess = require('../middleware/checkProAccess');
-const { uploadTempVideo } = require('../middleware/upload');
+const { uploadVideoS3 } = require('../middleware/upload');
 const checkUploadLimit = require('../middleware/checkUploadLimit');
 
 router.use(youtubeGuard);
@@ -37,7 +37,7 @@ router.get('/channel-analytics', authenticate, youtubeController.getChannelAnaly
 router.get('/videos', authenticate, youtubeController.getUserVideos);
 
 // POST /api/youtube/videos/upload — upload a new video
-router.post('/videos/upload', authenticate, checkUploadLimit, uploadTempVideo.single('video'), youtubeController.uploadVideo);
+router.post('/videos/upload', authenticate, checkUploadLimit, uploadVideoS3.single('video'), youtubeController.uploadVideo);
 
 // PUT  /api/youtube/videos/:videoId — update video metadata
 router.put('/videos/:videoId', authenticate, youtubeController.updateVideo);

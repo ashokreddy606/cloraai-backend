@@ -32,6 +32,7 @@ const defaultAppConfig = {
         youtubeEnabled: true,
         youtubeAutomationEnabled: true,
         youtubeCommentRepliesEnabled: true,
+        emergencyStopPosts: false,
     },
     aiLimits: {
         freeDailyCaptions: 5,

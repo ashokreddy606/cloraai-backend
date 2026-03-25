@@ -858,11 +858,21 @@ exports.uploadVideo = async (req, res) => {
         const { youtube, client: auth } = await getYoutubeClientForUser(req.userId);
         const { title, description, tags, privacyStatus = 'private', publishAt } = req.body;
 
+        if (appConfig.featureFlags.emergencyStopPosts) {
+            return res.status(503).json({ 
+                error: 'Service Temporarily Paused', 
+                message: 'Uploads are currently disabled by the administrator. Please try again later.' 
+            });
+        }
+
         if (!title) {
             return res.status(400).json({ error: 'Title is required' });
         }
-        tempFilePath = req.file?.path;
-        const s3Url = req.body.videoUrl; // In case they send an S3 URL directly
+        
+        // S3 storage result from uploadVideoS3 middleware
+        const s3UrlFromMulter = req.file?.location; 
+        const s3Url = s3UrlFromMulter || req.body.videoUrl;
+        tempFilePath = req.file?.path; // Only exists if not using S3
 
         // If it's an S3 URL, we can stream it directly to YouTube
         let videoStream;
@@ -944,26 +954,22 @@ exports.uploadVideo = async (req, res) => {
         // ── Step 3: BACKGROUND TASK ──
         (async () => {
             try {
+                // Re-check emergency stop just before starting background work
+                const { appConfig: latestConfig } = require('../config');
+                if (latestConfig.featureFlags.emergencyStopPosts) {
+                    throw new Error('Upload aborted: Emergency Stop enabled by Admin.');
+                }
+
                 const uploadRes = await youtube.videos.insert({
                     part: 'snippet,status',
-                    requestBody: {
-                        snippet: {
-                            title,
-                            description: description || '',
-                            tags: parsedTags || [],
-                            categoryId: '22',
-                        },
-                        status,
-                    },
+                    requestBody: { snippet: { title, description: description || '', tags: parsedTags || [], categoryId: '22' }, status },
                     media: {
                         mimeType,
                         body: videoStream,
                         resumable: true,
-                        chunkSize: 64 * 1024 * 1024,
+                        chunkSize: 128 * 1024 * 1024, // 128MB chunks for MAXIMUM speed
                     },
-                }, {
-                    auth,
-                });
+                }, { auth });
 
                 const videoId = uploadRes.data.id;
                 logger.info('YOUTUBE:BG_SUCCESS', 'Background upload complete', { userId: req.userId, videoId });
