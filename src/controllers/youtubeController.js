@@ -332,8 +332,35 @@ exports.createRule = async (req, res) => {
         if (!keyword || !replyMessage) {
             return res.status(400).json({ error: 'Keyword and replyMessage are required' });
         }
-        const user = await prisma.user.findUnique({ where: { id: req.userId } });
+        const user = await prisma.user.findUnique({ 
+            where: { id: req.userId },
+            select: { id: true, plan: true, subscriptionStatus: true, planEndDate: true, youtubeChannelId: true }
+        });
         const channelId = user?.youtubeChannelId;
+
+        const isPro =
+          user?.plan === 'LIFETIME' ||
+          (
+            user?.plan === 'PRO' &&
+            ['ACTIVE', 'CANCELLED'].includes(user.subscriptionStatus) &&
+            user.planEndDate &&
+            new Date(user.planEndDate) > new Date()
+          );
+
+        if (!isPro) {
+            const ruleCount = await prisma.youtubeAutomationRule.count({
+                where: { userId: req.userId, channelId }
+            });
+            if (ruleCount >= 5) {
+                return res.status(403).json({
+                    error: 'Free plan limit reached',
+                    message: 'Free plan allows exactly 5 YouTube automation rules. Upgrade to Pro for unlimited rules.',
+                    code: 'PLAN_LIMIT',
+                    limit: 5,
+                    used: ruleCount
+                });
+            }
+        }
 
         // Check for duplicate keyword within the same scope (global or video-specific)
         // We do this manually because MongoDB handles null in compound unique indexes unpredictably

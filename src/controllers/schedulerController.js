@@ -59,26 +59,28 @@ const schedulePost = async (req, res) => {
       );
 
     if (!isPro) {
-      // FREE users: max 4 scheduled posts per calendar month
-      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-      const monthlyCount = await prisma.scheduledPost.count({
+      // FREE users: max 1 upload per day
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const dailyCount = await prisma.scheduledPost.count({
         where: {
           userId: req.userId,
-          createdAt: { gte: startOfMonth },
+          createdAt: { gte: startOfDay },
         },
       });
 
-      if (monthlyCount >= 4) {
+      if (dailyCount >= 1) {
         return res.status(403).json({
           error: 'Free plan limit reached',
-          message: 'Free plan allows 4 scheduled posts per month. Upgrade to Pro for unlimited scheduling.',
+          message: 'Free plan allows 1 video upload per day. Upgrade to Pro for unlimited uploads.',
           code: 'PLAN_LIMIT',
-          limit: 4,
-          used: monthlyCount,
+          limit: 1,
+          used: dailyCount,
         });
       }
     }
 
+    const { platform: reqPlatform } = req.body;
     const isInstant = !!publishInstantly;
 
     const scheduledPost = await prisma.scheduledPost.create({
@@ -92,7 +94,7 @@ const schedulePost = async (req, res) => {
         automationReply: automationReply || null,
         automationAppendLinks: automationAppendLinks || false,
         automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
-        platform: 'instagram', // Default to instagram for this controller
+        platform: reqPlatform || 'instagram',
         // Advanced Automation Integration
         isAI: isAI === 'true' || isAI === true,
         triggerType: triggerType || null,

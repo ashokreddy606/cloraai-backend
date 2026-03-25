@@ -758,11 +758,15 @@ const getDMAutomations = async (req, res) => {
 
 const stopAllAutomations = async (req, res) => {
     try {
-        const { count } = await prisma.dMAutomation.updateMany({ data: { isActive: false } });
+        const { count: igCount } = await prisma.dMAutomation.updateMany({ data: { isActive: false } });
+        const { count: ytCount } = await prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } });
+        
         appConfig.featureFlags.autoDMEnabled = false;
+        appConfig.featureFlags.youtubeAutomationEnabled = false;
         saveConfig();
-        logAdminAction(req.userId, 'STOP_ALL_DM');
-        res.json({ success: true, message: `Stopped ${count} automation(s)` });
+        
+        logAdminAction(req.userId, 'STOP_ALL_DM_AND_YT');
+        res.json({ success: true, message: `Stopped ${igCount} Instagram and ${ytCount} YouTube automation(s) globally.` });
     } catch (error) {
         res.status(500).json({ error: 'Failed to stop automations', message: error.message });
     }

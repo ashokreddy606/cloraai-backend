@@ -56,12 +56,12 @@ const createRule = async (req, res) => {
         where: { userId: req.userId },
       });
 
-      if (ruleCount >= 3) {
+      if (ruleCount >= 1) {
         return res.status(403).json({
           error: 'Free plan limit reached',
-          message: 'Free plan allows 3 DM automation rules. Upgrade to Pro for unlimited rules.',
+          message: 'Free plan allows 1 Instagram DM automation rule. Upgrade to Pro for unlimited rules.',
           code: 'PLAN_LIMIT',
-          limit: 3,
+          limit: 1,
           used: ruleCount,
         });
       }

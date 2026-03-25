@@ -10,10 +10,9 @@ const defaultAppConfig = {
     offerPriceMonthly: null,
     offerPriceYearly: null,
     freeFeatures: [
-        "3 AI captions per day",
-        "1 DM rule",
-        "Basic analytics",
-        "7-day calendar"
+        "5 AI captions per day",
+        "1 IG DM rule, 5 YT rules",
+        "1 Video/Reel upload per day"
     ],
     proFeatures: [
         "Unlimited AI Captions",
