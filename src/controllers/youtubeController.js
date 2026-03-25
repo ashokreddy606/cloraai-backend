@@ -913,83 +913,117 @@ exports.uploadVideo = async (req, res) => {
         }
 
         // Get the auth client and ensure it's used explicitly for the upload
-        const mimeType = req.file?.mimetype || 'video/mp4'; // Fallback to mp4 if unknown
+        const mimeType = req.file?.mimetype || 'video/mp4'; 
 
-        logger.info('YOUTUBE', 'Initiating YouTube video insert', { 
+        logger.info('YOUTUBE', 'Initiating YouTube background upload', { 
             userId: req.userId, 
             title,
             source: s3Url ? 'S3' : 'Local Disk',
-            tempFile: tempFilePath ? path.basename(tempFilePath) : null,
             mimeType
         });
         
-        const uploadRes = await youtube.videos.insert({
-            part: 'snippet,status',
-            requestBody: {
-                snippet: {
-                    title,
-                    description: description || '',
-                    tags: parsedTags || [],
-                    categoryId: '22',
-                },
-                status,
-            },
-            media: {
-                mimeType,
-                body: videoStream,
-                resumable: true, // Enable resumable upload for stability
-            },
-        }, {
-            auth, // Explicitly pass auth client in options
-            // Optional: for large files, use resumable upload
-            onUploadProgress: (evt) => {
-                const totalBytes = req.file?.size || 0;
-                const progress = totalBytes > 0 
-                    ? Math.round((evt.bytesRead / totalBytes) * 100)
-                    : 'ongoing';
+        // Respond TO USER IMMEDIATELY to prevent timeouts and feel faster
+        res.status(202).json({
+            success: true,
+            status: 'processing',
+            message: 'Video upload started in background. It will appear on your channel shortly.',
+            video: { title }
+        });
+
+        // BACKGROUND TASK: Now we do the heavy lifting without blocking the user
+        (async () => {
+            try {
+                const uploadRes = await youtube.videos.insert({
+                    part: 'snippet,status',
+                    requestBody: {
+                        snippet: {
+                            title,
+                            description: description || '',
+                            tags: parsedTags || [],
+                            categoryId: '22',
+                        },
+                        status,
+                    },
+                    media: {
+                        mimeType,
+                        body: videoStream,
+                        resumable: true,
+                        chunkSize: 64 * 1024 * 1024, // 64MB chunks for MUCH faster server-to-server transfer
+                    },
+                }, {
+                    auth,
+                });
+
+                logger.info('YOUTUBE:BG_SUCCESS', 'Background upload complete', { 
+                    userId: req.userId, 
+                    videoId: uploadRes.data.id,
+                    title 
+                });
+
+                // Optional: Send a notification if you have a service for it
+                if (req.userId) {
+                    await prisma.notification.create({
+                        data: {
+                            userId: req.userId,
+                            type: 'system',
+                            title: 'YouTube Upload Complete',
+                            body: `"${title}" has been successfully published to YouTube.`,
+                            icon: 'logo-youtube',
+                            color: '#EF4444'
+                        }
+                    }).catch(() => {});
+                }
+
+            } catch (bgError) {
+                logger.error('YOUTUBE:BG_FAIL', 'Background upload failed', { 
+                    userId: req.userId, 
+                    error: bgError.message,
+                    title 
+                });
                 
-                if (typeof progress === 'number') {
-                    if (progress % 20 === 0) {
-                        logger.info('YOUTUBE', `Upload progress for ${req.userId}: ${progress}%`);
-                    }
-                } else {
-                    logger.info('YOUTUBE', `Upload in progress for ${req.userId}...`);
+                if (req.userId) {
+                    await prisma.notification.create({
+                        data: {
+                            userId: req.userId,
+                            type: 'error',
+                            title: 'YouTube Upload Failed',
+                            body: `Failed to upload "${title}". Error: ${bgError.message}. Please try again.`,
+                            icon: 'alert-circle',
+                            color: '#EF4444'
+                        }
+                    }).catch(() => {});
+                }
+            } finally {
+                // IMPORTANT: Clean up the file ONLY AFTER the background upload finishes
+                if (tempFilePath) {
+                    fs.unlink(tempFilePath, (err) => {
+                        if (err) logger.warn('YOUTUBE:CLEANUP', 'Failed to delete temp file', { tempFilePath, error: err.message });
+                    });
                 }
             }
-        });
+        })();
 
-        logger.info('YOUTUBE', 'YouTube upload successful', { userId: req.userId, videoId: uploadRes.data.id });
-
-        res.status(201).json({
-            success: true,
-            video: {
-                id: uploadRes.data.id,
-                title: uploadRes.data.snippet.title,
-                status: uploadRes.data.status.privacyStatus,
-                publishAt: uploadRes.data.status.publishAt,
-            }
-        });
     } catch (error) {
+        // This catch block handles errors BEFORE backgrounding (e.g. auth, validation)
         const isAuthError = error.message.includes('invalid_authentication_credentials') || 
                            error.message.includes('Unauthenticated') || 
                            error.response?.status === 401;
         
         if (isAuthError) {
-            logger.warn('YOUTUBE:AUTH_FAIL', 'Upload failed due to auth, marking as disconnected', { userId: req.userId });
             await prisma.user.update({
                 where: { id: req.userId },
                 data: { youtubeConnected: false }
             }).catch(() => {});
         }
 
-        logger.error('YOUTUBE', 'uploadVideo failed', { userId: req.userId, error: error.message, details: error.response?.data });
+        logger.error('YOUTUBE:INIT_FAIL', 'Upload initialization failed', { userId: req.userId, error: error.message });
         res.status(500).json({ 
-            error: 'YouTube Authentication Error', 
-            message: isAuthError ? 'Your YouTube session has expired. Please disconnect and reconnect your account in settings.' : 'Error uploading video',
-            details: error.response?.data?.error?.message || error.message
+            error: 'Upload Initialization Failed', 
+            message: isAuthError ? 'Your YouTube session expired. Please reconnect.' : 'Error starting upload',
+            details: error.message
         });
-    } finally {
-        // Clean up temp file if it was a direct upload
+
+        // Cleanup if we failed before backgrounding
         if (tempFilePath) {
             fs.unlink(tempFilePath, () => { });
         }
