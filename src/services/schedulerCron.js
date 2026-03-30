@@ -6,6 +6,7 @@ const { encryptToken, decryptToken } = require('../utils/cryptoUtils');
 const { instagramQueue, youtubeQueue } = require('../utils/queue');
 const { createNotification } = require('../controllers/notificationController');
 const axios = require('axios');
+const { pollInstagramComments } = require('./instagramCommentPoller');
 
 const WORKER_ID = `${os.hostname()}-${process.pid}`;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -298,9 +299,25 @@ const subscriptionReminderJob = cron.schedule('0 10 * * *', async () => {
     }
 });
 
-schedulerTasks.push(schedulerJob, subscriptionReminderJob);
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CRON 4: Poll Instagram Comments (Every 3 minutes)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const commentPollerJob = cron.schedule('*/3 * * * *', async () => {
+    const acquired = await acquireLock('comment-poller');
+    if (!acquired) {
+        logger.debug('CRON:POLLER', 'Lock not acquired — another instance is running. Skipping.');
+        return;
+    }
+    try {
+        await pollInstagramComments();
+    } finally {
+        await releaseLock('comment-poller');
+    }
+});
 
-logger.info('CRON', 'Scheduler and Token-Refresh cron jobs initialized.', { workerId: WORKER_ID });
+schedulerTasks.push(schedulerJob, subscriptionReminderJob, commentPollerJob);
+
+logger.info('CRON', 'Scheduler, Token-Refresh, and Comment-Poller cron jobs initialized.', { workerId: WORKER_ID });
 
 // Export for graceful shutdown
 module.exports = { schedulerTasks, releaseLock };
