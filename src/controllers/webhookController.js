@@ -81,23 +81,45 @@ const verifyWebhook = (req, res) => {
 
 /**
  * HELPER: Resolve Instagram Account from Entry ID or Page ID
+ * Robust fallback mechanism to prevent silent null failures.
  */
-const findInstagramAccount = async (id) => {
-    if (!id) return null;
-    
-    // 1. Try matching by instagramId (direct Business Account ID)
-    let account = await prisma.instagramAccount.findFirst({
-        where: { instagramId: id, isConnected: true }
-    });
+const resolveInstagramAccount = async (entryId, commentOwnerId = null) => {
+    console.log(`\n=== 🔍 [DEBUG: ACCOUNT RESOLUTION] ===`);
+    console.log(`Attempting to map Payload ID -> Database Record`);
+    console.log(`Incoming entry.id: ${entryId}`);
+    if (commentOwnerId) console.log(`Fallback target ID: ${commentOwnerId}`);
 
-    // 2. Try matching by pageId (Meta often sends Page ID in entry.id for feed webhooks)
-    if (!account) {
+    // Create a unique array of candidate IDs to check
+    const candidateIds = [...new Set([entryId, commentOwnerId].filter(Boolean))];
+
+    for (const id of candidateIds) {
+        console.log(`[DB LOOKUP] Searching active accounts for ID: ${id}`);
+        // 1. Try matching by instagramId (Instagram Business Account)
+        let account = await prisma.instagramAccount.findFirst({
+            where: { instagramId: id, isConnected: true }
+        });
+
+        if (account) {
+            console.log(`✅ [FOUND] Matched via instagramId: ${account.instagramId}`);
+            console.log(`==========================================\n`);
+            return account;
+        }
+
+        // 2. Try matching by pageId (Meta Page Feed event object fallback)
         account = await prisma.instagramAccount.findFirst({
             where: { pageId: id, isConnected: true }
         });
+
+        if (account) {
+            console.log(`✅ [FOUND] Matched via pageId: ${account.pageId}`);
+            console.log(`==========================================\n`);
+            return account;
+        }
     }
 
-    return account;
+    console.warn(`❌ [FAILED] No active Instagram account matched ANY candidate IDs: ${candidateIds.join(', ')}`);
+    console.log(`==========================================\n`);
+    return null;
 };
 
 /**
@@ -175,8 +197,8 @@ const handleWebhook = async (req, res) => {
                         continue;
                     }
 
-                    // Resolve account: Resolve by entry.id (Account ID) or senderId (fallback)
-                    const account = await findInstagramAccount(entry.id);
+                    // Resolve account: Resolve by entry.id, with comment block owner ID fallback
+                    const account = await resolveInstagramAccount(entry.id, comment.from?.id);
                     
                     if (account) {
                         // Prevent self-reply loops
@@ -220,7 +242,7 @@ const handleWebhook = async (req, res) => {
                 const senderId = event.sender.id;
                 const recipientId = event.recipient.id;
 
-                const account = await findInstagramAccount(recipientId);
+                const account = await resolveInstagramAccount(entry.id, recipientId);
                 if (!account) {
                     logger.warn('WEBHOOK:ACCOUNT_NOT_FOUND', `Could not resolve Instagram account for recipient ${recipientId}`, { recipientId });
                     continue;
