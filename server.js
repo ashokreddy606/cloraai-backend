@@ -636,6 +636,9 @@ if (process.env.NODE_ENV !== 'test') {
         require('./src/workers/instagramAutomationWorker');
         require('./src/workers/refreshInstagramTokenWorker');
         require('./src/workers/youtubeWorker'); // YouTube comment automation
+        
+        // 4. Cron Schedulers
+        require('./src/services/schedulerCron');
 
         logger.info('SERVER', '✅ All background workers initialized (unified process).');
     } catch (err) {
