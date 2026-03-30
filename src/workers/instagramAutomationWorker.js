@@ -206,7 +206,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             const replyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${commentId}/replies`;
             try {
                 logger.info('WORKER:API_REPLY', `Sending public comment reply for ${commentId}`, { jobId: job.id });
-                const response = await axios.post(replyUrl, { message: publicReply }, { params: { access_token: instagramAccessToken } });
+                const response = await axios.post(replyUrl, { message: publicReply }, { params: { access_token: apiTokenForDM } });
                 logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`, { 
                     jobId: job.id,
                     metaResponse: response.data 
