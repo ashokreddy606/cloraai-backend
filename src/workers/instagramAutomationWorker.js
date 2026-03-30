@@ -122,7 +122,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         // 4. Prepare Reply (Private DM)
-        let finalMessage = matchedRule.autoReplyMessage;
+        let finalMessage = matchedRule.autoReplyMessage || '';
         
         // AI Generation override
         if (matchedRule.isAI) {
