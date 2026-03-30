@@ -158,6 +158,9 @@ const handleWebhook = async (req, res) => {
 
                 if (isInstagramComment || isPageFeedComment) {
                     const comment = change.value;
+                    console.log('\n=== [WEBHOOK DEBUG: COMMENT EVENT] ===');
+                    console.dir(comment, { depth: null });
+                    
                     const commentId = comment.id || comment.comment_id;
                     const mediaId = comment.media?.id || comment.media_id || comment.post_id;
                     const senderId = comment.from?.id;
@@ -165,6 +168,7 @@ const handleWebhook = async (req, res) => {
 
                     logger.info('COMMENT:DETECTED', `New comment: "${text?.substring(0, 20)}..."`, { commentId, mediaId, senderId });
                     console.log(`[WEBHOOK] Detected comment from ${senderId} on media ${mediaId}`);
+                    console.log('========================================\n');
 
                     if (!senderId || !commentId) {
                         logger.warn('COMMENT:INCOMPLETE', 'Skipping incomplete comment data', { commentId, senderId });
