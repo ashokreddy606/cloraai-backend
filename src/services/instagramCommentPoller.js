@@ -52,8 +52,8 @@ const pollInstagramComments = async () => {
                 // The worker requires pageAccessToken for direct DMs and graph actions. 
                 const decryptedPageToken = account.pageAccessToken ? decryptToken(account.pageAccessToken) : null;
                 
-                // Fetch recent 5 media objects
-                const mediaUrl = `https://graph.instagram.com/${META_GRAPH_VERSION}/me/media?fields=id,shortcode,comments_count,timestamp&limit=5&access_token=${decryptedUserToken}`;
+                // Fetch recent 5 media objects using the Professional Graph API (graph.facebook.com)
+                const mediaUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}/media?fields=id,shortcode,comments_count,timestamp&limit=5&access_token=${decryptedUserToken}`;
                 const mediaResponse = await axios.get(mediaUrl);
                 const mediaItems = mediaResponse.data.data;
 
@@ -67,7 +67,7 @@ const pollInstagramComments = async () => {
                 for (const media of mediasWithComments) {
                     // Fetch recent 20 comments for this media (Reverse chronological order gets newest first)
                     // The Graph API limits this request easily without paginating forever
-                    const commentsUrl = `https://graph.instagram.com/${META_GRAPH_VERSION}/${media.id}/comments?fields=id,text,timestamp,from{id,username},media{id}&order=reverse_chronological&limit=20&access_token=${decryptedUserToken}`;
+                    const commentsUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${media.id}/comments?fields=id,text,timestamp,from{id,username},media{id}&order=reverse_chronological&limit=20&access_token=${decryptedUserToken}`;
                     
                     let commentsResponse;
                     try {
