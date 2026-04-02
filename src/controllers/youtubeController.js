@@ -925,30 +925,14 @@ exports.uploadVideo = async (req, res) => {
         // Get the auth client and ensure it's used explicitly for the upload
         const mimeType = req.file?.mimetype || 'video/mp4'; 
 
-        // ── Step 1: Create ScheduledPost record synchronously for tracking & limit enforcement ──
-        let scheduledPost;
-        if (req.userId) {
-            scheduledPost = await prisma.scheduledPost.create({
-                data: {
-                    userId: req.userId,
-                    title: title,
-                    caption: description || '',
-                    mediaUrl: s3Url || 'direct-upload',
-                    platform: 'youtube',
-                    status: 'publishing', // Initial status
-                    scheduledAt: new Date(),
-                }
-            }).catch(e => {
-                logger.warn('YOUTUBE:TRACKING_FAIL', 'Failed to create pre-upload record', { error: e.message });
-            });
-        }
+        // ── Step 1: Logic for tracking & limit enforcement removed (no ScheduledPost) ──
 
         // ── Step 2: Respond TO USER IMMEDIATELY to prevent timeouts ──
         res.status(202).json({
             success: true,
             status: 'processing',
             message: 'Video upload started in background.',
-            video: { title, postId: scheduledPost?.id }
+            video: { title }
         });
 
         // ── Step 3: BACKGROUND TASK ──
@@ -974,17 +958,7 @@ exports.uploadVideo = async (req, res) => {
                 const videoId = uploadRes.data.id;
                 logger.info('YOUTUBE:BG_SUCCESS', 'Background upload complete', { userId: req.userId, videoId });
 
-                // Update the record to published
-                if (scheduledPost) {
-                    await prisma.scheduledPost.update({
-                        where: { id: scheduledPost.id },
-                        data: {
-                            status: 'published',
-                            publishedAt: new Date(),
-                            youtubeVideoId: videoId
-                        }
-                    }).catch(() => {});
-                }
+                // Logic for updating ScheduledPost removed
 
                 if (req.userId) {
                     await prisma.notification.create({
@@ -1002,16 +976,7 @@ exports.uploadVideo = async (req, res) => {
             } catch (bgError) {
                 logger.error('YOUTUBE:BG_FAIL', 'Background upload failed', { userId: req.userId, error: bgError.message });
                 
-                // Update record to failed
-                if (scheduledPost) {
-                    await prisma.scheduledPost.update({
-                        where: { id: scheduledPost.id },
-                        data: {
-                            status: 'failed',
-                            errorMessage: bgError.message
-                        }
-                    }).catch(() => {});
-                }
+                // Logic for updating ScheduledPost failed status removed
 
                 if (req.userId) {
                     await prisma.notification.create({

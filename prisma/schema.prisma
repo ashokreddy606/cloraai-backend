@@ -104,12 +104,9 @@ model User {
   // ── Relations ───────────────────────────────────────────────────────────
   instagramAccounts     InstagramAccount[]
   paymentHistory        PaymentHistory[]
-  captions              Caption[]
-  scheduledPosts        ScheduledPost[]
   dmAutomations         DMAutomation[]
   dmInteractions        DmInteraction[]
   analyticsSnapshot     AnalyticsSnapshot[]
-  calendarTasks         CalendarTask[]
   notifications         Notification[]
   aiUsage               AIUsage[]
   brandDealInteractions BrandDealInteraction[]
@@ -117,7 +114,6 @@ model User {
   youtubeComments       YoutubeComment[]
   youtubeRules          YoutubeAutomationRule[]
   youtubeLeads          YoutubeLead[]
-  contentCalendars      ContentCalendar[]
 
   // ── Session & Activity Tracking ─────────────────────────────────────────
   loginSessions         LoginSession[]
@@ -158,25 +154,6 @@ model LoginSession {
   @@index([userId])
 }
 
-// Calendar Tasks
-model CalendarTask {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String
-  date      DateTime
-  startTime String?
-  endTime   String?
-  platform  String   @default("general") // general, instagram, youtube
-  repeat    String   @default("one-time") // one-time, daily, weekly
-  notes     String?
-  color     String   @default("#6D28D9")
-  completed Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId, date])
-}
 
 // In-App Notifications
 model Notification {
@@ -262,97 +239,7 @@ model WebhookEvent {
   @@index([processedAt])
 }
 
-// AI Generated Captions
-model Caption {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userId String @db.ObjectId
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  topic    String
-  tone     String // professional, casual, funny, motivational
-  length   String // short, medium, long
-  content  String
-  hashtags String // comma-separated
-
-  isUsed       Boolean   @default(false)
-  usedInPostId String?
-  usedAt       DateTime?
-
-  // Compliance: AI Content Reporting
-  isReported   Boolean   @default(false)
-  reportReason String?
-  reportedAt   DateTime?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([isUsed])
-  @@index([createdAt])
-}
-
-// Scheduled Posts
-model ScheduledPost {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userId String @db.ObjectId
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  platform    String    @default("instagram")
-  mediaUrl    String
-  title       String?
-  caption     String?
-  scheduledAt DateTime
-  status      String    @default("scheduled") // scheduled, published, failed
-  publishedAt DateTime?
-  videoType   String?   // reels, shorts, etc.
-  calendarDay Int?
-  retryCount  Int       @default(0) // tracks failed attempts
-
-  instagramPostId String?
-  youtubeVideoId   String?
-  errorMessage    String?
-
-  automationKeyword     String?
-  automationReply       String?
-  automationAppendLinks Boolean @default(false)
-  automationLinks       String? // Store as JSON string or comma-separated
-  
-  // Advanced Automation Integration
-  isAI                  Boolean @default(false)
-  triggerType           String? // keywords, any
-  replyType             String? // text, product
-  productName           String?
-  productUrl            String?
-  productDescription    String?
-  mustFollow            Boolean @default(false)
-  dmButtonText          String?
-  publicReplies         String? // JSON string
-  
-  // Custom Follow Request
-  customFollowEnabled   Boolean @default(false)
-  customFollowHeader    String?
-  customFollowSubtext   String?
-  followButtonText      String?
-  followedButtonText    String?
-  dmReplyEnabled        Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([status])
-  @@index([scheduledAt])
-}
-
-model ContentCalendar {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  startDate DateTime
-  endDate   DateTime
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-}
 
 // Analytics Snapshots
 model AnalyticsSnapshot {
@@ -504,13 +391,6 @@ model PasswordReset {
   @@index([userId])
 }
 
-// Cron Worker Leader Lock (Multi-Instance Safety)
-model CronLock {
-  id       String   @id @default(auto()) @map("_id") @db.ObjectId
-  lockName String   @unique // e.g., 'scheduler', 'token-refresh'
-  lockedAt DateTime // Timestamp when lock was acquired
-  lockedBy String? // Optional: process identifier (e.g., hostname)
-}
 
 // ── Enterprise Referral Ledger ─────────────────────────────────────────────
 model ReferralTransaction {

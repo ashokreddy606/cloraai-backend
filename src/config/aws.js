@@ -20,7 +20,12 @@ const awsConfig = {
 // Validate credentials in non-test environments
 if (process.env.NODE_ENV !== 'test') {
     if (!awsConfig.credentials.accessKeyId || !awsConfig.credentials.secretAccessKey) {
-        console.warn('[AWS] WARNING: AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is missing. S3 features will fail.');
+        if (process.env.NODE_ENV === 'production') {
+            logger.error('AWS', 'CRITICAL: AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is missing. Production features will fail.');
+            // We choose not to process.exit(1) here to allow other parts of the app (like Analytics) to still work.
+        } else {
+            console.warn('[AWS] WARNING: AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is missing. S3 features will fail.');
+        }
     }
 }
 

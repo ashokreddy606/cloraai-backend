@@ -602,16 +602,8 @@ if (process.env.NODE_ENV !== 'test') {
     try {
         const { Worker } = require('bullmq');
         const { connection, QUEUES } = require('./src/utils/queue');
-        const { processYoutubeUpload } = require('./src/workers/youtubeUploadWorker');
 
 
-        // 2. YouTube Upload Worker
-        new Worker(QUEUES.YOUTUBE, processYoutubeUpload, { 
-            connection, 
-            concurrency: 3 
-        }).on('failed', (job, err) => {
-            logger.error('WORKER', `YouTube upload job ${job.id} failed`, { error: err.message });
-        });
 
         // 3. Instagram Analytics, Automation & Token Refresh Workers
         require('./src/workers/instagramAnalyticsWorker');

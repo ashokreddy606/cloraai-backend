@@ -21,11 +21,6 @@ const { appConfig } = require('../config');
 
 // ─── Per-Feature Daily Caps (Dynamic from Config) ────────────────────────
 const getDailyCap = (feature, plan) => {
-    if (feature === 'caption') {
-        const freeCap = appConfig.aiLimits?.freeDailyCaptions ?? 5;
-        const proCap = appConfig.aiLimits?.proDailyCaptions ?? 100;
-        return (plan === 'FREE') ? freeCap : proCap;
-    }
     if (feature === 'brand_deal') {
         return 50; // Brand deals are fixed at 50/day to prevent abuse
     }
@@ -149,7 +144,7 @@ const aiLimiter = (feature) => async (req, res, next) => {
             return res.status(403).json({
                 error: 'Daily AI limit reached',
                 message: plan === 'FREE'
-                    ? `Free plan allows ${dailyLimit} ${feature === 'caption' ? 'captions' : 'AI scans'} per day. Upgrade to Pro for more.`
+                    ? `Free plan allows ${dailyLimit} AI scans per day. Upgrade to Pro for more.`
                     : `You have reached today's limit of ${dailyLimit} for this feature.`,
                 code: 'PLAN_LIMIT',
                 feature,

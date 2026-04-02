@@ -50,19 +50,14 @@ const getMetrics = async (req, res) => {
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
         const [
-            totalUsers, paidUsers, connectedIG, totalCaptions, captionsToday,
-            dmRules, scheduledPosts, scheduledToday, failedPosts, brandDeals,
+            totalUsers, paidUsers, connectedIG,
+            dmRules, brandDeals,
         ] = await Promise.all([
             prisma.user.count(),
             // Count users on PRO or LIFETIME plan with ACTIVE status
             prisma.user.count({ where: { plan: { not: 'FREE' }, subscriptionStatus: 'ACTIVE' } }),
             prisma.instagramAccount.count({ where: { isConnected: true } }),
-            prisma.caption.count(),
-            prisma.caption.count({ where: { createdAt: { gte: startOfDay } } }),
             prisma.dMAutomation.count({ where: { isActive: true } }),
-            prisma.scheduledPost.count(),
-            prisma.scheduledPost.count({ where: { createdAt: { gte: startOfDay } } }),
-            prisma.scheduledPost.count({ where: { status: 'failed' } }),
             prisma.brandDeal.count().catch(() => 0),
         ]);
 
@@ -87,12 +82,7 @@ const getMetrics = async (req, res) => {
                 paidUsers,
                 freeUsers: totalUsers - paidUsers,
                 connectedAccounts: connectedIG,
-                captionsGenerated: totalCaptions,
-                captionsToday,
                 dmRulesActive: dmRules,
-                scheduledPosts,
-                scheduledToday,
-                failedPosts,
                 brandDealsDetected: brandDeals,
                 newUsersToday,
                 newUsersThisMonth,
@@ -135,7 +125,7 @@ const getUsers = async (req, res) => {
                 include: {
                     // subscription relation removed — use plan fields on User instead
                     instagramAccounts: { select: { username: true, isConnected: true } },
-                    _count: { select: { captions: true, scheduledPosts: true, calendarTasks: true, dmAutomations: true } },
+                    _count: { select: { dmAutomations: true } },
                 },
                 orderBy: { createdAt: 'desc' },
                 skip,
@@ -161,10 +151,8 @@ const getUserDetail = async (req, res) => {
                 // subscription relation removed — plan info lives on User model now
                 paymentHistory: { take: 10, orderBy: { createdAt: 'desc' } },
                 instagramAccounts: true,
-                captions: { take: 10, orderBy: { createdAt: 'desc' } },
-                scheduledPosts: { take: 10, orderBy: { createdAt: 'desc' } },
                 dmAutomations: { take: 10 },
-                _count: { select: { captions: true, scheduledPosts: true, calendarTasks: true, dmAutomations: true } },
+                _count: { select: { dmAutomations: true } },
             },
         });
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -611,10 +599,7 @@ const getAnalytics = async (req, res) => {
             userGrowth.push({ date: from.toISOString().split('T')[0], users, proUsers, revenue: proUsers * 199 });
         }
 
-        const [totalCaptions, totalPosts, totalTasks, totalDMRules, totalUsers, totalPro] = await Promise.all([
-            prisma.caption.count(),
-            prisma.scheduledPost.count(),
-            prisma.calendarTask.count(),
+        const [totalDMRules, totalUsers, totalPro] = await Promise.all([
             prisma.dMAutomation.count(),
             prisma.user.count(),
             prisma.user.count({ where: { plan: { not: 'FREE' }, subscriptionStatus: 'ACTIVE' } }),
@@ -627,19 +612,13 @@ const getAnalytics = async (req, res) => {
             success: true,
             data: {
                 userGrowth,
-                totalCaptions,
-                totalPosts,
-                totalTasks,
                 totalDMRules,
                 totalUsers,
                 totalPro,
                 conversionRate: parseFloat(conversionRate),
                 arpu: parseFloat(arpu),
                 featureUsage: {
-                    captions: totalCaptions,
-                    scheduledPosts: totalPosts,
                     dmAutomations: totalDMRules,
-                    calendarTasks: totalTasks,
                 },
             },
         });
@@ -648,122 +627,6 @@ const getAnalytics = async (req, res) => {
     }
 };
 
-// ─── 5. SCHEDULED POSTS CONTROL ───────────────────────────────────────
-const getScheduledPosts = async (req, res) => {
-    try {
-        const { status, page = 1, limit = 20 } = req.query;
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        const where = {};
-        if (status) where.status = status;
-
-        const [posts, total] = await Promise.all([
-            prisma.scheduledPost.findMany({
-                where,
-                include: { user: { select: { email: true, username: true } } },
-                orderBy: { scheduledAt: 'desc' },
-                skip,
-                take: parseInt(limit),
-            }),
-            prisma.scheduledPost.count({ where }),
-        ]);
-        res.json({ success: true, data: { posts, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) } });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch posts', message: error.message });
-    }
-};
-
-const deleteScheduledPost = async (req, res) => {
-    try {
-        await prisma.scheduledPost.delete({ where: { id: req.params.id } });
-        logAdminAction(req.userId, 'DELETE_POST', req.params.id);
-        res.json({ success: true, message: 'Scheduled post cancelled' });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to cancel post', message: error.message });
-    }
-};
-
-const pauseSchedulingGlobally = async (req, res) => {
-    try {
-        const { appConfig, saveConfig } = require('../config');
-        const currentState = appConfig.featureFlags.reelSchedulerEnabled;
-        const newState = !currentState;
-        
-        appConfig.featureFlags.reelSchedulerEnabled = newState;
-        // If we are pausing, also enable the emergency stop flag to kill active background tasks
-        appConfig.featureFlags.emergencyStopPosts = !newState; 
-        
-        saveConfig();
-
-        if (!newState) {
-            // ATOMIC STOP: Mark all currently active or scheduled posts as failed so they don't proceed
-            const { count } = await prisma.scheduledPost.updateMany({
-                where: {
-                    status: { in: ['scheduled', 'publishing'] }
-                },
-                data: {
-                    status: 'failed',
-                    errorMessage: 'Stopped by Administrator (Global Pause)'
-                }
-            });
-            logger.info('ADMIN:STOP_ALL', `Globally paused scheduling and stopped ${count} active/pending posts.`);
-        }
-
-        logAdminAction(req.userId, newState ? 'RESUME_SCHEDULER' : 'PAUSE_SCHEDULER');
-        
-        res.json({ 
-            success: true, 
-            message: newState 
-                ? 'Scheduler resumed. New posts will be processed.' 
-                : 'Scheduler PAUSED globally. All active uploads have been terminated.', 
-            enabled: newState 
-        });
-    } catch (error) {
-        logger.error('ADMIN:PAUSE_FAIL', 'Failed to toggle scheduler', error);
-        res.status(500).json({ error: 'Failed to toggle scheduler', message: error.message });
-    }
-};
-
-const retryFailedPost = async (req, res) => {
-    try {
-        const post = await prisma.scheduledPost.update({
-            where: { id: req.params.id },
-            data: { status: 'scheduled', errorMessage: null, retryCount: { increment: 1 } },
-        });
-        logAdminAction(req.userId, 'RETRY_POST', req.params.id);
-        res.json({ success: true, message: 'Post queued for retry', data: { post } });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to retry post', message: error.message });
-    }
-};
-
-// ─── 6. CAPTION MODERATION ─────────────────────────────────────────────
-const getCaptions = async (req, res) => {
-    try {
-        const { page = 1, limit = 20 } = req.query;
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        const [captions, total] = await Promise.all([
-            prisma.caption.findMany({
-                include: { user: { select: { email: true, username: true } } },
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: parseInt(limit),
-            }),
-            prisma.caption.count(),
-        ]);
-        res.json({ success: true, data: { captions, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) } });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch captions', message: error.message });
-    }
-};
-
-const deleteCaption = async (req, res) => {
-    try {
-        await prisma.caption.delete({ where: { id: req.params.id } });
-        res.json({ success: true, message: 'Caption deleted' });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to delete caption', message: error.message });
-    }
-};
 
 // ─── 7. DM AUTOMATION LOGS ─────────────────────────────────────────────
 const getDMAutomations = async (req, res) => {

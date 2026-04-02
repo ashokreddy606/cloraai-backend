@@ -235,17 +235,48 @@ const getAnalytics = async (req, res) => {
 
     logger.info('INSTAGRAM', `Analytics Pulled for user ${req.userId}`);
 
-    // Optional: you can query your automation logs to see replies sent
-    // For now, returning basic mock data + real stats for the dashboard structure specified
+    // Calculate Real Analytics
+    // 1. Total Replies Sent (from DM Interaction log)
+    const repliesSentCount = await prisma.dmInteraction.count({
+      where: { userId: req.userId, status: 'sent' }
+    });
+
+    // 2. Growth Last 30 Days (Snapshot Comparison)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [latestSnapshot, oldSnapshot] = await Promise.all([
+      prisma.analyticsSnapshot.findFirst({
+        where: { userId: req.userId },
+        orderBy: { snapshotDate: 'desc' }
+      }),
+      prisma.analyticsSnapshot.findFirst({
+        where: { userId: req.userId, snapshotDate: { lte: thirtyDaysAgo } },
+        orderBy: { snapshotDate: 'desc' }
+      })
+    ]);
+
+    let growthValue = 0;
+    if (latestSnapshot && oldSnapshot) {
+      growthValue = latestSnapshot.followers - oldSnapshot.followers;
+    }
+
+    // 3. Comment Aggregation (from Media Service)
+    let totalComments = 0;
+    try {
+      const posts = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+      totalComments = posts.reduce((sum, p) => sum + (p.comments_count || 0), 0);
+    } catch (e) {
+      logger.warn('ANALYTICS:COMMENTS', `Failed to aggregate comments for ${req.userId}`);
+    }
+
     res.status(200).json({
       success: true,
       data: {
         followers: stats.followers_count || 0,
         following: stats.follows_count || 0,
         posts: stats.media_count || 0,
-        comments: 0, // Would be fetched from media endpoints or DB
-        repliesSent: 0, // Would be fetched from automation DB
-        growthLast30Days: 0
+        comments: totalComments,
+        repliesSent: repliesSentCount,
+        growthLast30Days: growthValue
       }
     });
   } catch (error) {
@@ -402,38 +433,31 @@ const uploadAndPostReel = async (req, res) => {
       path: tempFilePath 
     });
 
-    // 1. Create PRELIMINARY ScheduledPost record synchronously for limit enforcement
-    logger.info('REEL_UPLOAD', `Step 1: Creating preliminary ScheduledPost record for user ${userId}`);
-    const scheduledPost = await prisma.scheduledPost.create({
-      data: {
-        user: { connect: { id: userId } },
-        caption: caption || 'Posted via CloraAI ✨',
-        mediaUrl: 'pending-s3-upload', // Temporary placeholder
-        scheduledAt: new Date(),
-        status: 'publishing',
-        platform: 'instagram',
-        automationKeyword: automationKeyword || null,
-        automationReply: automationReply || null,
-        automationAppendLinks: automationAppendLinks === 'true' || automationAppendLinks === true,
-        automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
-        // Advanced Automation Integration
-        isAI: isAI === 'true' || isAI === true,
-        triggerType: triggerType || null,
-        replyType: replyType || null,
-        productName: productName || null,
-        productUrl: productUrl || null,
-        productDescription: productDescription || null,
-        mustFollow: mustFollow === 'true' || mustFollow === true,
-        dmButtonText: dmButtonText || null,
-        publicReplies: publicReplies || null,
-        customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
-        customFollowHeader: customFollowHeader || null,
-        customFollowSubtext: customFollowSubtext || null,
-        followButtonText: followButtonText || null,
-        followedButtonText: followedButtonText || null,
-        dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
-      }
-    });
+    // 1. Prepare job metadata
+    const postData = {
+      userId,
+      caption: caption || 'Posted via CloraAI ✨',
+      platform: 'instagram',
+      automationKeyword: automationKeyword || null,
+      automationReply: automationReply || null,
+      automationAppendLinks: automationAppendLinks === 'true' || automationAppendLinks === true,
+      automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
+      isAI: isAI === 'true' || isAI === true,
+      triggerType: triggerType || null,
+      replyType: replyType || null,
+      productName: productName || null,
+      productUrl: productUrl || null,
+      productDescription: productDescription || null,
+      mustFollow: mustFollow === 'true' || mustFollow === true,
+      dmButtonText: dmButtonText || null,
+      publicReplies: publicReplies || null,
+      customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
+      customFollowHeader: customFollowHeader || null,
+      customFollowSubtext: customFollowSubtext || null,
+      followButtonText: followButtonText || null,
+      followedButtonText: followedButtonText || null,
+      dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
+    };
 
     // 2. Upload to S3
     const extension = path.extname(req.file.originalname).toLowerCase() || '.mp4';
@@ -453,11 +477,8 @@ const uploadAndPostReel = async (req, res) => {
     const videoUrl = `https://${awsConfig.bucketName}.s3.${awsConfig.region}.amazonaws.com/${s3Key}`;
     logger.info('REEL_UPLOAD', `Step 2: S3 upload success`, { videoUrl });
 
-    // Update record with the final S3 URL
-    await prisma.scheduledPost.update({
-      where: { id: scheduledPost.id },
-      data: { mediaUrl: videoUrl }
-    });
+    // Store final S3 URL in metadata
+    postData.mediaUrl = videoUrl;
 
     // 3. Discover Instagram Account
     const account = await InstagramAccount.findOne({ userId });
@@ -467,15 +488,14 @@ const uploadAndPostReel = async (req, res) => {
 
 
     // 4. Enqueue Job
-    logger.info('REEL_UPLOAD', `Step 4: Enqueueing publish job for postId ${scheduledPost.id}`);
-    await enqueueJob(instagramQueue, 'publish', { postId: scheduledPost.id, userId });
+    logger.info('REEL_UPLOAD', `Step 4: Enqueueing publish job for user ${userId}`);
+    await enqueueJob(instagramQueue, 'publish', { ...postData });
 
     // 5. Respond immediately
     res.status(202).json({
       success: true,
       message: 'Reel upload successful. It is now being processed and will be published shortly.',
       data: {
-        postId: scheduledPost.id,
         status: 'publishing'
       }
     });
