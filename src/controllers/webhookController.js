@@ -3,7 +3,8 @@ const crypto = require('crypto');
 const { appConfig } = require('../config');
 const { decryptToken } = require('../utils/cryptoUtils');
 const logger = require('../utils/logger');
-const { analyzeAndSaveBrandDeal } = require('./brandDealController');
+// const { analyzeAndSaveBrandDeal } = require('./brandDealController'); // Deleted in refactor
+
 const { matchesKeyword } = require('../utils/automationUtils');
 const { enqueueJob, commentQueue } = require('../utils/queue');
 
