@@ -128,7 +128,7 @@ const register = catchAsync(async (req, res, next) => {
   try {
     await sendEmail({ to: user.email, subject: 'Welcome to CloraAI - Verify Email', html: emailHtml });
   } catch (err) {
-    console.error('Failed to send verification email:', err.message);
+    logger.error('AUTH', 'Failed to send verification email', { error: err.message, userId: user.id });
   }
 
   res.status(201).json({
@@ -246,8 +246,8 @@ const login = async (req, res) => {
       data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, accessToken, refreshToken }
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed', message: 'Internal server error' });
+    logger.error('AUTH', 'Login error', { error: error.message, email });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -283,8 +283,8 @@ const getCurrentUser = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Get user error:', error);
-    res.status(500).json({ error: 'Failed to fetch user', message: 'Internal server error' });
+    logger.error('AUTH', 'Get current user error', { error: error.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -321,7 +321,8 @@ const updateProfile = async (req, res) => {
     });
     res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber, bio: user.bio } } });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update profile', message: error.message });
+    logger.error('AUTH', 'Update profile error', { error: error.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -353,6 +354,7 @@ const refreshToken = catchAsync(async (req, res, next) => {
     const isValid = await redisClient.get(redisKey);
     
     if (!isValid) {
+      logger.warn('AUTH:REFRESH', 'Invalid or revoked session attempt', { userId: decoded.userId, sessionToken: decoded.sessionToken });
       return next(new AppError('Session revoked or expired. Please login again.', 401));
     }
     
@@ -361,12 +363,26 @@ const refreshToken = catchAsync(async (req, res, next) => {
       await redisClient.del(redisKey);
       return next(new AppError('User not found or session revoked', 401));
     }
-    const tokens = generateTokens(user.id, user.tokenVersion, decoded.sessionToken);
-    // Refresh the same key (idempotent sliding window)
-    await redisClient.set(redisKey, 'valid', 'EX', 7 * 24 * 60 * 60);
+
+    // ── ROTATE: Generate new session token ──────────────────────────────
+    const newSessionToken = require('crypto').randomBytes(32).toString('hex');
+    
+    // Update the record in Prisma
+    await prisma.loginSession.updateMany({
+      where: { userId: user.id, sessionToken: decoded.sessionToken },
+      data: { sessionToken: newSessionToken, lastActive: new Date() }
+    });
+
+    // Swap in Redis
+    await redisClient.del(redisKey);
+    await redisClient.set(`refresh_token:${user.id.toString()}:${newSessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+
+    const tokens = generateTokens(user.id, user.tokenVersion, newSessionToken);
     res.status(200).json({ success: true, data: tokens });
   } else {
-    const tokens = generateTokens(decoded.userId, decoded.tokenVersion);
+    // Basic rotation mock for non-redis/test environments
+    const newSessionToken = require('crypto').randomBytes(32).toString('hex');
+    const tokens = generateTokens(decoded.userId, decoded.tokenVersion, newSessionToken);
     res.status(200).json({ success: true, data: tokens });
   }
 });
@@ -426,8 +442,8 @@ const forgotPassword = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Reset link sent to your email.' });
   } catch (error) {
-    logger.error('AUTH', 'Forgot password error:', { error: error.message });
-    res.status(500).json({ success: false, message: 'Failed to send reset email. Please check server email configuration.' });
+    logger.error('AUTH', 'Forgot password error', { error: error.message, email: req.body?.email });
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 };
 
@@ -476,7 +492,10 @@ const deleteAccount = async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     await prisma.user.delete({ where: { id: userId } });
     res.status(200).json({ success: true, message: 'Account deleted.' });
-  } catch (error) { res.status(500).json({ error: 'Failed to delete' }); }
+  } catch (error) { 
+    logger.error('AUTH', 'Delete account error', { error: error.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' }); 
+  }
 };
 
 const verifyEmail = async (req, res) => {
@@ -486,7 +505,10 @@ const verifyEmail = async (req, res) => {
     if (!user) return res.status(400).json({ error: 'Invalid token' });
     await prisma.user.update({ where: { id: user.id }, data: { isEmailVerified: true, emailVerificationToken: null } });
     res.status(200).json({ success: true, message: 'Email verified.' });
-  } catch (error) { res.status(500).json({ error: 'Verification failed' }); }
+  } catch (error) { 
+    logger.error('AUTH', 'Verify email error', { error: error.message });
+    res.status(500).json({ error: 'Internal Server Error' }); 
+  }
 };
 
 const makeAdmin = async (req, res) => {
@@ -495,7 +517,10 @@ const makeAdmin = async (req, res) => {
     if (secretKey !== process.env.ADMIN_SECRET_KEY) return res.status(403).json({ error: 'Forbidden' });
     await prisma.user.update({ where: { email }, data: { role: 'ADMIN' } });
     res.status(200).json({ success: true, message: 'User promoted.' });
-  } catch (error) { res.status(500).json({ error: 'Internal error' }); }
+  } catch (error) { 
+    logger.error('AUTH', 'Make admin error', { error: error.message, email: req.body?.email });
+    res.status(500).json({ error: 'Internal Server Error' }); 
+  }
 };
 
 const googleAuth = async (req, res) => {
@@ -599,8 +624,8 @@ const googleAuth = async (req, res) => {
       } 
     });
   } catch (error) { 
-    console.error('Google Auth error:', error);
-    res.status(500).json({ error: 'Google auth failed' }); 
+    logger.error('AUTH', 'Google Auth error', { error: error.message });
+    res.status(500).json({ error: 'Internal Server Error' }); 
   }
 };
 
@@ -610,7 +635,10 @@ const setup2FA = async (req, res) => {
     const secret = speakeasy.generateSecret({ length: 20, name: `CloraAI (${user.email})` });
     await prisma.user.update({ where: { id: user.id }, data: { twoFactorSecret: secret.base32 } });
     QRCode.toDataURL(secret.otpauth_url, (err, data_url) => { res.status(200).json({ success: true, secret: secret.base32, qrCode: data_url }); });
-  } catch (err) { res.status(500).json({ error: '2FA setup failed' }); }
+  } catch (err) { 
+    logger.error('AUTH', '2FA setup error', { error: err.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' }); 
+  }
 };
 
 const verify2FA = async (req, res) => {
@@ -682,8 +710,8 @@ const verify2FA = async (req, res) => {
       } 
     });
   } catch (err) { 
-    console.error('2FA verification failed:', err);
-    res.status(500).json({ error: '2FA verification failed' }); 
+    logger.error('AUTH', '2FA verification error', { error: err.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' }); 
   }
 };
 

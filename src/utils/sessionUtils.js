@@ -56,7 +56,7 @@ exports.getLocationFromIp = async (ip) => {
       country: 'Unknown Country'
     };
   } catch (error) {
-    console.error('IP Location lookup failed:', error.message);
+    logger.error('IP_LOCATION', 'Lookup failed', { error: error.message, ip });
     return {
       city: 'Unknown City',
       region: 'Unknown Region',

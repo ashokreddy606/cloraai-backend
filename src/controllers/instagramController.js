@@ -4,6 +4,7 @@ const { cache } = require('../utils/cache');
 const { createBreaker } = require('../utils/circuitBreaker');
 const instagramService = require('../services/instagramService');
 const logger = require('../utils/logger');
+const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { s3Client, awsConfig } = require('../config/aws');
 const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
@@ -30,8 +31,8 @@ const initiateAuth = (req, res) => {
     const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
     const scope = 'instagram_basic,pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_manage_insights,instagram_manage_messages,instagram_manage_comments,business_management';
 
-    // Get userId from authenticated request OR query parameter (for public initiate)
-    const userId = req.userId || req.query.userId || req.query.userid || req.query.userID;
+    // SECURITY: Only accept userId from authenticated JWT — never from query params
+    const userId = req.userId;
     
     // Determine if we should return JSON based on Accept header or request type
     const acceptsJson = req.headers.accept && req.headers.accept.includes('application/json');
@@ -135,8 +136,8 @@ const handleOAuthCallback = async (req, res) => {
       instagramId: instagramBusinessAccountId,
       username: profileData.username || 'Instagram User',
       pageId: facebookPageId,
-      pageAccessToken: pageAccessToken,
-      instagramAccessToken: accessToken,
+      pageAccessToken: encrypt(pageAccessToken),
+      instagramAccessToken: encrypt(accessToken),
       tokenExpiresAt: expiresAt,
       connectedAt: new Date(),
       mediaCount: profileData.media_count || 0
@@ -181,7 +182,7 @@ const getAccountDetails = async (req, res) => {
       });
     }
 
-    const accessToken = account.instagramAccessToken;
+    const accessToken = decrypt(account.instagramAccessToken);
     const igUserId = account.instagramId;
 
     const userData = await instagramBreaker.fire(
@@ -218,7 +219,7 @@ const getAccountDetails = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Instagram API error:", error.response?.data || error.message);
+    logger.error('INSTAGRAM', 'API error in getAccountDetails', { error: error.response?.data?.error?.message || error.message });
 
     // If token is invalid or request is malformed, return as disconnected gracefully
     if (error.response?.status === 400 || error.response?.status === 401) {
@@ -244,7 +245,7 @@ const getAnalytics = async (req, res) => {
     const account = await InstagramAccount.findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
+    const stats = await instagramService.getAccountStats(account.instagramId, decrypt(account.instagramAccessToken));
 
     logger.info('INSTAGRAM', `Analytics Pulled for user ${req.userId}`);
 
@@ -275,8 +276,8 @@ const getAnalytics = async (req, res) => {
     // 3. Comment Aggregation (from Media Service)
     let totalComments = 0;
     try {
-      const posts = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
-      totalComments = posts.reduce((sum, p) => sum + (p.comments_count || 0), 0);
+        const posts = await instagramService.getUserMedia(account.instagramId, decrypt(account.instagramAccessToken));
+        totalComments = posts.reduce((sum, p) => sum + (p.comments_count || 0), 0);
     } catch (e) {
       logger.warn('ANALYTICS:COMMENTS', `Failed to aggregate comments for ${req.userId}`);
     }
@@ -293,7 +294,7 @@ const getAnalytics = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Instagram API error:", error.response?.data || error.message);
+    logger.error('INSTAGRAM', 'API error in getAnalytics', { error: error.response?.data?.error?.message || error.message });
     if (error.response?.status === 400 || error.response?.status === 401) {
       return res.status(200).json({
         success: true,
@@ -322,11 +323,12 @@ const getPosts = async (req, res) => {
     const account = await InstagramAccount.findOne({ userId: req.userId });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const posts = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+    const decryptedToken = decrypt(account.instagramAccessToken);
+    const posts = await instagramService.getUserMedia(account.instagramId, decryptedToken);
     
     const enrichedPosts = await Promise.all(posts.slice(0, 50).map(async (post) => {
       try {
-        const insights = await instagramService.getMediaInsights(post.id, account.instagramAccessToken, post.media_type);
+        const insights = await instagramService.getMediaInsights(post.id, decryptedToken, post.media_type);
         // Create a display title from caption or metadata
         const displayTitle = post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}`;
         return { ...post, ...insights, title: displayTitle };
@@ -339,7 +341,7 @@ const getPosts = async (req, res) => {
 
     res.status(200).json({ success: true, data: enrichedPosts });
   } catch (error) {
-    console.error("Instagram API error:", error.response?.data || error.message);
+    logger.error('INSTAGRAM', 'API error in getPosts', { error: error.response?.data?.error?.message || error.message });
     if (error.response?.status === 400 || error.response?.status === 401) {
       return res.status(200).json({
         success: true,
@@ -365,7 +367,7 @@ const getPostInsights = async (req, res) => {
     // getMediaInsights in service handles this if we pass mediaType.
     
     // 1. Fetch media basic info to get media_type
-    const accessToken = account.instagramAccessToken;
+    const accessToken = decrypt(account.instagramAccessToken);
     const mediaInfoRes = await axios.get(
       `https://graph.facebook.com/${META_GRAPH_VERSION}/${mediaId}?fields=media_type&access_token=${accessToken}`
     );

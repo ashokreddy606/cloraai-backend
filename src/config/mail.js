@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const logger = require('../utils/logger');
 require('dotenv').config();
 
 const transporter = nodemailer.createTransport({
@@ -18,9 +19,9 @@ const transporter = nodemailer.createTransport({
 // Verify connection configuration on startup
 transporter.verify((error, success) => {
     if (error) {
-        console.error('Nodemailer configuration error:', error.message);
+        logger.error('MAIL', 'Nodemailer configuration error', { error: error.message });
     } else {
-        console.log('Nodemailer is ready to send emails');
+        logger.info('MAIL', 'Nodemailer is ready to send emails');
     }
 });
 

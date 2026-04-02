@@ -20,7 +20,6 @@ beforeAll(async () => {
     process.env.NODE_ENV = 'test';
 
     // Import prisma AFTER setting DATABASE_URL
-    const prisma = require('../src/lib/prisma');
     // await prisma.$connect();
 });
 

@@ -8,7 +8,7 @@ const AUTH_TAG_LENGTH = 16;
 // Fallback to JWT_SECRET if missing to allow server to start, but log a warning.
 let SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY;
 if (!SECRET) {
-    console.warn('[CRYPTO] WARNING: TOKEN_ENCRYPTION_SECRET is missing. Falling back to JWT_SECRET. Please set a unique encryption key for production tokens.');
+    logger.warn('CRYPTO', 'TOKEN_ENCRYPTION_SECRET is missing. Falling back to JWT_SECRET. Please set a unique encryption key for production tokens.');
     SECRET = process.env.JWT_SECRET || 'temporary_fallback_secret_not_for_production';
 }
 
@@ -34,7 +34,7 @@ function encrypt(text) {
 
         return `${iv.toString('hex')}:${authTag}:${encrypted}`;
     } catch (error) {
-        console.error('[CRYPTO] Encryption failed:', error.message);
+        logger.error('CRYPTO', 'Encryption failed', { error: error.message });
         return text;
     }
 }
@@ -72,7 +72,7 @@ function decrypt(encryptedText) {
 
         return decrypted;
     } catch (error) {
-        console.error('[CRYPTO] Decryption failed:', error.message);
+        logger.error('CRYPTO', 'Decryption failed', { error: error.message });
         return encryptedText;
     }
 }

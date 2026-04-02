@@ -6,8 +6,8 @@ const { authenticate } = require('../middleware/auth');
 const { uploadVideoS3, uploadTempVideo, validateFileContent } = require('../middleware/upload');
 const checkUploadLimit = require('../middleware/checkUploadLimit');
 
-// OAuth Flows
-router.get('/initiate', instagramController.initiateAuth);
+// OAuth Flows (initiate requires auth to prevent account hijacking)
+router.get('/initiate', authenticate, instagramController.initiateAuth);
 router.get('/callback', instagramController.handleOAuthCallback);
 
 // Reel Upload (Synchronous/Reliable)

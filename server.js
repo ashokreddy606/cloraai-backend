@@ -358,8 +358,32 @@ app.use((req, res, next) => {
     next();
 });
 
-// Prevent Cross-Site Scripting (XSS)
-app.use(xss());
+// ── CSRF Origin Validation ─────────────────────────────────────────────────
+// Validates Origin/Referer header for state-changing requests from web clients.
+// Mobile apps using Bearer tokens are not vulnerable to CSRF.
+app.use((req, res, next) => {
+    // Skip for safe HTTP methods
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    // Skip for webhook paths (Meta sends POST without Origin)
+    if (req.path.startsWith('/webhook')) return next();
+    // Skip if request has Authorization Bearer header (mobile app — not CSRF-vulnerable)
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) return next();
+    // Skip in non-production (dev tools don't always send Origin)
+    if (process.env.NODE_ENV !== 'production') return next();
+
+    // For web admin panel: validate Origin header against CORS whitelist
+    const origin = req.headers.origin || req.headers.referer;
+    if (!origin) {
+        logger.warn('CSRF', 'Blocked request with no Origin/Referer header', { path: req.path, ip: req.ip });
+        return res.status(403).json({ error: 'Forbidden: Missing Origin header' });
+    }
+    const originHost = new URL(origin).origin;
+    if (!allowedOrigins.includes(originHost)) {
+        logger.warn('CSRF', `Blocked CSRF attempt from ${originHost}`, { path: req.path, ip: req.ip });
+        return res.status(403).json({ error: 'Forbidden: Invalid Origin' });
+    }
+    next();
+});
 
 // Prevent NoSQL Injection - allow dots for Meta Webhook parameters
 app.use(mongoSanitize({
@@ -426,9 +450,9 @@ app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')
 const globalLimiter = rateLimit(2000, 15);
 
 app.use((req, res, next) => {
-    // Skip rate limit for external webhooks only (Meta requires unthrottled delivery)
+    // Webhooks get separate, lighter rate limit (not unlimited)
     if (req.path.startsWith("/webhook")) {
-        return next();
+        return webhookLimiter(req, res, next);
     }
     return globalLimiter(req, res, next);
 });

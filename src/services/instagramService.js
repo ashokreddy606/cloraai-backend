@@ -152,10 +152,8 @@ class InstagramService {
                     logger.info('INSTAGRAM_SERVICE', `Account Insight: ${metric} (${period}) = ${value}`);
                 }
             } catch (error) {
-                const errorMsg = error.response?.data?.error?.message || error.message;
-                // Log granularly to identify which metrics are actually supported
                 if (!errorMsg.includes('must be one of') && !errorMsg.includes('incompatible with the metric')) {
-                    console.log(`[INSTAGRAM_SERVICE] Account Insight Failed: ${metric} (${period}) - ${errorMsg}`);
+                    logger.warn('INSTAGRAM_SERVICE', 'Account Insight partial failure', { metric, period, error: errorMsg });
                 }
             }
         }));
@@ -204,11 +202,11 @@ class InstagramService {
             });
             const data = response.data;
             const views = data.play_count || data.plays || 0;
-            if (views > 0) console.log(`[INSTAGRAM SUCCESS] Direct Play Count for ${mediaId}: ${views}`);
+            if (views > 0) logger.info('INSTAGRAM', `Direct Play Count fetched for ${mediaId}`, { views });
             return views;
         } catch (error) {
             const errorMsg = error.response?.data?.error?.message || error.message;
-            console.log(`[INSTAGRAM FAILED] Direct Play Count Failed for ${mediaId}: ${errorMsg}`);
+            logger.warn('INSTAGRAM', 'Direct Play Count lookup failed', { mediaId, error: errorMsg });
             return 0;
         }
     }
@@ -233,12 +231,12 @@ class InstagramService {
                     const value = response.data.data[0].values[0].value;
                     combinedInsights[metric] = value;
                     if (value > 0) {
-                        console.log(`[INSTAGRAM SUCCESS] Media Insight: ${mediaId} ${metric} = ${value}`);
+                        logger.info('INSTAGRAM', 'Media Insight fetched', { mediaId, metric, value });
                     }
                 }
             } catch (error) {
                 const errorMsg = error.response?.data?.error?.message || error.message;
-                console.log(`[INSTAGRAM FAILED] Media Insight: ${mediaId} ${metric} - ${errorMsg}`);
+                logger.warn('INSTAGRAM', 'Media Insight partial failure', { mediaId, metric, error: errorMsg });
             }
         }));
         

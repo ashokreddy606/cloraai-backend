@@ -76,8 +76,8 @@ const getStatus = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[Subscription] getStatus error:', error.message);
-    return res.status(500).json({ error: 'Failed to fetch subscription status' });
+    logger.error('SUBSCRIPTION', 'getStatus error', { error: error.message, userId: req.userId });
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -174,7 +174,7 @@ const verifyGooglePlayPurchase = async (req, res) => {
 
     return res.status(400).json({ success: false, error: 'Verification failed or purchase inactive' });
   } catch (error) {
-    console.error('[Subscription] G-Play Verify error:', error);
+    logger.error('SUBSCRIPTION', 'Google Play verify error', { error: error.message, userId, productId });
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 };
@@ -222,8 +222,8 @@ async function getPaymentHistory(req, res) {
       data: { history: enriched, total: history.length },
     });
   } catch (error) {
-    console.error('[Subscription] getPaymentHistory error:', error.message);
-    return res.status(500).json({ error: 'Failed to fetch payment history' });
+    logger.error('SUBSCRIPTION', 'getPaymentHistory error', { error: error.message, userId: req.userId });
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 }
 
@@ -276,7 +276,7 @@ async function cancelSubscription(req, res) {
       data: { subscriptionStatus: 'CANCELLED' },
     });
 
-    console.log(`[Subscription] cancelSubscription: User ${req.userId} cancelled (access until ${user.planEndDate?.toISOString()})`);
+    logger.info('SUBSCRIPTION', `User ${req.userId} cancelled subscription locally`, { userId: req.userId, accessUntil: user.planEndDate });
     await cache.clearUserCache(req.userId);
 
     return res.status(200).json({
@@ -285,7 +285,7 @@ async function cancelSubscription(req, res) {
       data: { accessUntil: user.planEndDate },
     });
   } catch (error) {
-    console.error('[Subscription] cancelSubscription error:', error.message);
-    return res.status(500).json({ error: 'Failed to cancel subscription. Please contact support.' });
+    logger.error('SUBSCRIPTION', 'cancelSubscription error', { error: error.message, userId: req.userId });
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 }

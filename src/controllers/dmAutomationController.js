@@ -113,11 +113,8 @@ const createRule = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Create rule error:', error);
-    res.status(500).json({
-      error: 'Failed to create rule',
-      message: error.message
-    });
+    logger.error('DM_AUTOMATION', 'Create rule error', { error: error.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -135,10 +132,8 @@ const getRules = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to fetch rules',
-      message: error.message
-    });
+    logger.error('DM_AUTOMATION', 'Get rules error', { error: error.message, userId: req.userId });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -208,10 +203,8 @@ const updateRule = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to update rule',
-      message: error.message
-    });
+    logger.error('DM_AUTOMATION', 'Update rule error', { error: error.message, userId: req.userId, ruleId: req.params.id });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -246,9 +239,9 @@ const deleteRule = async (req, res) => {
       // P2025 = Record to delete does not exist.
       // We ignore this as the desired outcome (record being gone) is still achieved.
       if (deleteError.code === 'P2025') {
-        console.info(`[DM_AUTOMATION] Rule ${id} already deleted.`);
+        logger.info('DM_AUTOMATION', `Rule ${id} already deleted`);
       } else {
-        console.warn('Delete rule warning:', deleteError.message);
+        logger.warn('DM_AUTOMATION', 'Delete rule db warning', { error: deleteError.message, ruleId: id });
       }
     }
 
@@ -257,10 +250,8 @@ const deleteRule = async (req, res) => {
       message: 'Rule deleted successfully'
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to delete rule',
-      message: error.message
-    });
+    logger.error('DM_AUTOMATION', 'Delete rule error', { error: error.message, userId: req.userId, ruleId: req.params.id });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
