@@ -6,8 +6,9 @@ const logger = require('./utils/logger');
 const prisma = require('./lib/prisma');
 const axios = require('axios');
 const { decryptToken, decrypt, encrypt } = require('./utils/cryptoUtils');
-const { createNotification } = require('./controllers/notificationController');
+// const { createNotification } = require('./controllers/notificationController'); // Deleted in refactor
 const { cache } = require('./utils/cache');
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -108,8 +109,9 @@ if (!s3ConfigData.hasAccessKey || !s3ConfigData.hasSecretKey) {
 // ─── Initializing Redis queue processors...
 console.log("🚀 CloraAI Worker running [Production Mode]");
 
-const { schedulerTasks, releaseLock } = require('./services/schedulerCron');
-logger.info('WORKER', "Scheduler cron configured successfully");
+// const { schedulerTasks, releaseLock } = require('./services/schedulerCron'); // Deleted in refactor
+logger.info('WORKER', "Worker initialized successfully");
+
 
 // ─── Core AI Processing Logic ───────────────────────────────────────────────
 const processCaptionJob = async (job) => {
@@ -219,12 +221,13 @@ const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
     concurrency: 2
 });
 
-// 4. Instagram Publishing Worker (Consolidated)
-const { processScheduledPost } = require('./workers/scheduledPostWorker');
-const instagramWorker = new Worker(QUEUES.INSTAGRAM, processScheduledPost, { 
-    connection, 
-    concurrency: 5 
-});
+// 4. Instagram Publishing Worker (DEPRECATED in refactor)
+// const { processScheduledPost } = require('./workers/scheduledPostWorker');
+// const instagramWorker = new Worker(QUEUES.INSTAGRAM, processScheduledPost, { 
+//     connection, 
+//     concurrency: 5 
+// });
+
 
 // 5. YouTube Upload Worker (Consolidated)
 const { processYoutubeUpload } = require('./workers/youtubeUploadWorker');
@@ -250,7 +253,8 @@ const attachErrorHandlers = (worker, name) => {
 attachErrorHandlers(aiWorker, 'AI');
 attachErrorHandlers(webhookWorker, 'Webhook');
 attachErrorHandlers(subscriptionWorker, 'Subscription');
-attachErrorHandlers(instagramWorker, 'Instagram');
+// attachErrorHandlers(instagramWorker, 'Instagram');
+
 attachErrorHandlers(youtubeWorker, 'YouTube');
 
 // Initializing additional automation
@@ -261,9 +265,8 @@ require('./workers/refreshInstagramTokenWorker');
 const gracefulShutdown = async (signal) => {
     logger.info('WORKER', `${signal} received. Shutting down worker gracefully...`);
 
-    if (schedulerTasks) schedulerTasks.forEach(t => t.stop());
-    await releaseLock('scheduler').catch(() => { });
-    await releaseLock('token-refresh').catch(() => { });
+    // schedulerTasks and releaseLock removed in refactor
+
 
     logger.info('WORKER', 'Draining active queue jobs...');
     // Pausing the workers ensures they stop picking up new jobs
