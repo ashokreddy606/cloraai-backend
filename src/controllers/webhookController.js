@@ -50,11 +50,11 @@ const verifyInstagramSignature = (rawBody, signatureHeader) => {
         );
 
         if (!isValid) {
-            console.log(`[SERIOUS DEBUG] Signature mismatch! Secret starts with: ${INSTAGRAM_APP_SECRET.slice(0, 4)}...`);
+            logger.warn('WEBHOOK:SECURITY', 'Webhook signature mismatch detected', { ip: 'check-server-logs' });
         }
         return isValid;
     } catch (err) {
-        console.error('[SERIOUS DEBUG] crypto.timingSafeEqual error:', err.message);
+        logger.error('WEBHOOK:SECURITY', 'timingSafeEqual comparison error', { error: err.message });
         return false;
     }
 };
@@ -84,24 +84,18 @@ const verifyWebhook = (req, res) => {
  * Robust fallback mechanism to prevent silent null failures.
  */
 const resolveInstagramAccount = async (entryId, commentOwnerId = null) => {
-    console.log(`\n=== 🔍 [DEBUG: ACCOUNT RESOLUTION] ===`);
-    console.log(`Attempting to map Payload ID -> Database Record`);
-    console.log(`Incoming entry.id: ${entryId}`);
-    if (commentOwnerId) console.log(`Fallback target ID: ${commentOwnerId}`);
-
     // Create a unique array of candidate IDs to check
     const candidateIds = [...new Set([entryId, commentOwnerId].filter(Boolean))];
+    logger.debug('WEBHOOK:RESOLVE', 'Resolving Instagram account', { candidateIds });
 
     for (const id of candidateIds) {
-        console.log(`[DB LOOKUP] Searching active accounts for ID: ${id}`);
         // 1. Try matching by instagramId (Instagram Business Account)
         let account = await prisma.instagramAccount.findFirst({
             where: { instagramId: id, isConnected: true }
         });
 
         if (account) {
-            console.log(`✅ [FOUND] Matched via instagramId: ${account.instagramId}`);
-            console.log(`==========================================\n`);
+            logger.debug('WEBHOOK:RESOLVE', 'Matched via instagramId', { instagramId: account.instagramId });
             return account;
         }
 
@@ -111,14 +105,12 @@ const resolveInstagramAccount = async (entryId, commentOwnerId = null) => {
         });
 
         if (account) {
-            console.log(`✅ [FOUND] Matched via pageId: ${account.pageId}`);
-            console.log(`==========================================\n`);
+            logger.debug('WEBHOOK:RESOLVE', 'Matched via pageId', { pageId: account.pageId });
             return account;
         }
     }
 
-    console.warn(`❌ [FAILED] No active Instagram account matched ANY candidate IDs: ${candidateIds.join(', ')}`);
-    console.log(`==========================================\n`);
+    logger.warn('WEBHOOK:RESOLVE', 'No active Instagram account matched any candidate IDs', { candidateIds });
     return null;
 };
 
@@ -126,24 +118,15 @@ const resolveInstagramAccount = async (entryId, commentOwnerId = null) => {
  * ROUTES: Handle Webhook Events (POST)
  */
 const handleWebhook = async (req, res) => {
-    // 🚨 ULTIMATE ENTRY LOG: Trap ANY hit to this function
-    console.log(`[WEBHOOK:ENTRY_POINT] Method: ${req.method}, Path: ${req.originalUrl || req.url}`);
-    
     const signatureHeader = req.headers['x-hub-signature-256'];
-    const ua = req.headers['user-agent'];
-    
-    console.log(`[WEBHOOK:ENTRY_POINT] Method: ${req.method}, Path: ${req.originalUrl || req.url}`);
-    console.log(`[WEBHOOK:DEBUG] Headers: Signature=${!!signatureHeader}, UA=${ua}`);
-    console.log(`[WEBHOOK:DEBUG] Payload Preview: ${JSON.stringify(req.body).substring(0, 500)}`);
-    
+
     logger.info('WEBHOOK:RECEIVED', 'Meta Webhook Event Received', { 
-        object: req.body.object,
-        entryCount: req.body.entry?.length 
+        path: req.originalUrl || req.url,
+        hasSignature: !!signatureHeader,
+        object: req.body?.object,
+        entryCount: req.body?.entry?.length 
     });
 
-    // Remove redudant declaration here
-    console.log(`[SERIOUS DEBUG] handleWebhook hit. hasRawBody: ${!!req.rawBody}, hasSignature: ${!!signatureHeader}`);
-    
     const isSignatureValid = verifyInstagramSignature(req.rawBody, signatureHeader);
     
     if (!isSignatureValid) {
@@ -156,7 +139,7 @@ const handleWebhook = async (req, res) => {
 
     try {
         const { body } = req;
-        console.log(`[WEBHOOK] Received ${body.object} event with ${body.entry?.length} entries`);
+        logger.info('WEBHOOK', `Processing ${body.object} event`, { entries: body.entry?.length });
         
         if (!appConfig.featureFlags.autoDMEnabled) {
             logger.info('WEBHOOK:SKIP', 'Auto-DM feature flag is disabled');
@@ -170,7 +153,7 @@ const handleWebhook = async (req, res) => {
         }
 
         for (const entry of body.entry) {
-            console.log(`[WEBHOOK] Processing entry ${entry.id}`);
+            logger.debug('WEBHOOK', `Processing entry ${entry.id}`);
             
             // A. Handle Comments (Direct Instagram OR Page Feed)
             const changes = entry.changes || [];
@@ -180,17 +163,14 @@ const handleWebhook = async (req, res) => {
 
                 if (isInstagramComment || isPageFeedComment) {
                     const comment = change.value;
-                    console.log('\n=== [WEBHOOK DEBUG: COMMENT EVENT] ===');
-                    console.dir(comment, { depth: null });
+                    logger.debug('WEBHOOK:COMMENT', 'Comment event received', { commentId: comment.id || comment.comment_id });
                     
                     const commentId = comment.id || comment.comment_id;
                     const mediaId = comment.media?.id || comment.media_id || comment.post_id;
                     const senderId = comment.from?.id;
                     const text = comment.text || comment.message;
 
-                    logger.info('COMMENT:DETECTED', `New comment: "${text?.substring(0, 20)}..."`, { commentId, mediaId, senderId });
-                    console.log(`[WEBHOOK] Detected comment from ${senderId} on media ${mediaId}`);
-                    console.log('========================================\n');
+                    logger.info('COMMENT:DETECTED', 'New comment on media', { commentId, mediaId, senderId });
 
                     if (!senderId || !commentId) {
                         logger.warn('COMMENT:INCOMPLETE', 'Skipping incomplete comment data', { commentId, senderId });
@@ -220,14 +200,12 @@ const handleWebhook = async (req, res) => {
                             instagramAccessToken: decryptedUserToken,
                             pageAccessToken: decryptedPageToken
                         });
-                        console.log("QUEUE JOB CREATED");
                         logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId} for user ${account.userId}`, { 
                             commentId, 
                             mediaId,
                             senderId
                         });
                     } else {
-                        console.warn(`[WEBHOOK:FAILED_ACCOUNT] Could not find account for ID: ${entry.id}. Payload Object: ${body.object}`);
                         logger.warn('WEBHOOK:ACCOUNT_NOT_FOUND', `Could not resolve Instagram account for entry/page ${entry.id}`, { entryId: entry.id });
                     }
                 }
@@ -264,7 +242,6 @@ const handleWebhook = async (req, res) => {
                     instagramAccessToken: decryptedUserToken,
                     pageAccessToken: decryptedPageToken
                 });
-                console.log("QUEUE JOB CREATED");
                 logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId} for user ${account.userId}`, { 
                     messageId, 
                     senderId 

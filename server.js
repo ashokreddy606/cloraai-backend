@@ -78,21 +78,8 @@ const webhookController = require('./src/controllers/webhookController');
 // Initialize Express app
 const app = express();
 
-console.log("[VERSION] SERVER VERSION: FORENSIC_X_RAY_ACTIVE");
-
-// 🚨 ULTIMATE DEBUG: Global Request Auditor
-// This is the absolute first thing that runs for EVERY request.
-app.use((req, res, next) => {
-    // Log EVERY SINGLE request for forensic tracing
-    console.log(`[AUDITOR] ${req.method} ${req.originalUrl || req.url} from ${req.ip}`);
-    
-    if (req.method === 'POST') {
-        console.log(`[AUDITOR:POST] Headers: ${JSON.stringify(req.headers)}`);
-    } else if (req.url && (req.url.includes('webhook') || req.url.includes('fb'))) {
-        console.log(`[AUDITOR:WEBHOOK] Detected: ${req.method} ${req.url}`);
-    }
-    next();
-});
+// HTML-encode helper for safe template rendering (prevents XSS)
+const escapeHtml = (str) => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
 // ─── Debug Routes ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
@@ -103,19 +90,12 @@ app.get("/test", (req, res) => {
     res.send("Backend API is working");
 });
 
-app.get("/health", (req, res) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date() });
-});
-
-// Diagnostic route for Webhook IP/Domain visibility
+// Webhook diagnostic (production-safe — no header logging)
 app.get("/api/v1/webhook-test", (req, res) => {
-    console.log("[WEBHOOK_DIAGNOSTIC] Hit from IP:", req.ip);
-    console.log("[WEBHOOK_DIAGNOSTIC] Headers:", req.headers);
     res.status(200).json({ 
         success: true, 
         message: 'Webhook diagnostic endpoint is reachable!',
-        yourIp: req.ip,
-        userAgent: req.headers['user-agent']
+        yourIp: req.ip
     });
 });
 
@@ -153,7 +133,8 @@ app.get('/youtube-success', (req, res) => {
 });
 
 app.get('/youtube-error', (req, res) => {
-    const message = req.query.message || 'An unexpected error occurred during authentication.';
+    const rawMessage = req.query.message || 'An unexpected error occurred during authentication.';
+    const message = escapeHtml(rawMessage);
     res.status(200).send(`
         <!DOCTYPE html>
         <html>
@@ -172,12 +153,11 @@ app.get('/youtube-error', (req, res) => {
             <div class="card">
                 <h1>Connection Failed</h1>
                 <p>${message}</p>
-                <a href="cloraai://youtube-error?message=${encodeURIComponent(message)}" class="btn">Retry in App</a>
+                <a href="cloraai://youtube-error?message=${encodeURIComponent(rawMessage)}" class="btn">Retry in App</a>
             </div>
             <script>
-                // Automatically attempt to redirect back to the app after a short delay
                 setTimeout(function() {
-                    window.location.href = "cloraai://youtube-error?message=${encodeURIComponent(message)}";
+                    window.location.href = "cloraai://youtube-error?message=${encodeURIComponent(rawMessage)}";
                 }, 1500);
             </script>
         </body>
@@ -218,7 +198,8 @@ app.get('/instagram-success', (req, res) => {
 });
 
 app.get('/instagram-error', (req, res) => {
-    const message = req.query.message || 'An unexpected error occurred during Instagram authentication.';
+    const rawMessage = req.query.message || 'An unexpected error occurred during Instagram authentication.';
+    const message = escapeHtml(rawMessage);
     res.status(200).send(`
         <!DOCTYPE html>
         <html>
@@ -237,12 +218,11 @@ app.get('/instagram-error', (req, res) => {
             <div class="card">
                 <h1>Connection Failed</h1>
                 <p>${message}</p>
-                <a href="cloraai://instagram-error?message=${encodeURIComponent(message)}" class="btn">Retry in App</a>
+                <a href="cloraai://instagram-error?message=${encodeURIComponent(rawMessage)}" class="btn">Retry in App</a>
             </div>
             <script>
-                // Automatically attempt to redirect back to the app after a short delay
                 setTimeout(function() {
-                    window.location.href = "cloraai://instagram-error?message=${encodeURIComponent(message)}";
+                    window.location.href = "cloraai://instagram-error?message=${encodeURIComponent(rawMessage)}";
                 }, 1500);
             </script>
         </body>
@@ -298,7 +278,6 @@ if (process.env.NODE_ENV === 'production') {
 const webhookJsonMiddleware = express.json({
     verify: (req, res, buf) => {
         if (req.originalUrl && req.originalUrl.includes('/webhook')) {
-            console.log(`[SERIOUS DEBUG] Captured rawBody (${buf.length} bytes) for ${req.originalUrl}`);
             req.rawBody = buf; 
         }
     },
@@ -310,23 +289,19 @@ const webhookJsonMiddleware = express.json({
 // 🔹 Webhook Verification (GET)
 // Meta Dashboard needs this to verify the endpoint
 app.get(['/webhook', '/api/v1/webhook', '/api/webhook'], (req, res) => {
-    console.log(`[SERIOUS DEBUG] Handshake GET Check: hub.mode=${req.query['hub.mode']} hub.challenge=${req.query['hub.challenge']} hub.verify_token=${req.query['hub.verify_token']}`);
-    
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
     if (mode && token) {
         if (mode === 'subscribe' && token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
-            console.log('[SERIOUS DEBUG] Handshake Verified Successfully');
+            logger.info('WEBHOOK', 'Handshake verified successfully');
             res.status(200).send(challenge);
         } else {
-            console.log('[SERIOUS DEBUG] Handshake Token Mismatch');
+            logger.warn('WEBHOOK', 'Handshake token mismatch');
             res.sendStatus(403);
         }
     } else {
-        // Diagnostic mode
-        console.log('[SERIOUS DEBUG] Diagnostic Mode GET Hit');
         res.json({ status: 'active', message: 'Ready to receive webhooks', endpoint: req.originalUrl });
     }
 });
@@ -383,10 +358,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configure Express to parse query parameters literally (not nested)
-// This is critical for Meta Webhooks which use dotted parameters like hub.mode
-app.set('query parser', 'simple');
-
 // Prevent Cross-Site Scripting (XSS)
 app.use(xss());
 
@@ -422,20 +393,18 @@ app.use(cors({
         // Allow explicitly whitelisted origins
         if (allowedOrigins.includes(origin)) return callback(null, true);
 
-        // Broaden matching for ALL development/local environments
-        // This is necessary for physical devices connecting to a local machine's IP
-        const isLocal = origin.startsWith('http://localhost') || 
-                        origin.startsWith('http://127.0.0.1') || 
-                        origin.startsWith('http://192.168.') || 
-                        origin.startsWith('http://10.');
-        
-        if (isLocal) {
-            return callback(null, true);
-        }
+        // Only allow local network origins in development
+        if (process.env.NODE_ENV !== 'production') {
+            const isLocal = origin.startsWith('http://localhost') || 
+                            origin.startsWith('http://127.0.0.1') || 
+                            origin.startsWith('http://192.168.') || 
+                            origin.startsWith('http://10.');
+            if (isLocal) return callback(null, true);
 
-        // Allow Expo dev domains
-        if (origin.includes('expo.dev') || origin.includes('ngrok')) {
-            return callback(null, true);
+            // Allow Expo dev domains in development only
+            if (origin.includes('expo.dev') || origin.includes('ngrok')) {
+                return callback(null, true);
+            }
         }
 
         logger.warn('CORS', `Origin ${origin} blocked by security policy`);
@@ -446,8 +415,8 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Internal-Token']
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static files
 app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')));
@@ -457,8 +426,8 @@ app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')
 const globalLimiter = rateLimit(2000, 15);
 
 app.use((req, res, next) => {
-    // Skip rate limit for health check and external webhooks
-    if (req.path.startsWith("/webhook") || req.path === "/health") {
+    // Skip rate limit for external webhooks only (Meta requires unthrottled delivery)
+    if (req.path.startsWith("/webhook")) {
         return next();
     }
     return globalLimiter(req, res, next);
@@ -468,9 +437,8 @@ app.use((req, res, next) => {
 const tracing = require('./src/middleware/tracing');
 app.use(tracing);
 
-// Automatic Subscription Expiry Check
+// Subscription Expiry Check — only runs on versioned API routes (not health, webhooks, etc)
 const checkSubscriptionExpiry = require('./src/middleware/checkSubscriptionExpiry');
-app.use(checkSubscriptionExpiry);
 
 // Prometheus Metrics Middleware
 const promBundle = require('express-prom-bundle');
@@ -560,20 +528,18 @@ const maintenanceMiddleware = require('./src/middleware/maintenance');
 app.use(maintenanceMiddleware); // Block non-essential routes if maintenance mode is ON
 app.use('/auth', authRoutes); // Root level auth for OAuth callbacks
 app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/instagram', instagramRoutes);
-app.use('/api/v1/analytics', analyticsRoutes);
-app.use('/api/v1/subscription', subscriptionRoutes);
-app.use('/api/v1/dm-automation', dmAutomationRoutes);
-app.use('/api/v1/referral', referralRoutes);
+app.use('/api/v1/instagram', checkSubscriptionExpiry, instagramRoutes);
+app.use('/api/v1/analytics', checkSubscriptionExpiry, analyticsRoutes);
+app.use('/api/v1/subscription', checkSubscriptionExpiry, subscriptionRoutes);
+app.use('/api/v1/dm-automation', checkSubscriptionExpiry, dmAutomationRoutes);
+app.use('/api/v1/referral', checkSubscriptionExpiry, referralRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/admin-plans', adminPlanRoutes);
-app.use('/api/v1/youtube', youtubeRoutes);
+app.use('/api/v1/youtube', checkSubscriptionExpiry, youtubeRoutes);
 app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
-app.use('/api/v1/user', userRoutes);
-app.use('/api/v1/upload', uploadRoutes);
+app.use('/api/v1/user', checkSubscriptionExpiry, userRoutes);
+app.use('/api/v1/upload', checkSubscriptionExpiry, uploadRoutes);
 app.use('/api/v1/account', accountRoutes);
-// Webhook routes removed (Razorpay cleanup)
-console.log('YouTube routes mounted at /api/v1/youtube');
 
 // ─── Webhook Endpoints (Legacy Definitions Handled Above) ───────────────────
 

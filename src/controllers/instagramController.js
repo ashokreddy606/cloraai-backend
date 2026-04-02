@@ -13,6 +13,7 @@ const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { notifyPostSuccess } = require('../services/pushNotificationService');
 const { instagramQueue, enqueueJob } = require('../utils/queue');
+const jwt = require('jsonwebtoken');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://cloraai.com';
@@ -53,9 +54,13 @@ const initiateAuth = (req, res) => {
       return res.redirect(`${FRONTEND_URL}/instagram-error?message=Server+Configuration+Error`);
     }
 
-    // Use state to pass userId back to the callback
-    const state = String(userId);
-    const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${state}`;
+    // SECURITY: Sign state with JWT to prevent forgery (matches YouTube OAuth pattern)
+    const signedState = jwt.sign(
+      { userId, type: 'instagram_oauth' },
+      process.env.JWT_SECRET,
+      { expiresIn: '10m' }
+    );
+    const authUrl = `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scope}&response_type=code&state=${signedState}`;
 
     logger.info('INSTAGRAM', `Initiating OAuth for user ${userId}. URL: ${authUrl.replace(APP_ID, 'REDACTED')}`);
     logger.info('INSTAGRAM', `Mode: ${isMobileApp ? 'JSON' : 'Redirect'}`);
@@ -93,11 +98,19 @@ const handleOAuthCallback = async (req, res) => {
   }
 
   try {
-    // Extract userId from state as per requirement
+    // SECURITY: Verify JWT-signed state to prevent account hijacking
     const stateValue = req.query.state;
-    const connectionUserId = stateValue || req.userId;
+    let connectionUserId;
+    try {
+      const decoded = jwt.verify(stateValue, process.env.JWT_SECRET);
+      if (decoded.type !== 'instagram_oauth') throw new Error('Invalid state type');
+      connectionUserId = decoded.userId;
+    } catch (stateErr) {
+      logger.warn('INSTAGRAM', `OAuth state JWT verification failed: ${stateErr.message}`);
+      return res.redirect(`${FRONTEND_URL}/instagram-error?message=Invalid+or+expired+state`);
+    }
 
-    logger.info('INSTAGRAM', `Processing callback. State: "${stateValue}" (Type: ${typeof stateValue}), Fallback ID: ${req.userId}, Final ID: ${connectionUserId}`);
+    logger.info('INSTAGRAM', `Processing callback. Verified userId: ${connectionUserId}`);
 
     if (!connectionUserId) {
       logger.error('INSTAGRAM', `Callback failed: Missing User Context. Query keys: ${Object.keys(req.query)}`);

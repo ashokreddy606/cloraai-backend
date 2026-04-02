@@ -12,7 +12,7 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
 const dayjs = require('dayjs');
-const User = require('../../models/User');
+// Mongoose User model removed — all operations now use Prisma
 const transporter = require('../config/mail');
 const relativeTime = require('dayjs/plugin/relativeTime');
 dayjs.extend(relativeTime);
@@ -291,6 +291,25 @@ const getCurrentUser = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const { username, phoneNumber, profileImage, bio } = req.body;
+
+    // SECURITY: Validate and check username uniqueness to prevent impersonation
+    if (username) {
+      // Sanitize: only allow alphanumeric, underscores, 3-30 chars
+      if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+        return res.status(400).json({ 
+          error: 'Invalid username', 
+          message: 'Username must be 3-30 characters and contain only letters, numbers, and underscores' 
+        });
+      }
+
+      const existingUser = await prisma.user.findFirst({
+        where: { username, id: { not: req.userId } }
+      });
+      if (existingUser) {
+        return res.status(409).json({ error: 'Username already taken', message: 'This username is already in use by another account' });
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id: req.userId },
       data: { 
@@ -359,7 +378,7 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
     
     // For security, don't reveal if user exists
     if (!user) {
@@ -368,17 +387,22 @@ const forgotPassword = async (req, res) => {
 
     // Generate secure token
     const token = crypto.randomBytes(32).toString('hex');
-    user.resetPasswordToken = token;
-    user.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const resetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    await user.save();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetPasswordToken: token,
+        resetPasswordExpires: resetExpires,
+      },
+    });
 
     const resetUrl = `${process.env.BASE_URL}/reset-password/${token}`;
 
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
         <h2 style="color: #4F46E5; text-align: center;">CloraAI</h2>
-        <h3 style="color: #333 text-align: center;">Password Reset Request</h3>
+        <h3 style="color: #333; text-align: center;">Password Reset Request</h3>
         <p style="color: #666; font-size: 16px; line-height: 1.5;">
           You requested a password reset for your CloraAI account. Click the button below to reset it:
         </p>
@@ -394,7 +418,6 @@ const forgotPassword = async (req, res) => {
       </div>
     `;
 
-    // Use the unified sendEmail helper (falling back to Resend API if SMTP is blocked)
     await sendEmail({
       to: email,
       subject: 'Password Reset Request - CloraAI',
@@ -403,7 +426,7 @@ const forgotPassword = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Reset link sent to your email.' });
   } catch (error) {
-    console.error('Forgot password error:', error.message);
+    logger.error('AUTH', 'Forgot password error:', { error: error.message });
     res.status(500).json({ success: false, message: 'Failed to send reset email. Please check server email configuration.' });
   }
 };
@@ -417,27 +440,31 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
     }
 
-    const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: Date.now() }
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken: token,
+        resetPasswordExpires: { gt: new Date() }
+      }
     });
 
     if (!user) {
       return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
     }
 
-    // Hash new password
-    user.password = await hashPassword(password);
-    
-    // Clear reset fields
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-
-    await user.save();
+    // Hash new password and clear reset fields atomically
+    const hashedPassword = await hashPassword(password);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpires: null,
+      },
+    });
 
     res.status(200).json({ success: true, message: 'Password reset successful. You can now login.' });
   } catch (error) {
-    console.error('Reset password error:', error);
+    logger.error('AUTH', 'Reset password error:', { error: error.message });
     res.status(500).json({ success: false, message: 'Failed to reset password' });
   }
 };

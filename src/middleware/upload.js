@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { appConfig } = require('../config');
+const logger = require('../utils/logger');
 
 const { s3Client, awsConfig } = require('../config/aws');
 
@@ -109,9 +110,10 @@ const validateFileContent = async (req, res, next) => {
         }
 
         if (!type || !ALLOWED_MIME_TYPES.includes(type.mime)) {
-            // RELAXED FOR YOUTUBE UPLOADS: If file-type fails but multer detected a valid video mime, allow it
-            if (ALLOWED_MIME_TYPES.includes(req.file.mimetype)) {
-                console.warn(`[SECURITY] file-type detection failed for ${req.file.originalname} (mimetype: ${req.file.mimetype}), but allowing based on Multer mimetype.`);
+            // RESTRICTED FALLBACK: Only allow video/* types when file-type detection fails
+            // This handles edge cases with some video containers that file-type can't identify
+            if (req.file.mimetype.startsWith('video/') && ALLOWED_MIME_TYPES.includes(req.file.mimetype)) {
+                logger.warn('SECURITY', `file-type detection failed for ${req.file.originalname}, allowing video fallback`, { mimetype: req.file.mimetype });
                 req.file.verifiedMimeType = req.file.mimetype;
                 return next();
             }
@@ -126,7 +128,7 @@ const validateFileContent = async (req, res, next) => {
         req.file.verifiedMimeType = type.mime;
         next();
     } catch (error) {
-        console.error('[SECURITY] File validation error:', error);
+        logger.error('SECURITY', 'File validation error', { error: error.message });
         next(error);
     }
 };

@@ -94,7 +94,7 @@ const getMetrics = async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Admin metrics error:', error);
+        logger.error('ADMIN', 'Metrics error', { error: error.message });
         res.status(500).json({ error: 'Failed to fetch metrics', message: error.message });
     }
 };
@@ -472,7 +472,7 @@ const adminRefundPayment = async (req, res) => {
 
         // Refund logic for Google Play should be handled via Google Play Console/API service.
         // Razorpay refund logic removed.
-        console.log(`[Admin] Refund requested for payment ${paymentId}. Manual action required in payment console.`);
+        logger.info('ADMIN', `Refund requested for payment ${paymentId}. Manual action required.`);
 
         // Downgrade user plan immediately — they got their money back
         await prisma.user.update({
@@ -487,8 +487,8 @@ const adminRefundPayment = async (req, res) => {
         logAdminAction(req.userId, 'ADMIN_REFUND', paymentId);
         res.json({
             success: true,
-            message: `Refund initiated for ₹${((amount || refund.amount) / 100).toFixed(2)}. User downgraded to FREE.`,
-            data: { refundId: refund.id, status: refund.status },
+            message: `Refund marked for payment ${paymentId}. User downgraded to FREE. Please process the refund manually via Google Play Console.`,
+            data: { paymentId, status: 'manual_refund_required' },
         });
     } catch (error) {
         res.status(500).json({ error: 'Failed to process refund', message: error.message });
@@ -1018,7 +1018,7 @@ const sendDealNotifications = async (req, res) => {
 
         res.json({ success: true, message: `Sent notifications to ${notifications.length} users` });
     } catch (error) {
-        console.error('Send Notifications error:', error);
+        logger.error('ADMIN', 'Billing Dashboard Error', { error: error.message });
         res.status(500).json({ error: 'Failed to send notifications', message: error.message });
     }
 };

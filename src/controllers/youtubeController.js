@@ -539,19 +539,19 @@ exports.getChannelAnalytics = async (req, res) => {
         const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth: client });
 
         // Fetch channel metadata and lifetime stats
-        console.log('[YOUTUBE DEBUG] Fetching channel info...');
+        logger.info('YOUTUBE', 'Fetching channel info...');
         const channelRes = await youtube.channels.list({
             part: 'snippet,statistics,contentDetails',
             mine: true,
             auth: client // Explicitly pass client
         }).catch(err => {
-            console.error('[YOUTUBE DEBUG] channels.list failed:', err.response?.data || err.message);
+            logger.error('YOUTUBE', 'channels.list failed', { error: err.response?.data || err.message });
             throw new Error(`YouTube Data API failed: ${err.message}`);
         });
 
         const channels = channelRes.data.items || [];
         if (channels.length === 0) {
-            console.warn('[YOUTUBE DEBUG] No channels found');
+            logger.warn('YOUTUBE', 'No channels found');
             return res.status(404).json({ error: 'No YouTube channel found' });
         }
 
@@ -560,11 +560,7 @@ exports.getChannelAnalytics = async (req, res) => {
         const channelId = channel.id;
         const stats = channel.statistics;
 
-        console.log('[YOUTUBE DEBUG] Using channel:', {
-            id: channelId,
-            title: channel.snippet?.title,
-            views: stats.viewCount
-        });
+        logger.info('YOUTUBE', 'Using channel', { id: channelId, title: channel.snippet?.title });
 
         // Set date ranges
         const today = dayjs().format('YYYY-MM-DD');
@@ -580,7 +576,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 endDate: today,
                 metrics: 'views',
             }).catch(e => {
-                console.error('[YOUTUBE DEBUG] 28d query error:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', '28d analytics query error', { error: e.message });
                 return { data: { rows: [[0]] } };
             }),
             youtubeAnalytics.reports.query({
@@ -589,7 +585,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 endDate: today,
                 metrics: 'views',
             }).catch(e => {
-                console.error('[YOUTUBE DEBUG] 90d query error:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', '90d analytics query error', { error: e.message });
                 return { data: { rows: [[0]] } };
             }),
             youtubeAnalytics.reports.query({
@@ -601,7 +597,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 maxResults: 5,
                 sort: '-views',
             }).catch(e => {
-                console.error('[YOUTUBE DEBUG] Top content error:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', 'Top content query error', { error: e.message });
                 return { data: { rows: [] } };
             }),
             youtubeAnalytics.reports.query({
@@ -612,7 +608,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 dimensions: 'day',
                 sort: 'day',
             }).catch(e => {
-                console.error('[YOUTUBE DEBUG] Daily views error:', e.response?.data || e.message);
+                logger.warn('YOUTUBE', 'Daily views query error', { error: e.message });
                 return { data: { rows: [] } };
             })
         ]);
@@ -644,7 +640,7 @@ exports.getChannelAnalytics = async (req, res) => {
                         publishedAt: v.snippet.publishedAt,
                     };
                 }).sort((a, b) => b.viewCount - a.viewCount);
-            } catch (e) { console.warn('[YOUTUBE DEBUG] Video meta fetch failed', e.message); }
+            } catch (e) { logger.warn('YOUTUBE', 'Video meta fetch failed', { error: e.message }); }
         }
 
         // Update user stats in DB for cache
@@ -656,7 +652,7 @@ exports.getChannelAnalytics = async (req, res) => {
                 youtubeVideoCount: parseInt(stats.videoCount || 0),
                 youtubeLastSyncedAt: new Date(),
             }
-        }).catch(e => console.warn('Prisma update failed', e.message));
+        }).catch(e => logger.warn('YOUTUBE', 'Prisma stats update failed', { error: e.message }));
 
         const responsePayload = {
             success: true,
@@ -676,11 +672,7 @@ exports.getChannelAnalytics = async (req, res) => {
             topVideos,
         };
 
-        console.log('[YOUTUBE DEBUG] Final Payload:', {
-            views28d: responsePayload.stats.views28d,
-            views90d: responsePayload.stats.views90d,
-            lifetime: responsePayload.stats.lifetimeViews
-        });
+        logger.info('YOUTUBE', 'Analytics response prepared', { views28d: responsePayload.stats.views28d, views90d: responsePayload.stats.views90d });
 
         res.json(responsePayload);
 
@@ -688,7 +680,7 @@ exports.getChannelAnalytics = async (req, res) => {
         const errorData = error.response?.data || error;
         const errorMsg = typeof errorData === 'string' ? errorData : JSON.stringify(errorData);
 
-        console.error('[YOUTUBE CRITICAL ERROR]', error);
+        logger.error('YOUTUBE', 'getChannelAnalytics critical error', { error: error.message, stack: error.stack });
 
         if (errorMsg.includes('unauthorized_client')) {
             logger.error('YOUTUBE', 'CRITICAL: YouTube Unauthorized Client error. Please verify YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, and YOUTUBE_REDIRECT_URI in GCP Console.', { error: errorMsg });
@@ -752,8 +744,7 @@ exports.getVideoAnalytics = async (req, res) => {
             filters: `video==${videoId}`,
             sort: 'day',
         }).catch(e => {
-            console.error('[YOUTUBE ANALYTICS] video daily stats failed:', e.response?.data || e.message);
-            logger.warn('YOUTUBE', 'Video daily stats error', e.message);
+            logger.warn('YOUTUBE', 'Video daily stats error', { error: e.message });
             return { data: { rows: [] } };
         });
 

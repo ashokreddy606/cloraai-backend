@@ -117,6 +117,7 @@ const sendResponse = (res, status, data) => {
 };
 
 module.exports = {
+  generateToken,
   generateTokens,
   verifyToken,
   hashPassword,

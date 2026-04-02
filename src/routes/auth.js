@@ -49,8 +49,10 @@ router.post('/verify-email', authController.verifyEmail);
 router.post('/logout', authenticate, authController.logout);
 router.delete('/account', authenticate, authController.deleteAccount);
 
-// One-time admin promotion endpoint (requires secret key)
+// Admin promotion endpoint (requires authentication + admin role + secret key)
 router.post('/make-admin',
+    authenticate,
+    require('../middleware/auth').requireAdmin,
     validate(require('zod').object({ body: require('zod').object({ email: require('zod').string().email(), secretKey: require('zod').string().min(1) }) })),
     authController.makeAdmin
 );
