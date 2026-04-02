@@ -1,19 +1,25 @@
 const Redis = require('ioredis');
 const logger = require('./logger');
 
-// Use a separate connection for locks to avoid blocking on queue processing
-const redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    maxRetriesPerRequest: null,
-    retryStrategy(times) {
-        // Stop retrying after 3 attempts if we're not in production to avoid hanging dev startup
-        if (process.env.NODE_ENV !== 'production' && times > 3) return null;
-        return Math.min(times * 50, 2000);
-    }
-});
+const redisUrl = process.env.REDIS_URL;
+const isPlaceholder = !redisUrl || redisUrl.startsWith('CHANGE_ME');
+let redisClient;
 
-redisClient.on('error', (err) => {
-    logger.warn('REDIS_LOCK', 'Redis Lock connection error', { error: err.message });
-});
+if (redisUrl && !isPlaceholder && process.env.NODE_ENV !== 'test') {
+    redisClient = new Redis(redisUrl, {
+        maxRetriesPerRequest: null,
+        retryStrategy(times) {
+            if (process.env.NODE_ENV !== 'production' && times > 3) return null;
+            return Math.min(times * 100, 3000);
+        }
+    });
+
+    redisClient.on('error', (err) => {
+        logger.warn('REDIS_LOCK', 'Redis Lock connection error', { error: err.message });
+    });
+} else {
+    logger.warn('REDIS_LOCK', 'Redis connection missing. Distributed locking disabled (expected in local dev).');
+}
 
 /**
  * Acquire a distributed lock.

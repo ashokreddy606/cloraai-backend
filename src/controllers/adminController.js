@@ -1477,6 +1477,15 @@ const getYouTubeUserAnalytics = async (req, res) => {
     }
 };
 
+// ─── ADMIN STUBS (Phase 3 Roadmap) ───────────────────────────────────
+// These functions are exported but not yet implemented.
+const getScheduledPosts = async (req, res) => res.status(501).json({ error: 'Not Implemented', message: 'Scheduling dashboard is coming in Phase 3.' });
+const deleteScheduledPost = async (req, res) => res.status(501).json({ error: 'Not Implemented' });
+const pauseSchedulingGlobally = async (req, res) => res.status(501).json({ error: 'Not Implemented' });
+const retryFailedPost = async (req, res) => res.status(501).json({ error: 'Not Implemented' });
+const getCaptions = async (req, res) => res.status(501).json({ error: 'Not Implemented' });
+const deleteCaption = async (req, res) => res.status(501).json({ error: 'Not Implemented' });
+
 module.exports = {
     getMetrics,
     getSystemMetrics,   // NEW: Phase 3 system observability

@@ -4,10 +4,12 @@ const logger = require('../utils/logger');
 const redisUrl = process.env.REDIS_URL;
 let redis;
 
-if (redisUrl && process.env.NODE_ENV !== 'test') {
+const isPlaceholder = !redisUrl || redisUrl.startsWith('CHANGE_ME');
+
+if (redisUrl && !isPlaceholder && process.env.NODE_ENV !== 'test') {
   redis = new Redis(redisUrl, {
     maxRetriesPerRequest: null, // Required for BullMQ
-    retryStrategy: (times) => Math.min(times * 50, 2000),
+    retryStrategy: (times) => Math.min(times * 100, 3000),
     reconnectOnError: (err) => {
       const targetError = 'READONLY';
       if (err.message.includes(targetError)) {
@@ -19,8 +21,23 @@ if (redisUrl && process.env.NODE_ENV !== 'test') {
 
   redis.on('connect', () => logger.info('REDIS', 'Connected to Redis server'));
   redis.on('error', (err) => logger.error('REDIS', 'Redis connection error:', { error: err.message }));
-} else if (process.env.NODE_ENV === 'production') {
-  logger.error('REDIS', 'REDIS_URL is missing in production!');
+} else {
+  // Use a NO-OP mock client to prevent crashes in dev
+  const msg = isPlaceholder ? 'REDIS_URL is a placeholder/missing' : 'REDIS bypassed in tests';
+  logger.warn('REDIS', `${msg}. Using mock client (features like Queues/Rate-limiting will be inactive).`);
+  
+  redis = {
+    on: () => { },
+    once: () => { },
+    get: async () => null,
+    set: async () => 'OK',
+    del: async () => 0,
+    call: async () => null,
+    status: 'ready',
+    options: {},
+    quit: async () => 'OK',
+    disconnect: () => { }
+  };
 }
 
 module.exports = redis;

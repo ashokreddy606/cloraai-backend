@@ -23,9 +23,14 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Initialize Mongoose (requested for Instagram Analytics)
-mongoose.connect(process.env.DATABASE_URL)
-    .then(() => logger.info('SERVER', 'Mongoose connected successfully'))
-    .catch((err) => logger.error('SERVER', 'Mongoose connection error:', { error: err.message }));
+const dbUrl = (process.env.DATABASE_URL || '').trim();
+if (dbUrl && !dbUrl.startsWith('CHANGE_ME')) {
+    mongoose.connect(dbUrl)
+        .then(() => logger.info('SERVER', 'Mongoose connected successfully'))
+        .catch((err) => logger.error('SERVER', 'Mongoose connection error:', { error: err.message }));
+} else {
+    logger.warn('SERVER', 'Mongoose skipped: DATABASE_URL is placeholder or missing.');
+}
 
 const { rateLimit } = require('./src/middleware/auth');
 

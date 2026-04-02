@@ -33,13 +33,13 @@ const validateEnv = () => {
     const allVars = [...CRITICAL_ENV_VARS, ...OPTIONAL_FEATURE_VARS];
     for (const key of allVars) {
         const val = process.env[key];
-        if (val && val.startsWith('CHANGE_ME')) {
-            const msg = `${key} still has placeholder value. Set a real value before running.`;
+        if (val && (val.startsWith('CHANGE_ME') || val === '')) {
+            const msg = `${key} still has placeholder value or is empty. Set a real value before running.`;
             if (isProduction) {
                 logger.error('ENV_VALIDATOR', `CRITICAL: ${msg}`);
                 throw new Error(msg);
             } else {
-                logger.warn('ENV_VALIDATOR', msg);
+                logger.warn('ENV_VALIDATOR', `DEVELOPMENT WARNING: ${msg}`);
             }
         }
     }

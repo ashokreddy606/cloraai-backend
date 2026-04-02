@@ -16,13 +16,21 @@ const QUEUES = {
     COMMENT: 'instagramAutomationQueue'
 };
 
-const aiQueue = new Queue(QUEUES.AI_TASKS, { connection });
-const webhookQueue = new Queue(QUEUES.WEBHOOKS, { connection });
-const subscriptionQueue = new Queue(QUEUES.SUBSCRIPTIONS, { connection });
-const instagramQueue = new Queue(QUEUES.INSTAGRAM, { connection });
-const youtubeQueue = new Queue(QUEUES.YOUTUBE, { connection });
-const replyQueue = new Queue(QUEUES.REPLY, { connection });
-const commentQueue = new Queue(QUEUES.COMMENT, { connection });
+// Initialize Queues safely
+let aiQueue, webhookQueue, subscriptionQueue, instagramQueue, youtubeQueue, replyQueue, commentQueue;
+
+if (connection) {
+    const queueOptions = { connection };
+    aiQueue = new Queue(QUEUES.AI_TASKS, queueOptions);
+    webhookQueue = new Queue(QUEUES.WEBHOOKS, queueOptions);
+    subscriptionQueue = new Queue(QUEUES.SUBSCRIPTIONS, queueOptions);
+    instagramQueue = new Queue(QUEUES.INSTAGRAM, queueOptions);
+    youtubeQueue = new Queue(QUEUES.YOUTUBE, queueOptions);
+    replyQueue = new Queue(QUEUES.REPLY, queueOptions);
+    commentQueue = new Queue(QUEUES.COMMENT, queueOptions);
+} else {
+    logger.warn('QUEUE', 'Redis connection missing. Queues are disabled (expected in local dev without Redis).');
+}
 
 // Helper function to add jobs
 const enqueueJob = async (queue, jobName, data, options = {}) => {
