@@ -10,33 +10,26 @@ const defaultAppConfig = {
     offerPriceMonthly: null,
     offerPriceYearly: null,
     freeFeatures: [
-        "5 AI captions per day",
-        "1 IG DM rule, 5 YT rules",
-        "1 Video/Reel upload per day"
+        "1 Instagram Automation Rule",
+        "5 YouTube Automation Rules",
+        "Standard Analytics & Charts"
     ],
     proFeatures: [
-        "Unlimited AI Captions",
-        "Unlimited Auto-DM Rules",
-        "AI Brand Deal Detection",
-        "Full Year Content Calendar",
-        "Advanced Analytics + Graphs",
+        "Unlimited Automation Rules",
+        "Premium Leads Export (CSV)",
+        "Deep Analytics + Historic Graphs",
         "24/7 Priority Support & Beta"
     ],
     maintenanceMode: false,
-    minAppVersion: '1.0.0',
+    minAppVersion: '1.1.0',
     featureFlags: {
-        aiCaptionsEnabled: true,
         autoDMEnabled: true,
-        reelSchedulerEnabled: true,
-        brandDealsEnabled: true,
         youtubeEnabled: true,
         youtubeAutomationEnabled: true,
         youtubeCommentRepliesEnabled: true,
-        emergencyStopPosts: false,
+        emergencyStopAutomation: false,
     },
     aiLimits: {
-        freeDailyCaptions: 5,
-        proDailyCaptions: 100,
         freeDailyDMs: 10,
         proDailyDMs: 500,
         aiTemperature: 0.7,

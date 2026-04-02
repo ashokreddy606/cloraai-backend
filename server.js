@@ -60,17 +60,12 @@ process.on('unhandledRejection', (reason) => {
 const authRoutes = require('./src/routes/auth');
 const instagramRoutes = require('./src/routes/instagram');
 const analyticsRoutes = require('./src/routes/analytics');
-const captionRoutes = require('./src/routes/caption');
 const subscriptionRoutes = require('./src/routes/subscription');
-const schedulerRoutes = require('./src/routes/scheduler');
 const dmAutomationRoutes = require('./src/routes/dmAutomation');
-const brandDealRoutes = require('./src/routes/brandDeal');
 const referralRoutes = require('./src/routes/referral');
 const adminRoutes = require('./src/routes/admin');
 const adminPlanRoutes = require('./src/routes/adminPlan');
 const userRoutes = require('./src/routes/user');
-const calendarRoutes = require('./src/routes/calendar');
-const notificationRoutes = require('./src/routes/notification');
 // Webhook routes removed (Razorpay cleanup)
 const youtubeRoutes = require('./src/routes/youtube');
 const uploadRoutes = require('./src/routes/upload');
@@ -567,16 +562,11 @@ app.use('/auth', authRoutes); // Root level auth for OAuth callbacks
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/instagram', instagramRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
-app.use('/api/v1/captions', captionRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
-app.use('/api/v1/scheduler', schedulerRoutes);
 app.use('/api/v1/dm-automation', dmAutomationRoutes);
-app.use('/api/v1/brand-deals', brandDealRoutes);
 app.use('/api/v1/referral', referralRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/admin-plans', adminPlanRoutes);
-app.use('/api/v1/calendar', calendarRoutes);
-app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/youtube', youtubeRoutes);
 app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
 app.use('/api/v1/user', userRoutes);
@@ -612,16 +602,8 @@ if (process.env.NODE_ENV !== 'test') {
     try {
         const { Worker } = require('bullmq');
         const { connection, QUEUES } = require('./src/utils/queue');
-        const { processScheduledPost } = require('./src/workers/scheduledPostWorker');
         const { processYoutubeUpload } = require('./src/workers/youtubeUploadWorker');
 
-        // 1. Instagram Publishing Worker
-        new Worker(QUEUES.INSTAGRAM, processScheduledPost, { 
-            connection, 
-            concurrency: 5 
-        }).on('failed', (job, err) => {
-            logger.error('WORKER', `Instagram publish job ${job.id} failed`, { error: err.message });
-        });
 
         // 2. YouTube Upload Worker
         new Worker(QUEUES.YOUTUBE, processYoutubeUpload, { 
@@ -637,8 +619,6 @@ if (process.env.NODE_ENV !== 'test') {
         require('./src/workers/refreshInstagramTokenWorker');
         require('./src/workers/youtubeWorker'); // YouTube comment automation
         
-        // 4. Cron Schedulers
-        require('./src/services/schedulerCron');
 
         logger.info('SERVER', '✅ All background workers initialized (unified process).');
     } catch (err) {

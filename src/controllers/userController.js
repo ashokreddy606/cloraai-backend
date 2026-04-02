@@ -82,4 +82,45 @@ const deleteAccount = async (req, res) => {
     }
 };
 
-module.exports = { deleteAccount };
+const getNotifications = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const notifications = await prisma.notification.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            take: 50 // Limit to last 50 for mobile performance
+        });
+
+        res.status(200).json({
+            success: true,
+            data: { notifications }
+        });
+    } catch (error) {
+        logger.error('NOTIFICATION', 'Get notifications error:', error);
+        res.status(500).json({ error: 'Failed to fetch notifications' });
+    }
+};
+
+const markNotificationRead = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.userId;
+
+        const notification = await prisma.notification.findUnique({ where: { id } });
+        if (!notification || notification.userId !== userId) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+
+        await prisma.notification.update({
+            where: { id },
+            data: { read: true }
+        });
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        logger.error('NOTIFICATION', 'Mark notification read error:', error);
+        res.status(500).json({ error: 'Failed to update notification' });
+    }
+};
+
+module.exports = { deleteAccount, getNotifications, markNotificationRead };
