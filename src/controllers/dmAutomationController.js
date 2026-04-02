@@ -7,7 +7,7 @@ const createRule = async (req, res) => {
     const { 
       keyword, autoReplyMessage, reelId, appendLinks, link1, link2, link3, link4,
       isAI, triggerType, replyType, publicReplies, productName, productUrl, 
-      productDescription, productImage, mustFollow,
+      productDescription, mustFollow,
       customFollowEnabled, customFollowHeader, customFollowSubtext, 
       followButtonText, followedButtonText, dmButtonText
     } = req.body;
@@ -91,7 +91,6 @@ const createRule = async (req, res) => {
         productName: productName || null,
         productUrl: productUrl || null,
         productDescription: productDescription || null,
-        productImage: productImage || null,
         mustFollow: !!mustFollow,
         customFollowEnabled: !!customFollowEnabled,
         customFollowHeader: customFollowHeader || null,
@@ -150,7 +149,7 @@ const updateRule = async (req, res) => {
     const { 
       keyword, autoReplyMessage, isActive, reelId, appendLinks, link1, link2, link3, link4,
       isAI, triggerType, replyType, publicReplies, productName, productUrl, 
-      productDescription, productImage, mustFollow,
+      productDescription, mustFollow,
       customFollowEnabled, customFollowHeader, customFollowSubtext, 
       followButtonText, followedButtonText, dmButtonText
     } = req.body;
@@ -187,7 +186,6 @@ const updateRule = async (req, res) => {
         ...(productName !== undefined && { productName: productName || null }),
         ...(productUrl !== undefined && { productUrl: productUrl || null }),
         ...(productDescription !== undefined && { productDescription: productDescription || null }),
-        ...(productImage !== undefined && { productImage: productImage || null }),
         ...(mustFollow !== undefined && { mustFollow: !!mustFollow }),
         ...(customFollowEnabled !== undefined && { customFollowEnabled: !!customFollowEnabled }),
         ...(customFollowHeader !== undefined && { customFollowHeader: customFollowHeader || null }),

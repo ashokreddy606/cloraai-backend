@@ -374,7 +374,7 @@ const uploadAndPostReel = async (req, res) => {
       // Advanced Automation
       automationEnabled,
       isAI, triggerType, replyType, productName, productUrl, 
-      productDescription, productImage, mustFollow, dmButtonText,
+      productDescription, mustFollow, dmButtonText,
       automationKeyword, automationReply, automationAppendLinks, automationLinks,
       publicReplies,
       customFollowEnabled, customFollowHeader, customFollowSubtext, 
@@ -423,7 +423,6 @@ const uploadAndPostReel = async (req, res) => {
         productName: productName || null,
         productUrl: productUrl || null,
         productDescription: productDescription || null,
-        productImage: productImage || null,
         mustFollow: mustFollow === 'true' || mustFollow === true,
         dmButtonText: dmButtonText || null,
         publicReplies: publicReplies || null,

@@ -323,7 +323,6 @@ model ScheduledPost {
   productName           String?
   productUrl            String?
   productDescription    String?
-  productImage          String?
   mustFollow            Boolean @default(false)
   dmButtonText          String?
   publicReplies         String? // JSON string
@@ -403,7 +402,6 @@ model DMAutomation {
   productName      String?
   productUrl       String?
   productDescription String?
-  productImage     String?
   
   mustFollow       Boolean @default(false)
 
