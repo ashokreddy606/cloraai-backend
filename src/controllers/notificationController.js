@@ -86,3 +86,67 @@ exports.markAsRead = async (req, res) => {
       res.status(500).json({ error: 'Failed to update notification' });
     }
 };
+
+/**
+ * Delete Single Notification
+ */
+exports.deleteNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+
+    await prisma.notification.deleteMany({
+      where: { id, userId }
+    });
+
+    res.status(200).json({ success: true, message: 'Notification deleted' });
+  } catch (error) {
+    logger.error('NOTIFICATION', 'Delete notification error:', error);
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+};
+
+/**
+ * Clear All Notifications for User
+ */
+exports.clearNotifications = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    await prisma.notification.deleteMany({
+      where: { userId }
+    });
+
+    res.status(200).json({ success: true, message: 'All notifications cleared' });
+  } catch (error) {
+    logger.error('NOTIFICATION', 'Clear notifications error:', error);
+    res.status(500).json({ error: 'Failed to clear notifications' });
+  }
+};
+
+/**
+ * Bulk Delete Notifications
+ */
+exports.deleteBulkNotifications = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No IDs provided for deletion' });
+    }
+
+    const { count } = await prisma.notification.deleteMany({
+      where: {
+        userId,
+        id: { in: ids }
+      }
+    });
+
+    logger.info('NOTIFICATION', `Bulk delete complete: ${count} notifications removed for user ${userId}`);
+    res.status(200).json({ success: true, count });
+  } catch (error) {
+    logger.error('NOTIFICATION', 'Bulk delete error:', error);
+    res.status(500).json({ error: 'Failed to delete notifications' });
+  }
+};

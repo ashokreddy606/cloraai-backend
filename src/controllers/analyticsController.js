@@ -4,6 +4,7 @@ const instagramService = require('../services/instagramService');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { cache } = require('../utils/cache');
+const { decrypt } = require('../utils/cryptoUtils');
 const { instagramBreaker } = require('./instagramController');
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -57,19 +58,28 @@ const getDashboard = async (req, res) => {
 
     if (!latestSnapshot || snapshotDate < oneHourAgo || forceRefresh) {
       try {
-        const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
+        const decryptedToken = decrypt(account.instagramAccessToken);
+        if (!decryptedToken) {
+          logger.warn('ANALYTICS', `Skipping stats fetch: Unable to decrypt token for user ${req.userId}`);
+          throw new Error('Token decryption failed');
+        }
+
+        const stats = await instagramService.getAccountStats(account.instagramId, decryptedToken);
+
+        // Decrypt page token if present, otherwise use decrypted user token
+        const pToken = account.pageAccessToken ? (decrypt(account.pageAccessToken) || decryptedToken) : decryptedToken;
 
         // Try getting account-level insights first (more reliable for total views)
         const accountInsights = await instagramService.getAccountInsights(
           account.instagramId, 
-          account.pageAccessToken || account.instagramAccessToken,
+          pToken,
           'day'
         );
 
         // EXTRA: Fetch 28-day insights to capture long-term views (matches user screenshot "41 views in last 30 days")
         const accountInsights30d = await instagramService.getAccountInsights(
           account.instagramId,
-          account.pageAccessToken || account.instagramAccessToken,
+          pToken,
           'days_28'
         );
 
@@ -80,7 +90,7 @@ const getDashboard = async (req, res) => {
         totalImpressions = Math.max(accountInsights.impressions || 0, accountInsights30d.impressions || 0, totalReach);
 
         // Always fetch media insights for a "live" feel and aggregate them
-        const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+        const media = await instagramService.getUserMedia(account.instagramId, decryptedToken);
         let totalMediaReach = 0;
         let totalMediaImpressions = 0;
         let totalPlays = 0;
@@ -92,11 +102,11 @@ const getDashboard = async (req, res) => {
           // Fetch plays independently (direct field) and insights
           const videoItems = topMedia.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS');
           const videoPlayCounts = await Promise.all(
-            videoItems.map(m => instagramService.getVideoViewCount(m.id, account.instagramAccessToken))
+            videoItems.map(m => instagramService.getVideoViewCount(m.id, decryptedToken))
           );
           const directPlays = videoPlayCounts.reduce((sum, v) => sum + v, 0);
 
-          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, account.instagramAccessToken, m.media_type)));
+          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, decryptedToken, m.media_type)));
           
           totalMediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
           totalPlays = insights.reduce((sum, ins) => sum + (ins.plays || 0), 0) + directPlays;
@@ -130,7 +140,12 @@ const getDashboard = async (req, res) => {
     // ALWAYS fetch live summary stats for "real-time" dashboard feel
     let liveStats = { followers_count: 0, follows_count: 0, media_count: 0 };
     try {
-      liveStats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
+      const decryptedToken = decrypt(account.instagramAccessToken);
+      if (decryptedToken) {
+        liveStats = await instagramService.getAccountStats(account.instagramId, decryptedToken);
+      } else {
+        throw new Error('Encryption error');
+      }
     } catch (e) {
       console.warn('Live stats fetch failed, falling back to snapshot:', e.message);
       liveStats = {

@@ -179,6 +179,27 @@ cron.schedule('*/2 * * * *', async () => {
 });
 logger.info('WORKER', '✅ Comment poller cron scheduled (every 2 minutes)');
 
+// ─── Notification Cleanup Cron (Every 24 hours at 00:00) ───────────────────
+cron.schedule('0 0 * * *', async () => {
+    try {
+        const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        logger.info('CRON', 'Running 24h notification cleanup...', { threshold });
+        
+        const deleted = await prisma.notification.deleteMany({
+            where: {
+                createdAt: {
+                    lt: threshold
+                }
+            }
+        });
+        
+        logger.info('CRON', `Cleanup complete: ${deleted.count} notifications removed`);
+    } catch (err) {
+        logger.error('CRON', 'Notification cleanup failed', { error: err.message });
+    }
+});
+logger.info('WORKER', '✅ Notification cleanup scheduled (daily at 00:00)');
+
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 const gracefulShutdown = async (signal) => {
     logger.info('WORKER', `${signal} received. Shutting down worker gracefully...`);
