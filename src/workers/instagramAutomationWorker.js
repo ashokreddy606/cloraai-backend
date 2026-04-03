@@ -82,8 +82,33 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             }
             logger.info('WORKER:FORCE_RULE', `Using forced rule ${forceRuleId} (Follow Request bypass)`, { jobId: job.id });
             
-            // Critical: Turn off mustFollow so we actually send the link this time!
-            matchedRule.mustFollow = false;
+            const apiTokenForVerification = pageAccessToken || instagramAccessToken;
+            try {
+                // strict API validation to verify if the user is ACTUALLY following before sending the product link
+                const profileUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${senderId}?fields=name,is_user_follow_business&access_token=${apiTokenForVerification}`;
+                const profileRes = await axios.get(profileUrl);
+                const isFollowing = profileRes.data.is_user_follow_business;
+                
+                if (isFollowing) {
+                    logger.info('WORKER:FOLLOW_VERIFIED', `User ${senderId} is following. Proceeding.`, { jobId: job.id });
+                    // Critical: Turn off mustFollow so we actually send the link this time!
+                    matchedRule.mustFollow = false;
+                } else {
+                    logger.info('WORKER:FOLLOW_DENIED', `User ${senderId} clicked 'I followed' but isn't following.`, { jobId: job.id });
+                    
+                    // Provide feedback that they need to actually follow!
+                    const notifyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForVerification}`;
+                    await axios.post(notifyUrl, {
+                        recipient: { id: senderId },
+                        message: { text: "I just checked, and it looks like you aren't following the page yet! 😅 Please hit Follow on my profile first, then click the button again to unlock your link." }
+                    });
+                    return { success: true, bypassed: false };
+                }
+            } catch (err) {
+                 logger.warn('WORKER:FOLLOW_CHECK_ERROR', `Could not verify follower status for ${senderId}. Defaulting to grant access.`, { error: err.message });
+                 // If API fails (e.g. scope missing), default to trusting the user so we don't break the funnel during Meta outages
+                 matchedRule.mustFollow = false;
+            }
         } else {
             const rules = await prisma.dMAutomation.findMany({
                 where: { userId, isActive: true }
