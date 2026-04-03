@@ -53,7 +53,9 @@ const getDashboard = async (req, res) => {
     let totalImpressions = 0;
     let totalReach = 0;
 
-    if (!latestSnapshot || latestSnapshot.snapshotDate < oneHourAgo || forceRefresh) {
+    const snapshotDate = latestSnapshot?.snapshotDate ? new Date(latestSnapshot.snapshotDate) : new Date(0);
+
+    if (!latestSnapshot || snapshotDate < oneHourAgo || forceRefresh) {
       try {
         const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
 

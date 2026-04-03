@@ -25,10 +25,14 @@ if (!EMAIL_USER || !EMAIL_PASS || EMAIL_USER === 'CHANGE_ME' || EMAIL_PASS === '
 } else {
     transporter.verify((error, success) => {
         if (error) {
-            logger.error('MAIL', 'Nodemailer configuration error', { 
-                error: error.message,
-                suggestion: 'Ensure you are using a Gmail App Password if 2FA is enabled. See: https://myaccount.google.com/apppasswords'
-            });
+            console.error('❌ MAIL CONFIG ERROR:', error.message);
+            if (error.responseCode === 535) {
+                logger.error('MAIL', 'Authentication failed: Invalid credentials.', { 
+                    tip: 'If using Gmail, ensure you have 2FA enabled and are using an APP PASSWORD, not your regular password.'
+                });
+            } else {
+                logger.error('MAIL', 'Nodemailer configuration error', { error: error.message });
+            }
         } else {
             logger.info('MAIL', 'Nodemailer is ready to send emails');
         }

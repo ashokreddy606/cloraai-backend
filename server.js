@@ -6,7 +6,6 @@ const hpp = require('hpp');
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 const compression = require('compression');
-const mongoose = require('mongoose');
 require('dotenv').config();
 const logger = require('./src/utils/logger');
 const prisma = require('./src/lib/prisma');
@@ -16,15 +15,8 @@ const path = require('path');
 
 validateEnv();
 
-// Initialize Mongoose (requested for Instagram Analytics)
-const dbUrl = (process.env.DATABASE_URL || '').trim();
-if (dbUrl && !dbUrl.startsWith('CHANGE_ME')) {
-    mongoose.connect(dbUrl)
-        .then(() => logger.info('SERVER', 'Mongoose connected successfully'))
-        .catch((err) => logger.error('SERVER', 'Mongoose connection error:', { error: err.message }));
-} else {
-    logger.warn('SERVER', 'Mongoose skipped: DATABASE_URL is placeholder or missing.');
-}
+// Initialize Prisma
+// (Now using shared instance from src/lib/prisma.js)
 
 const { rateLimit } = require('./src/middleware/auth');
 

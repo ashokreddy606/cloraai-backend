@@ -252,20 +252,19 @@ model AnalyticsSnapshot {
   followers         Int?
   following         Int?
   mediaCount        Int?
-  engagementRate    Float   @default(0)
-  impressions       Int     @default(0)
-  reach             Int     @default(0)
-  unfollowed        Int     @default(0)
+  engagementRate    Float?   @default(0)
+  impressions       Int?     @default(0)
+  reach             Int?     @default(0)
+  unfollowed        Int?     @default(0)
   topPostId         String?
-  topPostEngagement Float   @default(0)
+  topPostEngagement Float?   @default(0)
 
-  snapshotDate DateTime @default(now())
-  createdAt    DateTime @default(now())
+  snapshotDate DateTime? @default(now())
+  createdAt    DateTime? @default(now())
 
   @@index([userId])
   @@index([snapshotDate])
-  @@index([userId, snapshotDate])
-
+  @@unique([userId, snapshotDate])
   @@map("instagramanalytics")
 }
 
