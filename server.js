@@ -603,6 +603,7 @@ if (process.env.NODE_ENV !== 'test') {
         // 3. Instagram Analytics, Automation & Token Refresh Workers
         require('./src/workers/instagramAnalyticsWorker');
         require('./src/workers/instagramAutomationWorker');
+        require('./src/workers/instagramCommentPollWorker'); // New Comment Polling
         require('./src/workers/refreshInstagramTokenWorker');
         require('./src/workers/youtubeWorker'); // YouTube comment automation
         
