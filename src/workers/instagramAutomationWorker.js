@@ -43,7 +43,7 @@ const handleMetaError = async (error, userId, instagramId) => {
  * WORKER: Process Comments & DMs
  */
 const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
-    const { mediaId, commentId, commentText, messageId: dmMessageId, text: dmText, instagramId, senderId, instagramAccessToken, pageAccessToken, userId } = job.data;
+    const { mediaId, commentId, commentText, messageId: dmMessageId, text: dmText, instagramId, senderId, instagramAccessToken, pageAccessToken, userId, forceRuleId } = job.data;
     
     // Standardize identification
     const isDM = !!dmMessageId;
