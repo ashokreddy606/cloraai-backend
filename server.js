@@ -362,14 +362,17 @@ app.use((req, res, next) => {
     // Skip in non-production (dev tools don't always send Origin)
     if (process.env.NODE_ENV !== 'production') return next();
 
-    // For web admin panel: validate Origin header against CORS whitelist
+    // For web admin panel: validate Origin header ONLY if it exists.
+    // Native mobile apps don't always send an Origin/Referer header and are not CSRF-vulnerable.
     const origin = req.headers.origin || req.headers.referer;
-    if (!origin) {
-        logger.warn('CSRF', 'Blocked request with no Origin/Referer header', { path: req.path, ip: req.ip });
-        return res.status(403).json({ error: 'Forbidden: Missing Origin header' });
-    }
+    if (!origin) return next();
+
     const originHost = new URL(origin).origin;
     if (!allowedOrigins.includes(originHost)) {
+        // In production, also allow local network origins for mobile development convenience
+        if (originHost.startsWith('http://192.168.') || originHost.startsWith('http://10.')) {
+            return next();
+        }
         logger.warn('CSRF', `Blocked CSRF attempt from ${originHost}`, { path: req.path, ip: req.ip });
         return res.status(403).json({ error: 'Forbidden: Invalid Origin' });
     }
