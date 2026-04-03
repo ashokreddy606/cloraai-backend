@@ -45,6 +45,9 @@ const AI_MAX_CONCURRENT = parseInt(process.env.AI_MAX_CONCURRENT || '25', 10);
 // Redis key for global concurrency tracking
 const REDIS_CONCURRENT_KEY = 'ai:slots:active';
 
+// Local counter for additional thread-safety and fast-exit checks
+let activeAICalls = 0; 
+
 /**
  * Acquire a concurrent AI slot (Distributed).
  * Uses Redis INCR to count across all server instances.
