@@ -4,6 +4,7 @@ const axios = require('axios');
 const logger = require('../utils/logger');
 const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { google } = require('googleapis');
+const pushNotificationService = require('../services/pushNotificationService');
 const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
 const dayjs = require('dayjs');
@@ -394,6 +395,11 @@ exports.createRule = async (req, res) => {
                 link4: link4 || null
             }
         });
+        // Send confirmation notification
+        pushNotificationService.sendAutomationActiveNotification(req.userId, 'youtube', keyword).catch(err => 
+            logger.warn('YOUTUBE', 'Failed to send activation notification', { userId: req.userId, error: err.message })
+        );
+
         res.status(201).json(rule);
     } catch (error) {
         // P2002 = Prisma unique constraint, 11000 = MongoDB native duplicate key
@@ -428,6 +434,13 @@ exports.updateRule = async (req, res) => {
                 link4: link4 !== undefined ? (link4 || null) : existing.link4
             }
         });
+        // Send confirmation notification if rule was re-activated
+        if (isActive === true && existing.isActive === false) {
+            pushNotificationService.sendAutomationActiveNotification(req.userId, 'youtube', updated.keyword).catch(err => 
+                logger.warn('YOUTUBE', 'Failed to send reactivation notification', { userId: req.userId, error: err.message })
+            );
+        }
+
         res.json(updated);
     } catch (error) {
         logger.error('YOUTUBE', 'updateRule', error);

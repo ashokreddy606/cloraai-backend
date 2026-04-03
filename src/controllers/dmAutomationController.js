@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { appConfig } = require('../config');
 const logger = require('../utils/logger');
+const pushNotificationService = require('../services/pushNotificationService');
 
 // Create DM Automation Rule
 const createRule = async (req, res) => {
@@ -107,6 +108,11 @@ const createRule = async (req, res) => {
       }
     });
 
+    // Send confirmation notification
+    pushNotificationService.sendAutomationActiveNotification(req.userId, 'instagram', keyword || 'AI').catch(err => 
+      logger.warn('DM_AUTOMATION', 'Failed to send activation notification', { userId: req.userId, error: err.message })
+    );
+
     res.status(201).json({
       success: true,
       data: {
@@ -196,6 +202,13 @@ const updateRule = async (req, res) => {
         ...(link4 !== undefined && { link4: link4 || null })
       }
     });
+
+    // Send confirmation notification if rule was re-activated
+    if (isActive === true && existingRule.isActive === false) {
+      pushNotificationService.sendAutomationActiveNotification(req.userId, 'instagram', rule.keyword || 'AI').catch(err => 
+        logger.warn('DM_AUTOMATION', 'Failed to send reactivation notification', { userId: req.userId, error: err.message })
+      );
+    }
 
     res.status(200).json({
       success: true,
