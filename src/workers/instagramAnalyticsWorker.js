@@ -72,36 +72,17 @@ const performDailySnapshots = async () => {
                 const milestoneHit = milestones.find(m => currentFollowers >= m && prevFollowers < m);
 
                 if (milestoneHit) {
-                    // Use Prisma for the User push token
-                    const user = await prisma.user.findUnique({ where: { id: account.userId.toString() }, select: { pushToken: true } });
-                    if (user?.pushToken) {
-                        await pushNotificationService.notifyAnalyticsMilestone(user.pushToken, 'Followers', milestoneHit);
-                        await prisma.notification.create({
-                            data: {
-                                userId: account.userId.toString(),
-                                type: 'milestone',
-                                title: '🎯 Goal Reached!',
-                                body: `You just hit ${milestoneHit.toLocaleString()} followers on Instagram. Keep it up!`,
-                            }
-                        });
-                    }
+                    await pushNotificationService.notifyAnalyticsMilestone(account.userId.toString(), 'Followers', milestoneHit).catch(err => 
+                        logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send milestone notification', { error: err.message })
+                    );
                 }
 
                 // 6. Check for Viral Alert (Based on Reach/Impressions growth)
                 // If reach is > 10,000 and has grown more than 50% since yesterday
                 if (totalReach > 10000 && (!prevSnapshot || totalReach > prevSnapshot.reach * 1.5)) {
-                    const user = await prisma.user.findUnique({ where: { id: account.userId.toString() }, select: { pushToken: true } });
-                    if (user?.pushToken) {
-                        await pushNotificationService.notifyViralAlert(user.pushToken, 'your content', totalReach);
-                        await prisma.notification.create({
-                            data: {
-                                userId: account.userId.toString(),
-                                type: 'milestone',
-                                title: '🔥 Viral Alert!',
-                                body: `Your content is taking off with over ${totalReach.toLocaleString()} reach! Ensure your automations are active.`,
-                            }
-                        });
-                    }
+                    await pushNotificationService.notifyViralAlert(account.userId.toString(), 'your content', totalReach).catch(err => 
+                        logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send viral alert notification', { error: err.message })
+                    );
                 }
             } catch (error) {
                 logger.error('WORKER', `Failed to process snapshot for user ${account.userId}:`, { error: error.message });

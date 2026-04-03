@@ -43,18 +43,9 @@ const refreshTokens = async () => {
                 threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
                 
                 if (account.tokenExpiresAt <= threeDaysFromNow) {
-                    const user = await prisma.user.findUnique({ where: { id: account.userId.toString() }, select: { pushToken: true } });
-                    if (user?.pushToken) {
-                        await pushNotificationService.notifyTokenExpired(user.pushToken);
-                        await prisma.notification.create({
-                            data: {
-                                userId: account.userId.toString(),
-                                type: 'critical',
-                                title: '⚠️ Connection Expired!',
-                                body: 'Your Instagram connection has expired. All automations are PAUSED. Tap to reconnect now.',
-                            }
-                        });
-                    }
+                    await pushNotificationService.notifyTokenExpired(account.userId.toString()).catch(err => 
+                        logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send token expiry notification', { error: err.message, userId: account.userId })
+                    );
                 }
             }
         }

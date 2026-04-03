@@ -284,26 +284,10 @@ async function processUser(user) {
                     }).catch(err => logger.error('YOUTUBE_WORKER', `Failed to save reply record`, err));
 
                     // Notify User (YouTube Win)
-                    const userFull = await prisma.user.findUnique({ where: { id: user.id }, select: { pushToken: true } });
-                    if (userFull?.pushToken) {
-                        try {
-                            await pushNotificationService.notifyAutomationWin(
-                                userFull.pushToken,
-                                authorDisplayName || 'Someone',
-                                'comment',
-                                'YouTube'
-                            );
-                            await prisma.notification.create({
-                                data: {
-                                    userId: user.id,
-                                    type: 'automation',
-                                    title: '📺 YouTube Reply Sent!',
-                                    body: `Bot replied to @${authorDisplayName || 'user'}'s comment on your video.`,
-                                }
-                            });
-                        } catch (err) {
-                            logger.warn('YOUTUBE_WORKER:NOTIFY_ERROR', 'Failed to send YouTube win notification', { error: err.message, userId: user.id });
-                        }
+                    try {
+                        await pushNotificationService.notifyYouTubeWin(user.id, authorDisplayName || 'Someone');
+                    } catch (err) {
+                        logger.warn('YOUTUBE_WORKER:NOTIFY_ERROR', 'Failed to send YouTube win notification', { error: err.message, userId: user.id });
                     }
                 }
             } else {

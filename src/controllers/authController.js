@@ -92,21 +92,10 @@ const register = catchAsync(async (req, res, next) => {
       });
       
       // Notify the inviter
-      const inviter = await tx.user.findUnique({ where: { id: referredById }, select: { pushToken: true, username: true } });
-      if (inviter?.pushToken) {
-        try {
-          await pushNotificationService.notifyReferralSuccess(inviter.pushToken, username || email.split('@')[0]);
-          await tx.notification.create({
-            data: {
-              userId: referredById,
-              type: 'referral',
-              title: '💰 Referral Reward!',
-              body: `@${username || email.split('@')[0]} just signed up using your link. You've earned a reward!`,
-            }
-          });
-        } catch (err) {
-          logger.warn('AUTH:NOTIFY_ERROR', 'Failed to send referral notification', { error: err.message, referrerId: referredById });
-        }
+      if (inviter) {
+        await pushNotificationService.notifyReferralSuccess(referredById, username || email.split('@')[0]).catch(err => 
+          logger.warn('AUTH:NOTIFY_ERROR', 'Failed to send referral notification', { error: err.message, referrerId: referredById })
+        );
       }
     }
     return newUser;

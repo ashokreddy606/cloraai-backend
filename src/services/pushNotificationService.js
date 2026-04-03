@@ -117,6 +117,40 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
 };
 
 /**
+ * Helper to both Save to DB and Send Push
+ */
+const createAndSendNotification = async (userId, { type, title, body, data = {}, options = {} }) => {
+    try {
+        // 1. Create DB record first (so it's in history even if push fails)
+        const notification = await prisma.notification.create({
+            data: {
+                userId,
+                type,
+                title,
+                body,
+                read: false,
+            }
+        });
+
+        // 2. Fetch User's Push Token
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { pushToken: true }
+        });
+
+        // 3. Send Push if token exists
+        if (user?.pushToken) {
+            await sendPushNotification(user.pushToken, title, body, { ...data, notificationId: notification.id }, options);
+        }
+
+        return notification;
+    } catch (err) {
+        logger.error('PUSH', 'Failed to create and send notification', { userId, title, error: err.message });
+        throw err;
+    }
+};
+
+/**
  * Convenience: notify user of scheduled post success
  */
 const notifyPostSuccess = async (pushToken, postTitle) => {
@@ -155,86 +189,138 @@ const notifySubscriptionRenewal = async (pushToken, daysLeft) => {
 /**
  * Convenience: analytics milestone
  */
-const notifyAnalyticsMilestone = async (pushToken, milestone, value) => {
-    return sendPushNotification(
-        pushToken,
-        '🎯 Milestone Reached!',
-        `You've hit ${value.toLocaleString()} ${milestone}! Keep growing with CloraAI.`,
-        { type: 'ANALYTICS_MILESTONE', milestone, value }
-    );
+const notifyAnalyticsMilestone = async (userId, milestone, value) => {
+    return createAndSendNotification(userId, {
+        type: 'growth',
+        title: '🎯 Milestone Reached!',
+        body: `You've hit ${value.toLocaleString()} ${milestone}! Keep growing with CloraAI.`,
+        data: { milestone, value }
+    });
 };
 
 /**
  * Convenience: Automation Win (Keyword Match)
  */
-const notifyAutomationWin = async (pushToken, username, keyword) => {
-    return sendPushNotification(
-        pushToken,
-        '🚀 New Link Sent!',
-        `@${username} commented '${keyword}' on your reel. Bot replied and DM'd the product.`,
-        { type: 'AUTOMATION_WIN', username, keyword }
-    );
+const notifyAutomationWin = async (userId, username, keyword) => {
+    return createAndSendNotification(userId, {
+        type: 'automation',
+        title: '🚀 New Link Sent!',
+        body: `@${username} commented '${keyword}' on your reel. Bot replied and DM'd the product.`,
+        data: { username, keyword }
+    });
 };
 
 /**
  * Convenience: Follow-Gate Block
  */
-const notifyFollowGateBlock = async (pushToken, username) => {
-    return sendPushNotification(
-        pushToken,
-        '🔒 Almost there!',
-        `@${username} commented but doesn't follow you. Bot asked them to follow first.`,
-        { type: 'FOLLOW_GATE_BLOCK', username }
-    );
+const notifyFollowGateBlock = async (userId, username) => {
+    return createAndSendNotification(userId, {
+        type: 'automation',
+        title: '🔒 Almost there!',
+        body: `@${username} commented but doesn't follow you. Bot asked them to follow first.`,
+        data: { username }
+    });
 };
 
 /**
  * Convenience: Critical Token Expiry
  */
-const notifyTokenExpired = async (pushToken) => {
-    return sendPushNotification(
-        pushToken,
-        '⚠️ IMMEDIATE ACTION REQUIRED',
-        'Your Instagram connection has expired. All automations are PAUSED. Tap to reconnect now.',
-        { type: 'TOKEN_EXPIRED' },
-        { priority: 'high' }
-    );
+const notifyTokenExpired = async (userId) => {
+    return createAndSendNotification(userId, {
+        type: 'account',
+        title: '⚠️ IMMEDIATE ACTION REQUIRED',
+        body: 'Your Instagram connection has expired. All automations are PAUSED. Tap to reconnect now.',
+        data: { type: 'TOKEN_EXPIRED' },
+        options: { priority: 'high' }
+    });
 };
 
 /**
  * Convenience: Rate Limit / Automation Stopped
  */
-const notifyAutomationStopped = async (pushToken, username, reason = 'daily DM limit') => {
-    return sendPushNotification(
-        pushToken,
-        '🛑 Automation Error',
-        `We couldn't reply to @${username} because your ${reason} was reached.`,
-        { type: 'AUTOMATION_STOPPED', username, reason }
-    );
+const notifyAutomationStopped = async (userId, username, reason = 'daily DM limit') => {
+    return createAndSendNotification(userId, {
+        type: 'account',
+        title: '🛑 Automation Error',
+        body: `We couldn't reply to @${username} because your ${reason} was reached.`,
+        data: { username, reason }
+    });
 };
 
 /**
  * Convenience: Viral Alert
  */
-const notifyViralAlert = async (pushToken, mediaTitle, views) => {
-    return sendPushNotification(
-        pushToken,
-        '🔥 Viral Alert!',
-        `Your Reel "${mediaTitle}" is taking off with ${views.toLocaleString()} views! Ensure your automations are active.`,
-        { type: 'VIRAL_ALERT', mediaTitle, views }
-    );
+const notifyViralAlert = async (userId, mediaTitle, views) => {
+    return createAndSendNotification(userId, {
+        type: 'growth',
+        title: '🔥 Viral Alert!',
+        body: `Your Reel "${mediaTitle}" is taking off with ${views.toLocaleString()} views! Ensure your automations are active.`,
+        data: { mediaTitle, views }
+    });
 };
 
 /**
  * Convenience: Referral Success
  */
-const notifyReferralSuccess = async (pushToken, referredUsername) => {
-    return sendPushNotification(
-        pushToken,
-        '💰 Referral Reward!',
-        `@${referredUsername} just signed up using your link. You've earned a reward!`,
-        { type: 'REFERRAL_SUCCESS', referredUsername }
-    );
+const notifyReferralSuccess = async (userId, referredUsername) => {
+    return createAndSendNotification(userId, {
+        type: 'billing',
+        title: '💰 Referral Reward!',
+        body: `@${referredUsername} just signed up using your link. You've earned a reward!`,
+        data: { referredUsername }
+    });
+};
+
+/**
+ * Convenience: Automation Active (Set-up confirmation)
+ */
+const sendAutomationActiveNotification = async (userId, platform, keyword) => {
+    const platformName = platform === 'youtube' ? 'YouTube' : 'Instagram';
+    const postType = platform === 'youtube' ? 'video' : 'post';
+    const emoji = platform === 'youtube' ? '📺' : '✅';
+
+    return createAndSendNotification(userId, {
+        type: 'automation',
+        title: `${emoji} Automation Active!`,
+        body: `CloraAI is now monitoring your ${platformName} ${postType} for '${keyword}'.`,
+        data: { platform, keyword }
+    });
+};
+
+/**
+ * Convenience: YouTube Automation Win
+ */
+const notifyYouTubeWin = async (userId, username) => {
+    return createAndSendNotification(userId, {
+        type: 'automation',
+        title: '📺 YouTube Reply Sent!',
+        body: `Bot replied to @${username}'s comment on your video.`,
+        data: { username }
+    });
+};
+
+/**
+ * Convenience: Subscription Success
+ */
+const notifySubscriptionSuccess = async (userId, planName) => {
+    return createAndSendNotification(userId, {
+        type: 'billing',
+        title: '⚡ PRO Activated!',
+        body: `Your ${planName} subscription is now active. Enjoy unlimited automations!`,
+        data: { planName }
+    });
+};
+
+/**
+ * Convenience: Credits Added
+ */
+const notifyCreditsAdded = async (userId, amount) => {
+    return createAndSendNotification(userId, {
+        type: 'billing',
+        title: '💰 Credits Added!',
+        body: `${amount} credits have been added to your account.`,
+        data: { amount }
+    });
 };
 
 module.exports = {
@@ -250,4 +336,8 @@ module.exports = {
     notifyAutomationStopped,
     notifyViralAlert,
     notifyReferralSuccess,
+    notifyYouTubeWin,
+    notifySubscriptionSuccess,
+    notifyCreditsAdded,
+    sendAutomationActiveNotification,
 };
