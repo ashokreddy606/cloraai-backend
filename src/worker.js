@@ -168,6 +168,21 @@ attachErrorHandlers(youtubeWorker, 'YouTube');
 require('./workers/instagramAutomationWorker');
 require('./workers/refreshInstagramTokenWorker');
 
+// ─── Comment Poller Cron (Fallback for missed Meta webhooks) ─────────────────
+const cron = require('node-cron');
+const { pollInstagramComments } = require('./services/instagramCommentPoller');
+
+// Run every 2 minutes to catch any comments Meta webhooks may have missed
+cron.schedule('*/2 * * * *', async () => {
+    try {
+        logger.info('CRON', 'Running Instagram comment poller...');
+        await pollInstagramComments();
+    } catch (err) {
+        logger.error('CRON', 'Comment poller cron failed', { error: err.message });
+    }
+});
+logger.info('WORKER', '✅ Comment poller cron scheduled (every 2 minutes)');
+
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 const gracefulShutdown = async (signal) => {
     logger.info('WORKER', `${signal} received. Shutting down worker gracefully...`);

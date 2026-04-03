@@ -148,10 +148,34 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
         // Feature: "Follow before sending link"
         if (matchedRule.mustFollow) {
-            logger.info('WORKER:FOLLOW_CHECK', `Checking if ${senderId} follows ${instagramId}`, { jobId: job.id });
-            // Note: In a production environment, this requires additional Meta permissions 
-            // and checking the friendship status. If not followed, we could prepend a message 
-            // like "Thanks for asking! I've sent the link, but make sure to follow for more updates!"
+            logger.info('WORKER:FOLLOW_CHECK', `Applying follow request format to message`, { jobId: job.id });
+            
+            let followText = "Thanks for asking! I've sent the link, but make sure to follow for more updates!";
+            
+            if (matchedRule.customFollowEnabled) {
+                const header = matchedRule.customFollowHeader ? `${matchedRule.customFollowHeader}\n\n` : '';
+                const subtext = matchedRule.customFollowSubtext ? `${matchedRule.customFollowSubtext}\n\n` : '';
+                const btnFollow = matchedRule.followButtonText ? `[ ${matchedRule.followButtonText} ] ` : '';
+                const btnFollowed = matchedRule.followedButtonText ? `[ ${matchedRule.followedButtonText} ]` : '';
+                
+                // Construct custom follow message block
+                let customBlock = `${header}${subtext}`;
+                if (btnFollow || btnFollowed) {
+                    customBlock += `${btnFollow}${btnFollowed}\n\n`;
+                }
+                
+                if (customBlock.trim()) {
+                    followText = customBlock.trim();
+                }
+            }
+            
+            // Prepend follow request to the final message
+            finalMessage = `${followText}\n\n${finalMessage}`;
+        }
+        
+        // Custom DM Button mapping (if text is provided, simulate button text appearance)
+        if (matchedRule.dmButtonText && matchedRule.replyType !== 'product') {
+            finalMessage += `\n\n[ ${matchedRule.dmButtonText} ]`;
         }
 
         // Pick a public reply for comments

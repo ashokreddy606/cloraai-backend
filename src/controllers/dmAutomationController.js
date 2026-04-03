@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { appConfig } = require('../config');
+const logger = require('../utils/logger');
 
 // Create DM Automation Rule
 const createRule = async (req, res) => {

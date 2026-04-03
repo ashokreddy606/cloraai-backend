@@ -7,12 +7,12 @@ const verifyResourceOwnership = require('../middleware/ownership');
 const validate = require('../middleware/validate');
 const { createRuleSchema, updateRuleSchema } = require('../validators/dmAutomation');
 
-// 🔒 PRO ONLY: DM Automation
-router.post('/rules', authenticate, checkProAccess, validate(createRuleSchema), dmAutomationController.createRule);
-router.get('/rules', authenticate, checkProAccess, dmAutomationController.getRules);
+// DM Automation — controller handles free tier limit (1 rule) internally
+router.post('/rules', authenticate, validate(createRuleSchema), dmAutomationController.createRule);
+router.get('/rules', authenticate, dmAutomationController.getRules);
 
 // Protected by ownership check to prevent IDOR + input validation
-router.put('/rules/:id', authenticate, checkProAccess, validate(updateRuleSchema), verifyResourceOwnership('dMAutomation'), dmAutomationController.updateRule);
-router.delete('/rules/:id', authenticate, checkProAccess, verifyResourceOwnership('dMAutomation'), dmAutomationController.deleteRule);
+router.put('/rules/:id', authenticate, validate(updateRuleSchema), verifyResourceOwnership('dMAutomation'), dmAutomationController.updateRule);
+router.delete('/rules/:id', authenticate, verifyResourceOwnership('dMAutomation'), dmAutomationController.deleteRule);
 
 module.exports = router;
