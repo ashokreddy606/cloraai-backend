@@ -146,36 +146,58 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             if (links.length > 0) finalMessage += '\n\n' + links.join('\n');
         }
 
-        // Feature: "Follow before sending link"
+        // Custom DM Button mapping for product message
+        let productQuickReplies = [];
+        if (matchedRule.dmButtonText && matchedRule.replyType !== 'product') {
+            productQuickReplies.push({
+                content_type: "text",
+                title: matchedRule.dmButtonText.substring(0, 20),
+                payload: "PRODUCT_BTN_CLICKED"
+            });
+        }
+
+        let followMessagePayload = null;
+
+        // Feature: "Ask user to follow before sending link"
         if (matchedRule.mustFollow) {
-            logger.info('WORKER:FOLLOW_CHECK', `Applying follow request format to message`, { jobId: job.id });
-            
-            let followText = "Thanks for asking! I've sent the link, but make sure to follow for more updates!";
+            let header = "Thanks for asking!";
+            let subtext = "I've sent the link, but make sure to follow for more updates!";
             
             if (matchedRule.customFollowEnabled) {
-                const header = matchedRule.customFollowHeader ? `${matchedRule.customFollowHeader}\n\n` : '';
-                const subtext = matchedRule.customFollowSubtext ? `${matchedRule.customFollowSubtext}\n\n` : '';
-                const btnFollow = matchedRule.followButtonText ? `[ ${matchedRule.followButtonText} ] ` : '';
-                const btnFollowed = matchedRule.followedButtonText ? `[ ${matchedRule.followedButtonText} ]` : '';
-                
-                // Construct custom follow message block
-                let customBlock = `${header}${subtext}`;
-                if (btnFollow || btnFollowed) {
-                    customBlock += `${btnFollow}${btnFollowed}\n\n`;
-                }
-                
-                if (customBlock.trim()) {
-                    followText = customBlock.trim();
-                }
+                if (matchedRule.customFollowHeader) header = matchedRule.customFollowHeader;
+                if (matchedRule.customFollowSubtext) subtext = matchedRule.customFollowSubtext;
             }
             
-            // Prepend follow request to the final message
-            finalMessage = `${followText}\n\n${finalMessage}`;
-        }
-        
-        // Custom DM Button mapping (if text is provided, simulate button text appearance)
-        if (matchedRule.dmButtonText && matchedRule.replyType !== 'product') {
-            finalMessage += `\n\n[ ${matchedRule.dmButtonText} ]`;
+            let quickReplies = [];
+            if (matchedRule.customFollowEnabled) {
+                if (matchedRule.followButtonText) {
+                    quickReplies.push({
+                        content_type: "text",
+                        title: matchedRule.followButtonText.substring(0, 20),
+                        payload: "FOLLOW_ACCOUNT"
+                    });
+                }
+                if (matchedRule.followedButtonText) {
+                    quickReplies.push({
+                        content_type: "text",
+                        title: matchedRule.followedButtonText.substring(0, 20),
+                        payload: "I_FOLLOWED"
+                    });
+                }
+            }
+
+            if (quickReplies.length === 0) {
+                quickReplies.push({
+                    content_type: "text",
+                    title: "I Followed!",
+                    payload: "I_FOLLOWED"
+                });
+            }
+
+            followMessagePayload = {
+                text: `${header}\n\n${subtext}`.trim(),
+                quick_replies: quickReplies
+            };
         }
 
         // Pick a public reply for comments
@@ -192,26 +214,42 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         // 5. Execute API Calls (Private Reply then Public Reply for comments)
-        // DMs and Private Replies to comments MUST use the Page Access Token for Messenger-on-Instagram API
         const apiTokenForDM = pageAccessToken || instagramAccessToken;
         const dmUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForDM}`;
-        const dmRecipient = isDM ? { id: senderId } : { comment_id: commentId };
-
+        
         try {
-            logger.info('WORKER:API_DM', `Sending ${isDM ? 'DM' : 'Private'} reply for ${eventId}`, { 
-                recipient: dmRecipient,
-                jobId: job.id
-            });
+            // STEP A: Send Follow Request if enabled
+            if (followMessagePayload) {
+                logger.info('WORKER:API_DM', `Sending Follow Request before link for ${eventId}`, { jobId: job.id });
+                await axios.post(dmUrl, {
+                    recipient: isDM ? { id: senderId } : { comment_id: commentId },
+                    message: followMessagePayload
+                });
+                await sleep(1000); // 1 second delay to ensure correct order
+            }
+
+            // STEP B: Send Main Product Link / Message
+            logger.info('WORKER:API_DM', `Sending main message for ${eventId}`, { jobId: job.id });
+            
+            const productPayload = { text: finalMessage };
+            if (productQuickReplies.length > 0) {
+                productPayload.quick_replies = productQuickReplies;
+            }
+
+            // If we already sent the follow request via comment_id, the 24h window is open.
+            // We MUST use senderId for the second message because comment_id can only be used once.
+            const mainRecipient = (!isDM && followMessagePayload) ? { id: senderId } : (isDM ? { id: senderId } : { comment_id: commentId });
+
             const response = await axios.post(dmUrl, {
-                recipient: dmRecipient,
-                message: { text: finalMessage }
+                recipient: mainRecipient,
+                message: productPayload
             });
-            logger.info('WORKER:DM_SENT', `Direct message sent for ${eventId}`, { 
+
+            logger.info('WORKER:DM_SENT', `Direct message flow completed for ${eventId}`, { 
                 jobId: job.id,
                 metaResponse: response.data 
             });
             console.log(`[WORKER:API_SUCCESS] DM Sent for event ${eventId}`);
-            console.log("DM SENT");
             logger.increment('dmSent');
         } catch (err) {
             await handleMetaError(err, userId, instagramId);
