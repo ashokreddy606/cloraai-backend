@@ -100,7 +100,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
             for (const rule of sortedRules) {
                 // STEP 4: Verify Reel Filtering with flexibility
-                const isMatchReel = !rule.reelId || (mediaId && mediaId.includes(rule.reelId));
+                const isMatchReel = !rule.reelId || (mediaId && String(mediaId).includes(String(rule.reelId)));
                 const isMatchKeyword = rule.triggerType === 'any' || matchesKeyword(incomingText, rule.keyword);
                 
                 logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, { 
