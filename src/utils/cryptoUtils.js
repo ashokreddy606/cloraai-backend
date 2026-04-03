@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const logger = require('./logger');
 
 const ALGORITHM = 'aes-256-gcm';
