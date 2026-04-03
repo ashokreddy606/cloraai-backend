@@ -98,9 +98,19 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     
                     // Provide feedback that they need to actually follow!
                     const notifyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForVerification}`;
+                    
+                    const retryQuickReplies = [{
+                        content_type: "text",
+                        title: "I have followed! ✅",
+                        payload: `SEND_LINK:${matchedRule.id}`
+                    }];
+
                     await axios.post(notifyUrl, {
                         recipient: { id: senderId },
-                        message: { text: "I just checked, and it looks like you aren't following the page yet! 😅 Please hit Follow on my profile first, then click the button again to unlock your link." }
+                        message: { 
+                            text: "I just checked, and it looks like you aren't following the page yet! 😅 Please hit Follow on my profile first, then tap the button below to verify and unlock your link.",
+                            quick_replies: retryQuickReplies
+                        }
                     });
                     return { success: true, bypassed: false };
                 }
