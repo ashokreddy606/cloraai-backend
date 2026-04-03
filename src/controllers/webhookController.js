@@ -215,11 +215,14 @@ const handleWebhook = async (req, res) => {
             // B. Handle Messaging (Direct Messages)
             const messagingEvents = entry.messaging || [];
             for (const event of messagingEvents) {
-                if (!event.message?.text || !event.message?.mid) continue;
+                // Must have a mid to process
+                if (!event.message?.mid) continue;
 
                 const messageId = event.message.mid;
                 const senderId = event.sender.id;
                 const recipientId = event.recipient.id;
+                const text = event.message.text || '';
+                const quickReplyPayload = event.message.quick_reply?.payload;
 
                 const account = await resolveInstagramAccount(entry.id, recipientId);
                 if (!account) {
@@ -230,22 +233,30 @@ const handleWebhook = async (req, res) => {
                 // Prevent self-reply loops
                 if (senderId === account.instagramId) continue;
 
-                // Enqueue DM processing
                 const decryptedUserToken = decryptToken(account.instagramAccessToken);
                 const decryptedPageToken = account.pageAccessToken ? decryptToken(account.pageAccessToken) : null;
 
+                let forceRuleId = null;
+                if (quickReplyPayload && quickReplyPayload.startsWith('SEND_LINK:')) {
+                    forceRuleId = quickReplyPayload.split(':')[1];
+                    logger.info('WEBHOOK:QUICK_REPLY', `Intercepted quick reply for rule ${forceRuleId}`);
+                }
+
+                // Enqueue DM processing
                 await enqueueJob(commentQueue, 'process-dm', {
                     messageId,
-                    text: event.message.text,
+                    text: text,
                     senderId,
                     instagramId: account.instagramId,
                     userId: account.userId,
                     instagramAccessToken: decryptedUserToken,
-                    pageAccessToken: decryptedPageToken
+                    pageAccessToken: decryptedPageToken,
+                    forceRuleId
                 });
                 logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId} for user ${account.userId}`, { 
                     messageId, 
-                    senderId 
+                    senderId,
+                    forceRuleId
                 });
             }
         }

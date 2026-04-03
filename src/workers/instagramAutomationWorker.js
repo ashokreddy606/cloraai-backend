@@ -71,37 +71,51 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
         // 2. Resolve Automation Rules
         logger.info('WORKER:RULES', `Fetching rules for user ${userId}`, { jobId: job.id });
-        const rules = await prisma.dMAutomation.findMany({
-            where: { userId, isActive: true }
-        });
-        
-        logger.debug('WORKER:RULES_LOADED', `Loaded ${rules.length} active rules`, { jobId: job.id });
-
-        // Rules prioritized by keyword length (most specific first)
-        const sortedRules = rules.sort((a, b) => {
-            const lenA = (a.keyword || '').length;
-            const lenB = (b.keyword || '').length;
-            return lenB - lenA;
-        });
-
         let matchedRule = null;
-        for (const rule of sortedRules) {
-            // STEP 4: Verify Reel Filtering with flexibility
-            const isMatchReel = !rule.reelId || (mediaId && mediaId.includes(rule.reelId));
-            const isMatchKeyword = rule.triggerType === 'any' || matchesKeyword(incomingText, rule.keyword);
+
+        if (forceRuleId) {
+            // Bypass keyword matching logic entirely if this is a Quick Reply callback
+            matchedRule = await prisma.dMAutomation.findUnique({ where: { id: forceRuleId } });
+            if (!matchedRule) {
+                 logger.warn('WORKER:FORCE_RULE_NOT_FOUND', `Could not find forced rule ${forceRuleId}`);
+                 return { success: true };
+            }
+            logger.info('WORKER:FORCE_RULE', `Using forced rule ${forceRuleId} (Follow Request bypass)`, { jobId: job.id });
             
-            logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, { 
-                jobId: job.id, 
-                reelFilter: rule.reelId || 'GLOBAL', 
-                reelMatch: isMatchReel,
-                keywordMatch: isMatchKeyword
+            // Critical: Turn off mustFollow so we actually send the link this time!
+            matchedRule.mustFollow = false;
+        } else {
+            const rules = await prisma.dMAutomation.findMany({
+                where: { userId, isActive: true }
+            });
+            
+            logger.debug('WORKER:RULES_LOADED', `Loaded ${rules.length} active rules`, { jobId: job.id });
+
+            // Rules prioritized by keyword length (most specific first)
+            const sortedRules = rules.sort((a, b) => {
+                const lenA = (a.keyword || '').length;
+                const lenB = (b.keyword || '').length;
+                return lenB - lenA;
             });
 
-            if (isMatchReel && isMatchKeyword) {
-                matchedRule = rule;
-                console.log("RULE MATCHED:", rule.keyword);
-                logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword}`, { jobId: job.id, ruleId: rule.id });
-                break;
+            for (const rule of sortedRules) {
+                // STEP 4: Verify Reel Filtering with flexibility
+                const isMatchReel = !rule.reelId || (mediaId && mediaId.includes(rule.reelId));
+                const isMatchKeyword = rule.triggerType === 'any' || matchesKeyword(incomingText, rule.keyword);
+                
+                logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, { 
+                    jobId: job.id, 
+                    reelFilter: rule.reelId || 'GLOBAL', 
+                    reelMatch: isMatchReel,
+                    keywordMatch: isMatchKeyword
+                });
+
+                if (isMatchReel && isMatchKeyword) {
+                    matchedRule = rule;
+                    console.log("RULE MATCHED:", rule.keyword);
+                    logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword}`, { jobId: job.id, ruleId: rule.id });
+                    break;
+                }
             }
         }
 
@@ -174,14 +188,14 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     quickReplies.push({
                         content_type: "text",
                         title: matchedRule.followButtonText.substring(0, 20),
-                        payload: "FOLLOW_ACCOUNT"
+                        payload: `SEND_LINK:${matchedRule.id}`
                     });
                 }
                 if (matchedRule.followedButtonText) {
                     quickReplies.push({
                         content_type: "text",
                         title: matchedRule.followedButtonText.substring(0, 20),
-                        payload: "I_FOLLOWED"
+                        payload: `SEND_LINK:${matchedRule.id}`
                     });
                 }
             }
@@ -190,7 +204,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 quickReplies.push({
                     content_type: "text",
                     title: "I Followed!",
-                    payload: "I_FOLLOWED"
+                    payload: `SEND_LINK:${matchedRule.id}`
                 });
             }
 
@@ -219,38 +233,37 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         
         try {
             // STEP A: Send Follow Request if enabled
+            // The product link will NOT be sent until they click the Quick Reply button (handled via Webhook)
             if (followMessagePayload) {
                 logger.info('WORKER:API_DM', `Sending Follow Request before link for ${eventId}`, { jobId: job.id });
                 await axios.post(dmUrl, {
                     recipient: isDM ? { id: senderId } : { comment_id: commentId },
                     message: followMessagePayload
                 });
-                await sleep(1000); // 1 second delay to ensure correct order
+                logger.info('WORKER:API_DM', `Halting flow to wait for user to click follow button...`);
+            } else {
+                // STEP B: Send Main Product Link / Message
+                logger.info('WORKER:API_DM', `Sending main message for ${eventId}`, { jobId: job.id });
+                
+                const productPayload = { text: finalMessage };
+                if (productQuickReplies.length > 0) {
+                    productPayload.quick_replies = productQuickReplies;
+                }
+
+                const mainRecipient = isDM ? { id: senderId } : { comment_id: commentId };
+
+                const response = await axios.post(dmUrl, {
+                    recipient: mainRecipient,
+                    message: productPayload
+                });
+
+                logger.info('WORKER:DM_SENT', `Direct message flow completed for ${eventId}`, { 
+                    jobId: job.id,
+                    metaResponse: response.data 
+                });
+                console.log(`[WORKER:API_SUCCESS] DM Sent for event ${eventId}`);
+                logger.increment('dmSent');
             }
-
-            // STEP B: Send Main Product Link / Message
-            logger.info('WORKER:API_DM', `Sending main message for ${eventId}`, { jobId: job.id });
-            
-            const productPayload = { text: finalMessage };
-            if (productQuickReplies.length > 0) {
-                productPayload.quick_replies = productQuickReplies;
-            }
-
-            // If we already sent the follow request via comment_id, the 24h window is open.
-            // We MUST use senderId for the second message because comment_id can only be used once.
-            const mainRecipient = (!isDM && followMessagePayload) ? { id: senderId } : (isDM ? { id: senderId } : { comment_id: commentId });
-
-            const response = await axios.post(dmUrl, {
-                recipient: mainRecipient,
-                message: productPayload
-            });
-
-            logger.info('WORKER:DM_SENT', `Direct message flow completed for ${eventId}`, { 
-                jobId: job.id,
-                metaResponse: response.data 
-            });
-            console.log(`[WORKER:API_SUCCESS] DM Sent for event ${eventId}`);
-            logger.increment('dmSent');
         } catch (err) {
             await handleMetaError(err, userId, instagramId);
             logger.error('WORKER:ERROR_DM', `DM failed for ${eventId}`, { 
