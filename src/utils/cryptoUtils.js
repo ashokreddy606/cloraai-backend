@@ -1,15 +1,22 @@
-const crypto = require('crypto');
+const logger = require('./logger');
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM recommended IV length
 const AUTH_TAG_LENGTH = 16;
 
-// SECURITY: Use TOKEN_ENCRYPTION_SECRET for OAuth tokens.
-// Fallback to JWT_SECRET if missing to allow server to start, but log a warning.
+/**
+ * SECURITY: Enforce TOKEN_ENCRYPTION_SECRET for OAuth tokens.
+ */
 let SECRET = process.env.TOKEN_ENCRYPTION_SECRET || process.env.ENCRYPTION_KEY;
+
 if (!SECRET) {
-    logger.warn('CRYPTO', 'TOKEN_ENCRYPTION_SECRET is missing. Falling back to JWT_SECRET. Please set a unique encryption key for production tokens.');
-    SECRET = process.env.JWT_SECRET || 'temporary_fallback_secret_not_for_production';
+    if (process.env.NODE_ENV === 'production') {
+        logger.error('CRYPTO:FAIL', 'CRITICAL SECURITY ERROR: TOKEN_ENCRYPTION_SECRET is missing in production. Server cannot start securely.');
+        throw new Error('TOKEN_ENCRYPTION_SECRET must be set in production environments.');
+    } else {
+        logger.warn('CRYPTO:INSECURE', 'TOKEN_ENCRYPTION_SECRET is missing. Falling back to JWT_SECRET for development.');
+        SECRET = process.env.JWT_SECRET || 'temporary_dev_fallback_secret_not_for_production';
+    }
 }
 
 /**

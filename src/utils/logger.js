@@ -36,13 +36,30 @@ const getCounters = () => ({ ...counters });
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Scrub any value that looks like a secret before logging
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const SENSITIVE_KEYS = ['accessToken', 'access_token', 'token', 'secret', 'password', 'signature', 'razorpay_signature', 'jwt'];
+const SENSITIVE_KEYS = [
+    'accesstoken', 'access_token', 'token', 'secret', 'password', 
+    'signature', 'razorpay_signature', 'jwt', 'authorization', 
+    'cookie', 'set-cookie', 'apikey', 'api_key', 'client_secret', 
+    'refresh_token', 'otp', 'passcode', 'cvv', 'cardnumber'
+];
 
 const scrub = (obj) => {
-    if (typeof obj !== 'object' || obj === null) return obj;
+    if (obj === null || obj === undefined) return obj;
+    
+    // Handle arrays
+    if (Array.isArray(obj)) {
+        return obj.map(item => scrub(item));
+    }
+
+    // Handle non-objects
+    if (typeof obj !== 'object') return obj;
+
+    // Handle objects
     const clean = {};
     for (const [key, val] of Object.entries(obj)) {
         const lk = key.toLowerCase();
+        
+        // Check if key is sensitive
         if (SENSITIVE_KEYS.some(k => lk.includes(k))) {
             clean[key] = '[REDACTED]';
         } else if (typeof val === 'object') {

@@ -16,12 +16,6 @@ const path = require('path');
 
 validateEnv();
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'public/uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
 // Initialize Mongoose (requested for Instagram Analytics)
 const dbUrl = (process.env.DATABASE_URL || '').trim();
 if (dbUrl && !dbUrl.startsWith('CHANGE_ME')) {
@@ -73,7 +67,6 @@ const adminPlanRoutes = require('./src/routes/adminPlan');
 const userRoutes = require('./src/routes/user');
 // Webhook routes removed (Razorpay cleanup)
 const youtubeRoutes = require('./src/routes/youtube');
-const uploadRoutes = require('./src/routes/upload');
 const accountRoutes = require('./src/routes/account');
 const notificationRoutes = require('./src/routes/notification');
 const webhookController = require('./src/controllers/webhookController');
@@ -448,9 +441,6 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Static files
-app.use('/public/uploads', express.static(path.join(__dirname, 'public/uploads')));
-
 // Global rate limiting (2000 requests per 15 minutes per IP)
 // Multi-instance safe via Redis (configured in src/middleware/auth.js)
 const globalLimiter = rateLimit(2000, 15);
@@ -568,7 +558,6 @@ app.use('/api/v1/admin-plans', adminPlanRoutes);
 app.use('/api/v1/youtube', checkSubscriptionExpiry, youtubeRoutes);
 app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or misconfigured redirect URIs
 app.use('/api/v1/user', checkSubscriptionExpiry, userRoutes);
-app.use('/api/v1/upload', checkSubscriptionExpiry, uploadRoutes);
 app.use('/api/v1/account', accountRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 
@@ -602,12 +591,58 @@ if (process.env.NODE_ENV !== 'test') {
 
 
 
-        // 3. Instagram Analytics, Automation & Token Refresh Workers
-        require('./src/workers/instagramAnalyticsWorker');
+        // ── BullMQ Distributed Workers (Scaling Phase) ─────────────────────
+        // Import workers to initialize them (they auto-attach to connection)
+        require('./src/workers/analyticsWorker');
+        require('./src/workers/tokenRefreshWorker');
         require('./src/workers/instagramAutomationWorker');
-        require('./src/workers/instagramCommentPollWorker'); // New Comment Polling
-        require('./src/workers/refreshInstagramTokenWorker');
-        require('./src/workers/youtubeWorker'); // YouTube comment automation
+        require('./src/workers/instagramCommentPollWorker'); 
+        require('./src/workers/youtubeWorker');
+
+        // ── Cron Triggers (Distributed) ───────────────────────────────────
+        const cron = require('node-cron');
+        const { analyticsQueue, tokenRefreshQueue, enqueueJob } = require('./src/utils/queue');
+
+        // 1. Daily Analytics Trigger (Midnight)
+        // Enqueues individual jobs for all connected users into BullMQ
+        cron.schedule('0 0 * * *', async () => {
+            logger.info('CRON:TRIGGER', 'Starting daily analytics batch enqueue...');
+            const accounts = await prisma.instagramAccount.findMany({
+                where: { isConnected: true },
+                select: { userId: true, instagramId: true, instagramAccessToken: true }
+            });
+            for (const acc of accounts) {
+                await enqueueJob(analyticsQueue, 'process-analytics', {
+                    userId: acc.userId,
+                    instagramId: acc.instagramId,
+                    accessToken: acc.instagramAccessToken
+                });
+            }
+            logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} analytics jobs.`);
+        });
+
+        // 2. Token Refresh Trigger (1:00 AM)
+        cron.schedule('0 1 * * *', async () => {
+            logger.info('CRON:TRIGGER', 'Starting token refresh batch check...');
+            const fifteenDaysFromNow = new Date();
+            fifteenDaysFromNow.setDate(fifteenDaysFromNow.getDate() + 15);
+
+            const accounts = await prisma.instagramAccount.findMany({
+                where: { 
+                    isConnected: true,
+                    tokenExpiresAt: { lte: fifteenDaysFromNow }
+                },
+                select: { userId: true, instagramId: true, instagramAccessToken: true }
+            });
+            for (const acc of accounts) {
+                await enqueueJob(tokenRefreshQueue, 'refresh-token', {
+                    userId: acc.userId,
+                    instagramId: acc.instagramId,
+                    accessToken: acc.instagramAccessToken
+                });
+            }
+            logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} token refresh jobs.`);
+        });
         
 
         logger.info('SERVER', '✅ All background workers initialized (unified process).');

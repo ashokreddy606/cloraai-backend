@@ -8,8 +8,6 @@ const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const { s3Client, awsConfig } = require('../config/aws');
 const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const fs = require('fs');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { notifyPostSuccess } = require('../services/pushNotificationService');
@@ -411,126 +409,6 @@ const disconnectAccount = async (req, res) => {
   }
 };
 
-// Asynchronous Reel Upload and Post Flow (/api/v1/instagram/upload-reel)
-const uploadAndPostReel = async (req, res) => {
-  let tempFilePath = null;
-  try {
-    const { 
-      caption,
-      // Advanced Automation
-      automationEnabled,
-      isAI, triggerType, replyType, productName, productUrl, 
-      productDescription, mustFollow, dmButtonText,
-      automationKeyword, automationReply, automationAppendLinks, automationLinks,
-      publicReplies,
-      customFollowEnabled, customFollowHeader, customFollowSubtext, 
-      followButtonText, followedButtonText, dmReplyEnabled
-    } = req.body;
-    const userId = req.userId;
-    const { appConfig } = require('../config');
-
-    if (appConfig.featureFlags.emergencyStopPosts) {
-        return res.status(503).json({ 
-            error: 'Service Paused', 
-            message: 'All uploads are currently stopped by the administrator.' 
-        });
-    }
-
-    if (!req.file) {
-      logger.error('REEL_UPLOAD', "No file provided in request");
-      return res.status(400).json({ error: 'No video file provided' });
-    }
-    
-    tempFilePath = req.file.path;
-    logger.info('REEL_UPLOAD', `Step 1: Received file for user ${userId}`, { 
-      originalname: req.file.originalname, 
-      size: req.file.size,
-      path: tempFilePath 
-    });
-
-    // 1. Prepare job metadata
-    const postData = {
-      userId,
-      caption: caption || 'Posted via CloraAI ✨',
-      platform: 'instagram',
-      automationKeyword: automationKeyword || null,
-      automationReply: automationReply || null,
-      automationAppendLinks: automationAppendLinks === 'true' || automationAppendLinks === true,
-      automationLinks: automationLinks ? (typeof automationLinks === 'string' ? automationLinks : JSON.stringify(automationLinks)) : null,
-      isAI: isAI === 'true' || isAI === true,
-      triggerType: triggerType || null,
-      replyType: replyType || null,
-      productName: productName || null,
-      productUrl: productUrl || null,
-      productDescription: productDescription || null,
-      mustFollow: mustFollow === 'true' || mustFollow === true,
-      dmButtonText: dmButtonText || null,
-      publicReplies: publicReplies || null,
-      customFollowEnabled: customFollowEnabled === 'true' || customFollowEnabled === true,
-      customFollowHeader: customFollowHeader || null,
-      customFollowSubtext: customFollowSubtext || null,
-      followButtonText: followButtonText || null,
-      followedButtonText: followedButtonText || null,
-      dmReplyEnabled: dmReplyEnabled === 'true' || dmReplyEnabled === true
-    };
-
-    // 2. Upload to S3
-    const extension = path.extname(req.file.originalname).toLowerCase() || '.mp4';
-    const s3Key = `videos/${uuidv4()}${extension}`;
-    const fileStream = fs.createReadStream(tempFilePath);
-
-    const uploadParams = {
-      Bucket: awsConfig.bucketName,
-      Key: s3Key,
-      Body: fileStream,
-      ContentType: req.file.verifiedMimeType || req.file.mimetype || 'video/mp4'
-    };
-
-    logger.info('REEL_UPLOAD', `Step 2: Uploading to S3 bucket ${awsConfig.bucketName}...`);
-    await s3Client.send(new PutObjectCommand(uploadParams));
-    
-    const videoUrl = `https://${awsConfig.bucketName}.s3.${awsConfig.region}.amazonaws.com/${s3Key}`;
-    logger.info('REEL_UPLOAD', `Step 2: S3 upload success`, { videoUrl });
-
-    // Store final S3 URL in metadata
-    postData.mediaUrl = videoUrl;
-
-    // 3. Discover Instagram Account
-    const account = await InstagramAccount.findOne({ userId });
-    if (!account) {
-        throw new Error('Instagram account not connected.');
-    }
-
-
-    // 4. Enqueue Job
-    logger.info('REEL_UPLOAD', `Step 4: Enqueueing publish job for user ${userId}`);
-    await enqueueJob(instagramQueue, 'publish', { ...postData });
-
-    // 5. Respond immediately
-    res.status(202).json({
-      success: true,
-      message: 'Reel upload successful. It is now being processed and will be published shortly.',
-      data: {
-        status: 'publishing'
-      }
-    });
-
-    // Clean up temp file
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try { fs.unlinkSync(tempFilePath); } catch (e) {}
-    }
-  } catch (error) {
-    logger.error('REEL_UPLOAD_ERROR', "Failed to upload and post reel", { error: error.message });
-    
-    // Clean up temp file on error
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try { fs.unlinkSync(tempFilePath); } catch (e) {}
-    }
-    
-    res.status(500).json({ error: 'Failed to upload and post reel', message: error.message });
-  }
-};
-
 module.exports = {
   initiateAuth,
   handleOAuthCallback,
@@ -539,6 +417,5 @@ module.exports = {
   getAnalytics,
   getPosts,
   getPostInsights,
-  uploadAndPostReel,
   instagramBreaker
 };

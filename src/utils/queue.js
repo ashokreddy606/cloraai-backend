@@ -13,11 +13,13 @@ const QUEUES = {
     INSTAGRAM: 'instagram-publish',
     YOUTUBE: 'youtube-upload',
     REPLY: 'reply-queue',
-    COMMENT: 'instagramAutomationQueue'
+    COMMENT: 'instagramAutomationQueue',
+    ANALYTICS: 'analytics-queue',
+    TOKEN_REFRESH: 'token-refresh-queue'
 };
 
 // Initialize Queues safely
-let aiQueue, webhookQueue, subscriptionQueue, instagramQueue, youtubeQueue, replyQueue, commentQueue;
+let aiQueue, webhookQueue, subscriptionQueue, instagramQueue, youtubeQueue, replyQueue, commentQueue, analyticsQueue, tokenRefreshQueue;
 
 if (connection) {
     const queueOptions = { connection };
@@ -28,6 +30,8 @@ if (connection) {
     youtubeQueue = new Queue(QUEUES.YOUTUBE, queueOptions);
     replyQueue = new Queue(QUEUES.REPLY, queueOptions);
     commentQueue = new Queue(QUEUES.COMMENT, queueOptions);
+    analyticsQueue = new Queue(QUEUES.ANALYTICS, queueOptions);
+    tokenRefreshQueue = new Queue(QUEUES.TOKEN_REFRESH, queueOptions);
 } else {
     logger.warn('QUEUE', 'Redis connection missing. Queues are disabled (expected in local dev without Redis).');
 }
@@ -62,5 +66,7 @@ module.exports = {
     youtubeQueue,
     replyQueue,
     commentQueue,
+    analyticsQueue,
+    tokenRefreshQueue,
     enqueueJob
 };

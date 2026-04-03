@@ -44,7 +44,7 @@ router.post('/reset-password/:token',
 
 router.post('/refresh-token', authController.refreshToken);
 router.get('/me', authenticate, authController.getCurrentUser);
-router.put('/profile', authenticate, authController.updateProfile);
+router.put('/profile', authenticate, validate(require('../validators/user').updateProfileSchema), authController.updateProfile);
 router.post('/verify-email', authController.verifyEmail);
 router.post('/logout', authenticate, authController.logout);
 router.delete('/account', authenticate, authController.deleteAccount);

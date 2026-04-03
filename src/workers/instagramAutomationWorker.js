@@ -191,15 +191,27 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         // 4. Prepare Reply (Private DM)
         let finalMessage = matchedRule.autoReplyMessage || '';
         
-        // AI Generation override
+        // AI Generation override with Safety Checks
         if (matchedRule.isAI) {
-            const aiReply = await generateAIReply(incomingText, {
-                productName: matchedRule.productName,
-                productDescription: matchedRule.productDescription,
-                productUrl: matchedRule.productUrl,
-                isDM: isDM
-            });
-            if (aiReply) finalMessage = aiReply;
+            const { checkAILimit } = require('../middleware/aiLimiter');
+            const feature = matchedRule.triggerType === 'keywords' ? 'caption' : 'brand_deal'; // Map to closest feature
+            
+            const limitCheck = await checkAILimit(userId, feature);
+            
+            if (limitCheck.allowed) {
+                const aiReply = await generateAIReply(incomingText, {
+                    userId,
+                    feature,
+                    productName: matchedRule.productName,
+                    productDescription: matchedRule.productDescription,
+                    productUrl: matchedRule.productUrl,
+                    isDM: isDM
+                });
+                if (aiReply) finalMessage = aiReply;
+            } else {
+                logger.warn('WORKER:AI_LIMIT_HIT', `AI limit hit for user ${userId}. Falling back to static reply.`, { code: limitCheck.code });
+                // fallback remains the static autoReplyMessage
+            }
         }
 
         // Product Details formatting

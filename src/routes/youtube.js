@@ -4,10 +4,10 @@ const { authenticate } = require('../middleware/auth');
 const youtubeController = require('../controllers/youtubeController');
 const { youtubeGuard, youtubeAutomationGuard } = require('../middleware/youtubeGuard');
 const checkProAccess = require('../middleware/checkProAccess');
-const { uploadVideoS3 } = require('../middleware/upload');
-const checkUploadLimit = require('../middleware/checkUploadLimit');
 const validate = require('../middleware/validate');
 const { createRuleSchema, updateRuleSchema } = require('../validators/youtube');
+
+const verifyResourceOwnership = require('../middleware/ownership');
 
 router.use(youtubeGuard);
 
@@ -20,8 +20,8 @@ router.delete('/disconnect', authenticate, youtubeController.disconnect);
 // ── Automation Rules (validated) ───────────────────────────────────────────
 router.get('/rules', authenticate, checkProAccess, youtubeController.getRules);
 router.post('/rules', authenticate, checkProAccess, validate(createRuleSchema), youtubeController.createRule);
-router.put('/rules/:id', authenticate, checkProAccess, validate(updateRuleSchema), youtubeController.updateRule);
-router.delete('/rules/:id', authenticate, checkProAccess, youtubeController.deleteRule);
+router.put('/rules/:id', authenticate, checkProAccess, validate(updateRuleSchema), verifyResourceOwnership('youtubeAutomationRule'), youtubeController.updateRule);
+router.delete('/rules/:id', authenticate, checkProAccess, verifyResourceOwnership('youtubeAutomationRule'), youtubeController.deleteRule);
 
 // ── Analytics ──────────────────────────────────────────────────────────────
 router.get('/analytics', authenticate, checkProAccess, youtubeController.getAnalytics);

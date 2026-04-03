@@ -4,10 +4,12 @@ const analyticsController = require('../controllers/analyticsController');
 const { authenticate } = require('../middleware/auth');
 const checkProAccess = require('../middleware/checkProAccess');
 const { cacheRoute } = require('../utils/cache');
+const validate = require('../middleware/validate');
+const { recordSnapshotSchema, getMonthlyAnalyticsSchema } = require('../validators/analytics');
 
 router.get('/dashboard', authenticate, checkProAccess, cacheRoute(300, 'analytics'), analyticsController.getDashboard);
-router.post('/snapshot', authenticate, checkProAccess, analyticsController.recordSnapshot);
-router.get('/monthly', authenticate, checkProAccess, cacheRoute(300, 'analytics'), analyticsController.getMonthlyAnalytics);
+router.post('/snapshot', authenticate, checkProAccess, validate(recordSnapshotSchema), analyticsController.recordSnapshot);
+router.get('/monthly', authenticate, checkProAccess, cacheRoute(300, 'analytics'), validate(getMonthlyAnalyticsSchema), analyticsController.getMonthlyAnalytics);
 // Debug routes ONLY available in Development or for Admin
 router.get('/debug', authenticate, (req, res, next) => {
     // Security Restriction: Debug endpoints expose internal Meta API objects

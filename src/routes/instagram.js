@@ -2,23 +2,19 @@ const express = require('express');
 const router = express.Router();
 const instagramController = require('../controllers/instagramController');
 const { authenticate } = require('../middleware/auth');
-
-const { uploadVideoS3, uploadTempVideo, validateFileContent } = require('../middleware/upload');
-const checkUploadLimit = require('../middleware/checkUploadLimit');
+const validate = require('../middleware/validate');
+const { getPostInsightsSchema, oauthCallbackSchema } = require('../validators/instagram');
 
 // OAuth Flows (initiate requires auth to prevent account hijacking)
 router.get('/initiate', authenticate, instagramController.initiateAuth);
-router.get('/callback', instagramController.handleOAuthCallback);
-
-// Reel Upload (Synchronous/Reliable)
-router.post('/upload-reel', authenticate, checkUploadLimit, uploadTempVideo.single('file'), validateFileContent, instagramController.uploadAndPostReel);
+router.get('/callback', validate(oauthCallbackSchema), instagramController.handleOAuthCallback);
 
 // Account & Analytics
 router.get('/account', authenticate, instagramController.getAccountDetails);
 router.post('/disconnect', authenticate, instagramController.disconnectAccount);
 router.get('/stats', authenticate, instagramController.getAnalytics);
 router.get('/media', authenticate, instagramController.getPosts);
-router.get('/media/:mediaId/insights', authenticate, instagramController.getPostInsights);
+router.get('/media/:mediaId/insights', authenticate, validate(getPostInsightsSchema), instagramController.getPostInsights);
 
 // For historical trend data (stored in Mongoose)
 router.get('/history', authenticate, async (req, res) => {
