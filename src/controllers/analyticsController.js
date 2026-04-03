@@ -155,7 +155,7 @@ const getDashboard = async (req, res) => {
       };
     }
 
-    // Get previous snapshot for comparison (e.g. yesterday)
+    // Improved Previous Snapshot Lookup (find most recent snapshot before today)
     const yesterday = new Date(startOfToday);
     yesterday.setDate(yesterday.getDate() - 1);
     const startOfYesterday = new Date(yesterday);
@@ -164,38 +164,36 @@ const getDashboard = async (req, res) => {
     const previousSnapshot = await prisma.analyticsSnapshot.findFirst({
       where: {
         userId: req.userId,
-        snapshotDate: { lt: startOfToday, gte: startOfYesterday }
-      },
-      orderBy: { snapshotDate: 'desc' }
-    }) || await prisma.analyticsSnapshot.findFirst({
-      where: {
-        userId: req.userId,
         snapshotDate: { lt: startOfToday }
       },
       orderBy: { snapshotDate: 'desc' }
     });
 
-    // Calculate growth
+    // Calculate growth (Today)
     const followerGrowth = (liveStats.followers_count && previousSnapshot)
       ? liveStats.followers_count - (previousSnapshot.followers ?? 0)
       : 0;
 
-    // Growth last 30 days
+    // Growth last 30 days (Find earliest snapshot in history to provide baseline)
     const thirtyDaysAgo = new Date(startOfToday);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
     const snapshot30d = await prisma.analyticsSnapshot.findFirst({
       where: {
         userId: req.userId,
         snapshotDate: { gte: thirtyDaysAgo }
       },
       orderBy: { snapshotDate: 'asc' }
+    }) || await prisma.analyticsSnapshot.findFirst({
+      where: { userId: req.userId },
+      orderBy: { snapshotDate: 'asc' }
     });
 
-    const followerGrowth30d = (liveStats.followers_count && snapshot30d)
+    const followerGrowth30d = (liveStats.followers_count && snapshot30d && snapshot30d.id !== latestSnapshot?.id)
       ? liveStats.followers_count - (snapshot30d.followers ?? 0)
       : 0;
 
-    // Get history (last 30 days)
+    // Get history (last 30 days) for internal tracking/charting
     const history = await prisma.analyticsSnapshot.findMany({
       where: {
         userId: req.userId,
@@ -254,11 +252,12 @@ const getDashboard = async (req, res) => {
       where: { userId: req.userId }
     });
 
-    // Fetch total comments and reels count from media list
+    // Fetch total comments and reels count from media list (ensure decrypted token is used)
     let totalComments = 0;
     let reelsCount = 0;
     try {
-      const media = await instagramService.getUserMedia(account.instagramId, account.instagramAccessToken);
+      const decryptedToken = decrypt(account.instagramAccessToken);
+      const media = await instagramService.getUserMedia(account.instagramId, decryptedToken || account.instagramAccessToken);
       if (media && media.length > 0) {
         totalComments = media.reduce((sum, m) => sum + (m.comments_count || 0), 0);
         reelsCount = media.filter(m => m.media_type === 'VIDEO').length;

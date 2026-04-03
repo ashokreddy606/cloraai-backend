@@ -109,6 +109,7 @@ model User {
   dmAutomations         DMAutomation[]
   dmInteractions        DmInteraction[]
   analyticsSnapshot     AnalyticsSnapshot[]
+  youtubeSnapshots      YoutubeAnalyticsSnapshot[]
   notifications         Notification[]
   aiUsage               AIUsage[]
   brandDealInteractions BrandDealInteraction[]
@@ -495,16 +496,31 @@ model YoutubeAutomationRule {
 }
 
 model YoutubeLead {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userId String @db.ObjectId
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  name   String
-  email  String
-  phone  String?
-  source String  @default("youtube")
-  channelId String? // Link to specific YouTube channel
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  email     String
+  phone     String?
+  source    String   @default("youtube")
+  channelId String?
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+model YoutubeAnalyticsSnapshot {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String    @db.ObjectId
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscribers  Int?      @default(0)
+  views        Int?      @default(0)
+  videos       Int?      @default(0)
+  snapshotDate DateTime? @default(now())
+  createdAt    DateTime? @default(now())
+
+  @@unique([userId, snapshotDate])
+  @@index([userId])
+  @@index([snapshotDate])
+  @@map("youtubeanalyticsstats")
 }

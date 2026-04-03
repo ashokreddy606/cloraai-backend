@@ -685,7 +685,69 @@ exports.getChannelAnalytics = async (req, res) => {
             topVideos,
         };
 
-        logger.info('YOUTUBE', 'Analytics response prepared', { views28d: responsePayload.stats.views28d, views90d: responsePayload.stats.views90d });
+        // ── Subscriber Snapshot & Growth Implementation ──
+        const currentSubs = parseInt(stats.subscriberCount || 0);
+        const startOfToday = dayjs().startOf('day').toDate();
+
+        // 1. Snapshot today (upsert)
+        await prisma.youtubeAnalyticsSnapshot.upsert({
+            where: { userId_snapshotDate: { userId: req.userId, snapshotDate: startOfToday } },
+            create: { userId: req.userId, snapshotDate: startOfToday, subscribers: currentSubs, views: parseInt(stats.viewCount || 0), videos: parseInt(stats.videoCount || 0) },
+            update: { subscribers: currentSubs, views: parseInt(stats.viewCount || 0), videos: parseInt(stats.videoCount || 0) }
+        }).catch(err => logger.warn('YOUTUBE', 'Snapshot failed', { error: err.message }));
+
+        // 2. Fetch baseline for "Today" (most recent before today)
+        const prevSnapshot = await prisma.youtubeAnalyticsSnapshot.findFirst({
+            where: { userId: req.userId, snapshotDate: { lt: startOfToday } },
+            orderBy: { snapshotDate: 'desc' }
+        });
+        responsePayload.stats.subscriberGrowthToday = prevSnapshot ? Math.max(0, currentSubs - (prevSnapshot.subscribers || 0)) : 0;
+
+        // 3. Fetch baseline for "28D" (earliest in last 30d or absolute earliest)
+        const minus30dDate = dayjs().subtract(30, 'day').startOf('day').toDate();
+        const snapshot28d = await prisma.youtubeAnalyticsSnapshot.findFirst({
+            where: { userId: req.userId, snapshotDate: { gte: minus30dDate, lt: startOfToday } },
+            orderBy: { snapshotDate: 'asc' }
+        }) || await prisma.youtubeAnalyticsSnapshot.findFirst({
+            where: { userId: req.userId },
+            orderBy: { snapshotDate: 'asc' }
+        });
+        responsePayload.stats.subscriberGrowth28d = (snapshot28d && snapshot28d.snapshotDate < startOfToday) 
+            ? Math.max(0, currentSubs - (snapshot28d.subscribers || 0)) 
+            : 0;
+
+        // ── Automation Activity Implementation (Last 30 Days) ──
+        const automationActivity = await Promise.all(
+            Array.from({ length: 30 }).map(async (_, i) => {
+                const date = dayjs().subtract(29 - i, 'day');
+                const start = date.startOf('day').toDate();
+                const end = date.endOf('day').toDate();
+
+                const [replies, leads] = await Promise.all([
+                    prisma.youtubeComment.count({ where: { userId: req.userId, replied: true, createdAt: { gte: start, lte: end } } }),
+                    prisma.youtubeLead.count({ where: { userId: req.userId, createdAt: { gte: start, lte: end } } })
+                ]);
+
+                return {
+                    date: date.format('MM-DD'),
+                    replies,
+                    leads
+                };
+            })
+        );
+        responsePayload.automationActivity = automationActivity;
+
+        // ── Subscriber History for Charts (Last 30 Days) ──
+        const snapshots = await prisma.youtubeAnalyticsSnapshot.findMany({
+            where: { userId: req.userId, snapshotDate: { gte: minus30dDate } },
+            orderBy: { snapshotDate: 'asc' }
+        });
+        responsePayload.stats.subscriberHistory = snapshots.map(s => s.subscribers || 0);
+
+        logger.info('YOUTUBE', 'Analytics response prepared', { 
+            views28d: responsePayload.stats.views28d, 
+            historyCount: responsePayload.stats.subscriberHistory.length 
+        });
 
         res.json(responsePayload);
 

@@ -117,13 +117,14 @@ class InstagramService {
         // Define supported periods for each metric based on Instagram Graph API v18.0+
         const metricSupport = {
             'reach': ['day', 'days_28'],
+            'views': ['day', 'days_28'], // Unified replacement for impressions
             'impressions': ['day'],
             'profile_views': ['day'],
             'accounts_engaged': ['day'],
             'follower_count': ['day']
         };
 
-        const allMetrics = ['reach', 'impressions', 'profile_views', 'accounts_engaged', 'follower_count'];
+        const allMetrics = ['reach', 'views', 'impressions', 'profile_views', 'accounts_engaged', 'follower_count'];
         
         // Filter metrics that support the requested period
         const supportedMetrics = allMetrics.filter(m => metricSupport[m]?.includes(period));
@@ -213,39 +214,49 @@ class InstagramService {
     }
 
     async getMediaInsights(mediaId, accessToken, mediaType) {
-        const metrics = (mediaType === 'VIDEO' || mediaType === 'REELS')
-            ? ['plays', 'reach', 'impressions', 'total_interactions']
-            : ['impressions', 'reach', 'total_interactions'];
-
-        let combinedInsights = {};
-
-        await Promise.all(metrics.map(async (metric) => {
-            try {
-                const response = await axios.get(`${GRAPH_API_URL}/${mediaId}/insights`, {
-                    params: {
-                        metric,
-                        access_token: accessToken
-                    }
-                });
-
-                if (response.data?.data?.[0]) {
-                    const value = response.data.data[0].values[0].value;
-                    combinedInsights[metric] = value;
-                    if (value > 0) {
-                        logger.info('INSTAGRAM', 'Media Insight fetched', { mediaId, metric, value });
-                    }
-                }
-            } catch (error) {
-                const errorMsg = error.response?.data?.error?.message || error.message;
-                logger.warn('INSTAGRAM', 'Media Insight partial failure', { mediaId, metric, error: errorMsg });
+        try {
+            // For Meta v22.0+, preferring unified 'views' metric
+            let metrics = ['reach', 'total_interactions', 'saved'];
+            
+            if (mediaType === 'VIDEO' || mediaType === 'REELS') {
+                metrics.push('views');
+            } else if (mediaType === 'IMAGE' || mediaType === 'CAROUSEL_ALBUM') {
+                metrics.push('views');
+            } else if (mediaType === 'STORY') {
+                metrics = ['reach', 'replies', 'taps_forward', 'taps_back', 'exits', 'views'];
             }
-        }));
-        
-        // Ensure defaults
-        combinedInsights.reach = combinedInsights.reach || 0;
-        combinedInsights.impressions = combinedInsights.impressions || 0;
-        
-        return combinedInsights;
+
+            const response = await axios.get(`${GRAPH_API_URL}/${mediaId}/insights`, {
+                params: {
+                    metric: metrics.join(','),
+                    access_token: accessToken
+                }
+            });
+
+            const insightsArray = response.data.data;
+            const result = { reach: 0, impressions: 0, plays: 0, total_interactions: 0 };
+            
+            insightsArray.forEach(insight => {
+                const value = insight.values[0]?.value || 0;
+                result[insight.name] = value;
+            });
+            
+            // Map 'views' to 'impressions'/'plays' for backward compatibility in CloraAI logic
+            if (result.views !== undefined) {
+                result.impressions = result.views;
+                result.plays = result.views;
+            }
+
+            if (result.reach > 0 || result.views > 0) {
+                logger.info('INSTAGRAM', 'Media Insight fetched', { mediaId, reach: result.reach, views: result.views });
+            }
+
+            return result;
+        } catch (error) {
+            const errorMsg = error.response?.data?.error?.message || error.message;
+            logger.warn('INSTAGRAM_SERVICE', 'Media Insight partial failure', { mediaId, error: errorMsg });
+            return { reach: 0, impressions: 0, plays: 0, total_interactions: 0 };
+        }
     }
 
     /**
