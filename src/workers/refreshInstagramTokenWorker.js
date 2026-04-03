@@ -2,6 +2,8 @@ const cron = require('node-cron');
 const InstagramAccount = require('../../models/InstagramAccount');
 const instagramService = require('../services/instagramService');
 const logger = require('../utils/logger');
+const prisma = require('../lib/prisma');
+const pushNotificationService = require('../services/pushNotificationService');
 
 /**
  * Worker to refresh Instagram long-lived tokens
@@ -35,6 +37,25 @@ const refreshTokens = async () => {
                 logger.info('WORKER', `Token refreshed for user ${account.userId}`);
             } catch (error) {
                 logger.error('WORKER', `Failed to refresh token for user ${account.userId}:`, { error: error.message });
+                
+                // If token expires in less than 3 days, send a critical notification
+                const threeDaysFromNow = new Date();
+                threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+                
+                if (account.tokenExpiresAt <= threeDaysFromNow) {
+                    const user = await prisma.user.findUnique({ where: { id: account.userId.toString() }, select: { pushToken: true } });
+                    if (user?.pushToken) {
+                        await pushNotificationService.notifyTokenExpired(user.pushToken);
+                        await prisma.notification.create({
+                            data: {
+                                userId: account.userId.toString(),
+                                type: 'critical',
+                                title: '⚠️ Connection Expired!',
+                                body: 'Your Instagram connection has expired. All automations are PAUSED. Tap to reconnect now.',
+                            }
+                        });
+                    }
+                }
             }
         }
     } catch (error) {

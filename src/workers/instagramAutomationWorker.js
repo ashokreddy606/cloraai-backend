@@ -6,6 +6,7 @@ const prisma = require('../lib/prisma');
 const { appConfig } = require('../config');
 const { matchesKeyword } = require('../utils/automationUtils');
 const { generateAIReply } = require('../utils/aiUtils');
+const pushNotificationService = require('../services/pushNotificationService');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -28,6 +29,20 @@ const handleMetaError = async (error, userId, instagramId) => {
             where: { instagramId, userId },
             data: { isConnected: false }
         }).catch(() => {});
+
+        // Notify user about token expiry
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
+        if (user?.pushToken) {
+            await pushNotificationService.notifyTokenExpired(user.pushToken);
+            await prisma.notification.create({
+                data: {
+                    userId,
+                    type: 'system',
+                    title: '⚠️ Instagram Connection Expired',
+                    body: 'Your Instagram connection has expired. All automations are paused. Re-connect now.',
+                }
+            });
+        }
     }
 
     // 429 or 613: Rate limits
@@ -112,6 +127,29 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                             quick_replies: retryQuickReplies
                         }
                     });
+
+                    // Notify user about Follow-Gate Block
+                    const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
+                    if (user?.pushToken) {
+                        try {
+                            const profileUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${senderId}?fields=username&access_token=${apiTokenForVerification}`;
+                            const profileRes = await axios.get(profileUrl);
+                            const username = profileRes.data.username || 'A user';
+                            
+                            await pushNotificationService.notifyFollowGateBlock(user.pushToken, username);
+                            await prisma.notification.create({
+                                data: {
+                                    userId,
+                                    type: 'automation',
+                                    title: '🔒 Follow-Gate Block',
+                                    body: `@${username} was asked to follow before receiving the link.`,
+                                }
+                            });
+                        } catch (err) {
+                            logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send follow-gate notification', { error: err.message });
+                        }
+                    }
+
                     return { success: true, bypassed: false };
                 }
             } catch (err) {
@@ -298,6 +336,29 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 });
                 console.log(`[WORKER:API_SUCCESS] DM Sent for event ${eventId}`);
                 logger.increment('dmSent');
+
+                // Notify user about Automation Win
+                const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
+                if (user?.pushToken) {
+                    try {
+                        const profileUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${senderId}?fields=username&access_token=${apiTokenForDM}`;
+                        const profileRes = await axios.get(profileUrl);
+                        const username = profileRes.data.username || 'A user';
+                        const keyword = matchedRule.keyword || 'your post';
+
+                        await pushNotificationService.notifyAutomationWin(user.pushToken, username, keyword);
+                        await prisma.notification.create({
+                            data: {
+                                userId,
+                                type: 'automation',
+                                title: '🚀 New Link Sent!',
+                                body: `@${username} commented '${keyword}'. Bot replied and DM'd the link.`,
+                            }
+                        });
+                    } catch (err) {
+                        logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send automation win notification', { error: err.message });
+                    }
+                }
             }
         } catch (err) {
             await handleMetaError(err, userId, instagramId);

@@ -152,6 +152,7 @@ class InstagramService {
                     logger.info('INSTAGRAM_SERVICE', `Account Insight: ${metric} (${period}) = ${value}`);
                 }
             } catch (error) {
+                const errorMsg = error.response?.data?.error?.message || error.message;
                 if (!errorMsg.includes('must be one of') && !errorMsg.includes('incompatible with the metric')) {
                     logger.warn('INSTAGRAM_SERVICE', 'Account Insight partial failure', { metric, period, error: errorMsg });
                 }

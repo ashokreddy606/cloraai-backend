@@ -12,6 +12,8 @@ const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const googlePlayService = require('../services/googlePlayService');
 const { cache } = require('../utils/cache');
+const logger = require('../utils/logger');
+const pushNotificationService = require('../services/pushNotificationService');
 
 // ─── Helper: compute days remaining ──────────────────────────────────────────
 const getDaysRemaining = (planEndDate, plan) => {
@@ -135,6 +137,25 @@ const verifyGooglePlayPurchase = async (req, res) => {
         ]);
         
         await cache.clearUserCache(userId);
+
+        // Notify User
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
+        if (user?.pushToken) {
+          try {
+            await pushNotificationService.notifySubscriptionSuccess(user.pushToken, productId === 'cloraai_pro_yearly' ? 'Pro Yearly' : 'Pro Monthly');
+            await prisma.notification.create({
+              data: {
+                userId,
+                type: 'billing',
+                title: '⚡ PRO Activated!',
+                body: `Your ${productId === 'cloraai_pro_yearly' ? 'Yearly' : 'Monthly'} subscription is now active. Enjoy unlimited automations!`,
+              }
+            });
+          } catch (err) {
+            logger.warn('SUBSCRIPTION:NOTIFY_ERROR', 'Failed to send subscription notification', { error: err.message, userId });
+          }
+        }
+
         return res.status(200).json({ success: true, message: 'Subscription activated' });
       }
     } else {
@@ -168,6 +189,26 @@ const verifyGooglePlayPurchase = async (req, res) => {
         ]);
         
         await cache.clearUserCache(userId);
+
+        // Notify User
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
+        if (user?.pushToken) {
+          try {
+            // We can reuse a generic success method or add one to service if needed
+            // For now, let's use a generic notification
+            await prisma.notification.create({
+              data: {
+                userId,
+                type: 'billing',
+                title: '💰 Credits Added!',
+                body: `${creditCount} credits have been added to your account.`,
+              }
+            });
+          } catch (err) {
+            logger.warn('SUBSCRIPTION:NOTIFY_ERROR', 'Failed to create credit notification', { error: err.message, userId });
+          }
+        }
+
         return res.status(200).json({ success: true, message: `${creditCount} credits added` });
       }
     }

@@ -12,6 +12,7 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
 const dayjs = require('dayjs');
+const pushNotificationService = require('../services/pushNotificationService');
 // Mongoose User model removed — all operations now use Prisma
 const transporter = require('../config/mail');
 const relativeTime = require('dayjs/plugin/relativeTime');
@@ -89,6 +90,24 @@ const register = catchAsync(async (req, res, next) => {
         where: { id: referredById },
         data: { totalReferrals: { increment: 1 } }
       });
+      
+      // Notify the inviter
+      const inviter = await tx.user.findUnique({ where: { id: referredById }, select: { pushToken: true, username: true } });
+      if (inviter?.pushToken) {
+        try {
+          await pushNotificationService.notifyReferralSuccess(inviter.pushToken, username || email.split('@')[0]);
+          await tx.notification.create({
+            data: {
+              userId: referredById,
+              type: 'referral',
+              title: '💰 Referral Reward!',
+              body: `@${username || email.split('@')[0]} just signed up using your link. You've earned a reward!`,
+            }
+          });
+        } catch (err) {
+          logger.warn('AUTH:NOTIFY_ERROR', 'Failed to send referral notification', { error: err.message, referrerId: referredById });
+        }
+      }
     }
     return newUser;
   });

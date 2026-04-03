@@ -5,6 +5,7 @@ const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { acquireLock, releaseLock } = require('../utils/redisLock');
 const { getYoutubeOAuth2Client } = require('../config/youtube');
+const pushNotificationService = require('../services/pushNotificationService');
 
 const getOAuth2Client = () => getYoutubeOAuth2Client();
 
@@ -281,6 +282,29 @@ async function processUser(user) {
                             replied: true
                         }
                     }).catch(err => logger.error('YOUTUBE_WORKER', `Failed to save reply record`, err));
+
+                    // Notify User (YouTube Win)
+                    const userFull = await prisma.user.findUnique({ where: { id: user.id }, select: { pushToken: true } });
+                    if (userFull?.pushToken) {
+                        try {
+                            await pushNotificationService.notifyAutomationWin(
+                                userFull.pushToken,
+                                authorDisplayName || 'Someone',
+                                'comment',
+                                'YouTube'
+                            );
+                            await prisma.notification.create({
+                                data: {
+                                    userId: user.id,
+                                    type: 'automation',
+                                    title: '📺 YouTube Reply Sent!',
+                                    body: `Bot replied to @${authorDisplayName || 'user'}'s comment on your video.`,
+                                }
+                            });
+                        } catch (err) {
+                            logger.warn('YOUTUBE_WORKER:NOTIFY_ERROR', 'Failed to send YouTube win notification', { error: err.message, userId: user.id });
+                        }
+                    }
                 }
             } else {
                 // CRITICAL CHANGE: If skipped due to subscriber status or rate limit, 

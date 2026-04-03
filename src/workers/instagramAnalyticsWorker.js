@@ -4,6 +4,8 @@ const instagramService = require('../services/instagramService');
 const InstagramAnalytics = require('../../models/InstagramAnalytics');
 const { decryptToken } = require('../utils/cryptoUtils');
 const logger = require('../utils/logger');
+const pushNotificationService = require('../services/pushNotificationService');
+const prisma = require('../lib/prisma');
 
 /**
  * Task to perform daily Instagram analytics snapshots
@@ -55,6 +57,52 @@ const performDailySnapshots = async () => {
                 );
 
                 logger.info('WORKER', `Snapshot saved for user ${account.userId}`);
+
+                // 5. Check for Milestones (Followers)
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                yesterday.setHours(0, 0, 0, 0);
+
+                const prevSnapshot = await InstagramAnalytics.findOne({ userId: account.userId, date: yesterday });
+                const currentFollowers = stats.followers_count;
+                const prevFollowers = prevSnapshot ? prevSnapshot.followers : 0;
+
+                // Thresholds for milestones
+                const milestones = [100, 500, 1000, 5000, 10000, 50000, 100000];
+                const milestoneHit = milestones.find(m => currentFollowers >= m && prevFollowers < m);
+
+                if (milestoneHit) {
+                    // Use Prisma for the User push token
+                    const user = await prisma.user.findUnique({ where: { id: account.userId.toString() }, select: { pushToken: true } });
+                    if (user?.pushToken) {
+                        await pushNotificationService.notifyAnalyticsMilestone(user.pushToken, 'Followers', milestoneHit);
+                        await prisma.notification.create({
+                            data: {
+                                userId: account.userId.toString(),
+                                type: 'milestone',
+                                title: '🎯 Goal Reached!',
+                                body: `You just hit ${milestoneHit.toLocaleString()} followers on Instagram. Keep it up!`,
+                            }
+                        });
+                    }
+                }
+
+                // 6. Check for Viral Alert (Based on Reach/Impressions growth)
+                // If reach is > 10,000 and has grown more than 50% since yesterday
+                if (totalReach > 10000 && (!prevSnapshot || totalReach > prevSnapshot.reach * 1.5)) {
+                    const user = await prisma.user.findUnique({ where: { id: account.userId.toString() }, select: { pushToken: true } });
+                    if (user?.pushToken) {
+                        await pushNotificationService.notifyViralAlert(user.pushToken, 'your content', totalReach);
+                        await prisma.notification.create({
+                            data: {
+                                userId: account.userId.toString(),
+                                type: 'milestone',
+                                title: '🔥 Viral Alert!',
+                                body: `Your content is taking off with over ${totalReach.toLocaleString()} reach! Ensure your automations are active.`,
+                            }
+                        });
+                    }
+                }
             } catch (error) {
                 logger.error('WORKER', `Failed to process snapshot for user ${account.userId}:`, { error: error.message });
             }

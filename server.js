@@ -75,6 +75,7 @@ const userRoutes = require('./src/routes/user');
 const youtubeRoutes = require('./src/routes/youtube');
 const uploadRoutes = require('./src/routes/upload');
 const accountRoutes = require('./src/routes/account');
+const notificationRoutes = require('./src/routes/notification');
 const webhookController = require('./src/controllers/webhookController');
 
 // Initialize Prisma
@@ -569,6 +570,7 @@ app.use('/api/youtube', youtubeRoutes); // Fallback mount to handle legacy or mi
 app.use('/api/v1/user', checkSubscriptionExpiry, userRoutes);
 app.use('/api/v1/upload', checkSubscriptionExpiry, uploadRoutes);
 app.use('/api/v1/account', accountRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // ─── Webhook Endpoints (Legacy Definitions Handled Above) ───────────────────
 

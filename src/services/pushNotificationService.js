@@ -164,6 +164,79 @@ const notifyAnalyticsMilestone = async (pushToken, milestone, value) => {
     );
 };
 
+/**
+ * Convenience: Automation Win (Keyword Match)
+ */
+const notifyAutomationWin = async (pushToken, username, keyword) => {
+    return sendPushNotification(
+        pushToken,
+        '🚀 New Link Sent!',
+        `@${username} commented '${keyword}' on your reel. Bot replied and DM'd the product.`,
+        { type: 'AUTOMATION_WIN', username, keyword }
+    );
+};
+
+/**
+ * Convenience: Follow-Gate Block
+ */
+const notifyFollowGateBlock = async (pushToken, username) => {
+    return sendPushNotification(
+        pushToken,
+        '🔒 Almost there!',
+        `@${username} commented but doesn't follow you. Bot asked them to follow first.`,
+        { type: 'FOLLOW_GATE_BLOCK', username }
+    );
+};
+
+/**
+ * Convenience: Critical Token Expiry
+ */
+const notifyTokenExpired = async (pushToken) => {
+    return sendPushNotification(
+        pushToken,
+        '⚠️ IMMEDIATE ACTION REQUIRED',
+        'Your Instagram connection has expired. All automations are PAUSED. Tap to reconnect now.',
+        { type: 'TOKEN_EXPIRED' },
+        { priority: 'high' }
+    );
+};
+
+/**
+ * Convenience: Rate Limit / Automation Stopped
+ */
+const notifyAutomationStopped = async (pushToken, username, reason = 'daily DM limit') => {
+    return sendPushNotification(
+        pushToken,
+        '🛑 Automation Error',
+        `We couldn't reply to @${username} because your ${reason} was reached.`,
+        { type: 'AUTOMATION_STOPPED', username, reason }
+    );
+};
+
+/**
+ * Convenience: Viral Alert
+ */
+const notifyViralAlert = async (pushToken, mediaTitle, views) => {
+    return sendPushNotification(
+        pushToken,
+        '🔥 Viral Alert!',
+        `Your Reel "${mediaTitle}" is taking off with ${views.toLocaleString()} views! Ensure your automations are active.`,
+        { type: 'VIRAL_ALERT', mediaTitle, views }
+    );
+};
+
+/**
+ * Convenience: Referral Success
+ */
+const notifyReferralSuccess = async (pushToken, referredUsername) => {
+    return sendPushNotification(
+        pushToken,
+        '💰 Referral Reward!',
+        `@${referredUsername} just signed up using your link. You've earned a reward!`,
+        { type: 'REFERRAL_SUCCESS', referredUsername }
+    );
+};
+
 module.exports = {
     sendPushNotification,
     isLikelyExpoToken,
@@ -171,4 +244,10 @@ module.exports = {
     notifyPostFailure,
     notifySubscriptionRenewal,
     notifyAnalyticsMilestone,
+    notifyAutomationWin,
+    notifyFollowGateBlock,
+    notifyTokenExpired,
+    notifyAutomationStopped,
+    notifyViralAlert,
+    notifyReferralSuccess,
 };
