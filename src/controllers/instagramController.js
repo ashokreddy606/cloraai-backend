@@ -180,7 +180,10 @@ const handleOAuthCallback = async (req, res) => {
     // Redirect to success landing page
     res.redirect(`${FRONTEND_URL}/instagram-success`);
   } catch (error) {
-    logger.error('INSTAGRAM', `OAuth callback failed: ${error.message}`);
+    logger.error('CRYPTO', 'Decryption failed: check if TOKEN_ENCRYPTION_SECRET matches the key used during encryption.', { 
+        error: error.message,
+        secretUsed: process.env.TOKEN_ENCRYPTION_SECRET ? `${process.env.TOKEN_ENCRYPTION_SECRET.substring(0, 3)}***` : 'NONE'
+    });
     res.redirect(`${FRONTEND_URL}/instagram-error?message=Connection+Failed`);
   }
 };
@@ -201,6 +204,11 @@ const getAccountDetails = async (req, res) => {
     }
 
     const accessToken = decrypt(account.instagramAccessToken);
+    if (!accessToken) {
+      logger.error('INSTAGRAM', 'Decryption failed for access token. Account might need reconnection.');
+      return res.status(200).json({ success: true, data: { account: null, isConnected: false } });
+    }
+
     const igUserId = account.instagramId;
 
     const userData = await instagramBreaker.fire(
@@ -263,7 +271,10 @@ const getAnalytics = async (req, res) => {
     const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const stats = await instagramService.getAccountStats(account.instagramId, decrypt(account.instagramAccessToken));
+    const accessToken = decrypt(account.instagramAccessToken);
+    if (!accessToken) return res.status(401).json({ error: 'Invalid access token. Please reconnect Instagram.' });
+
+    const stats = await instagramService.getAccountStats(account.instagramId, accessToken);
 
     logger.info('INSTAGRAM', `Analytics Pulled for user ${req.userId}`);
 
@@ -292,10 +303,12 @@ const getAnalytics = async (req, res) => {
     }
 
     // 3. Comment Aggregation (from Media Service)
-    let totalComments = 0;
     try {
-        const posts = await instagramService.getUserMedia(account.instagramId, decrypt(account.instagramAccessToken));
-        totalComments = posts.reduce((sum, p) => sum + (p.comments_count || 0), 0);
+        const accessToken = decrypt(account.instagramAccessToken);
+        if (accessToken) {
+          const posts = await instagramService.getUserMedia(account.instagramId, accessToken);
+          totalComments = posts.reduce((sum, p) => sum + (p.comments_count || 0), 0);
+        }
     } catch (e) {
       logger.warn('ANALYTICS:COMMENTS', `Failed to aggregate comments for ${req.userId}`);
     }
@@ -341,12 +354,14 @@ const getPosts = async (req, res) => {
     const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
-    const decryptedToken = decrypt(account.instagramAccessToken);
-    const posts = await instagramService.getUserMedia(account.instagramId, decryptedToken);
+    const accessToken = decrypt(account.instagramAccessToken);
+    if (!accessToken) return res.status(401).json({ error: 'Invalid access token. Please reconnect Instagram.' });
+
+    const posts = await instagramService.getUserMedia(account.instagramId, accessToken);
     
     const enrichedPosts = await Promise.all(posts.slice(0, 50).map(async (post) => {
       try {
-        const insights = await instagramService.getMediaInsights(post.id, decryptedToken, post.media_type);
+        const insights = await instagramService.getMediaInsights(post.id, accessToken, post.media_type);
         // Create a display title from caption or metadata
         const displayTitle = post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}`;
         return { ...post, ...insights, title: displayTitle };
@@ -386,6 +401,8 @@ const getPostInsights = async (req, res) => {
     
     // 1. Fetch media basic info to get media_type
     const accessToken = decrypt(account.instagramAccessToken);
+    if (!accessToken) return res.status(401).json({ error: 'Invalid access token. Please reconnect Instagram.' });
+
     const mediaInfoRes = await axios.get(
       `https://graph.facebook.com/${META_GRAPH_VERSION}/${mediaId}?fields=media_type&access_token=${accessToken}`
     );

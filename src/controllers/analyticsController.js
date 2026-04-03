@@ -132,9 +132,9 @@ const getDashboard = async (req, res) => {
     } catch (e) {
       console.warn('Live stats fetch failed, falling back to snapshot:', e.message);
       liveStats = {
-        followers_count: latestSnapshot?.followers || 0,
-        follows_count: latestSnapshot?.following || 0,
-        media_count: latestSnapshot?.posts || 0
+        followers_count: latestSnapshot?.followers ?? 0,
+        follows_count: latestSnapshot?.following ?? 0,
+        media_count: latestSnapshot?.mediaCount ?? 0
       };
     }
 
@@ -160,7 +160,7 @@ const getDashboard = async (req, res) => {
 
     // Calculate growth
     const followerGrowth = (liveStats.followers_count && previousSnapshot)
-      ? liveStats.followers_count - previousSnapshot.followers
+      ? liveStats.followers_count - (previousSnapshot.followers ?? 0)
       : 0;
 
     // Growth last 30 days
@@ -175,7 +175,7 @@ const getDashboard = async (req, res) => {
     });
 
     const followerGrowth30d = (liveStats.followers_count && snapshot30d)
-      ? liveStats.followers_count - snapshot30d.followers
+      ? liveStats.followers_count - (snapshot30d.followers ?? 0)
       : 0;
 
     // Get history (last 30 days)
@@ -190,7 +190,7 @@ const getDashboard = async (req, res) => {
     });
 
     // Real-time unfollow calculation (difference between snapshots)
-    const unfollowed = previousSnapshot && liveStats ? Math.max(0, previousSnapshot.followers - liveStats.followers_count) : 0;
+    const unfollowed = previousSnapshot && liveStats ? Math.max(0, (previousSnapshot.followers ?? 0) - liveStats.followers_count) : 0;
 
     // Fetch automation stats
     const automationRules = await prisma.dMAutomation.findMany({
@@ -257,7 +257,7 @@ const getDashboard = async (req, res) => {
         snapshotDate: { gte: thirtyDaysAgo }
       }
     });
-    const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions || 0), 0);
+    const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions ?? 0), 0);
 
     // Fetch latest 5 automation interactions for real-time feed
     const latestInteractions = await prisma.dmInteraction.findMany({
@@ -286,7 +286,7 @@ const getDashboard = async (req, res) => {
         growth: {
           followerGrowth,
           followerGrowth30d,
-          growthPercentage: previousSnapshot?.followers > 0 ? ((followers - previousSnapshot.followers) / previousSnapshot.followers) * 100 : 0,
+          growthPercentage: (previousSnapshot?.followers ?? 0) > 0 ? ((followers - (previousSnapshot.followers ?? 0)) / (previousSnapshot.followers ?? 0)) * 100 : 0,
           period: 'daily',
           unfollowed,
         },
@@ -301,23 +301,23 @@ const getDashboard = async (req, res) => {
           views30d,
         },
         totalViews: Math.max(
-          latestSnapshot?.impressions || 0,
-          latestSnapshot?.reach || 0,
+          latestSnapshot?.impressions ?? 0,
+          latestSnapshot?.reach ?? 0,
           totalImpressions,
           totalReach
         ),
-        followerHistory: history.map(snap => snap.followers),
-        viewsHistory: history.map(snap => Math.max(snap.impressions || 0, snap.reach || 0)),
-        activityHistory: history.map(snap => snap.reach || 0),
+        followerHistory: history.map(snap => snap.followers ?? 0),
+        viewsHistory: history.map(snap => Math.max(snap.impressions ?? 0, snap.reach ?? 0)),
+        activityHistory: history.map(snap => snap.reach ?? 0),
         automationActivity,
         latestInteractions,
-        unfollowedHistory: history.map(snap => snap.unfollowed || 0), // Future-proofing
+        unfollowedHistory: history.map(snap => snap.unfollowed ?? 0), // Future-proofing
         weeklyData: history.map(snap => ({
           date: snap.snapshotDate,
-          followers: snap.followers,
-          impressions: snap.impressions,
-          reach: snap.reach || 0,
-          unfollowed: snap.unfollowed || 0
+          followers: snap.followers ?? 0,
+          impressions: snap.impressions ?? 0,
+          reach: snap.reach ?? 0,
+          unfollowed: snap.unfollowed ?? 0
         }))
       }
     });
@@ -341,8 +341,12 @@ const recordSnapshot = async (req, res) => {
       return res.status(400).json({ error: 'Instagram not connected' });
     }
 
-    const { decryptToken } = require('../utils/cryptoUtils');
-    const decryptedToken = decryptToken(account.instagramAccessToken);
+    const { decrypt } = require('../utils/cryptoUtils');
+    const decryptedToken = decrypt(account.instagramAccessToken);
+    
+    if (!decryptedToken) {
+        return res.status(401).json({ error: 'Instagram token unreadable. Please reconnect.' });
+    }
 
     const userData = await instagramBreaker.fire(
       `https://graph.facebook.com/${META_GRAPH_VERSION}/${account.instagramId}?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`

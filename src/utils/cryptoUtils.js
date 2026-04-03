@@ -79,8 +79,11 @@ function decrypt(encryptedText) {
 
         return decrypted;
     } catch (error) {
-        logger.error('CRYPTO', 'Decryption failed', { error: error.message });
-        return encryptedText;
+        logger.error('CRYPTO', 'Decryption failed: TOKEN_ENCRYPTION_SECRET likely changed or missing since data was stored.', { 
+            error: error.message,
+            secretUsed: SECRET ? `${SECRET.substring(0, 3)}***` : 'NONE'
+        });
+        return null;
     }
 }
 

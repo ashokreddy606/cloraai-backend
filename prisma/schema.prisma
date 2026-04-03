@@ -249,9 +249,9 @@ model AnalyticsSnapshot {
   userId String @db.ObjectId
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  followers         Int
-  following         Int
-  mediaCount        Int
+  followers         Int?
+  following         Int?
+  mediaCount        Int?
   engagementRate    Float   @default(0)
   impressions       Int     @default(0)
   reach             Int     @default(0)
