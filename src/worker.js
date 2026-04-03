@@ -16,17 +16,11 @@ const { google } = require('googleapis');
 const { s3Client, awsConfig } = require('./config/aws');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const mongoose = require('mongoose');
 const { getYoutubeOAuth2Client } = require('./config/youtube');
-const User = require('../models/User'); // Import Mongoose User model for debugging
+// const User = require('../models/User'); // Deleted in Prisma migration
 
-// Initialize Mongoose (required for Instagram Analytics)
-mongoose.connect(process.env.DATABASE_URL)
-    .then(async () => {
-        logger.info('WORKER', 'Mongoose connected successfully');
-        await debugUserFetching(); // Run diagnostic on startup
-    })
-    .catch((err) => logger.error('WORKER', 'Mongoose connection error:', { error: err.message }));
+// Run diagnostics on startup
+debugUserFetching();
 
 /**
  * Diagnostic function to debug why users might not be found by workers.
@@ -36,8 +30,10 @@ async function debugUserFetching() {
     try {
         logger.info('DEBUG_USER', '--- STARTING USER DIAGNOSTIC ---');
         
-        // Fetch all users using lean() to see raw data regardless of schema
-        const users = await User.find().lean();
+        // Fetch all users using Prisma to see raw data
+        const users = await prisma.user.findMany({
+            include: { instagramAccounts: true }
+        });
         
         console.log("🔥 TOTAL USERS IN DB:", users.length);
 

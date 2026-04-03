@@ -1,5 +1,5 @@
 const axios = require('axios');
-const InstagramAccount = require('../../models/InstagramAccount');
+// const InstagramAccount = require('../../models/InstagramAccount'); // Deleted in Prisma migration
 const { cache } = require('../utils/cache');
 const { createBreaker } = require('../utils/circuitBreaker');
 const instagramService = require('../services/instagramService');
@@ -141,11 +141,31 @@ const handleOAuthCallback = async (req, res) => {
       mediaCount: profileData.media_count || 0
     };
 
-    await InstagramAccount.findOneAndUpdate(
-      { userId: connectionUserId },
-      accountData,
-      { upsert: true, returnDocument: 'after' }
-    );
+    await prisma.instagramAccount.upsert({
+      where: { userId: connectionUserId },
+      create: { 
+        userId: connectionUserId,
+        instagramId: accountData.instagramId,
+        username: accountData.username,
+        pageId: accountData.pageId,
+        pageAccessToken: accountData.pageAccessToken,
+        instagramAccessToken: accountData.instagramAccessToken,
+        tokenExpiresAt: accountData.tokenExpiresAt,
+        mediaCount: accountData.mediaCount,
+        isConnected: true,
+        connectedAt: new Date()
+      },
+      update: {
+        instagramId: accountData.instagramId,
+        username: accountData.username,
+        pageId: accountData.pageId,
+        pageAccessToken: accountData.pageAccessToken,
+        instagramAccessToken: accountData.instagramAccessToken,
+        tokenExpiresAt: accountData.tokenExpiresAt,
+        mediaCount: accountData.mediaCount,
+        isConnected: true
+      }
+    });
 
     // 5. Automated Webhook Subscription (Critical for Auto-DM)
     if (facebookPageId && pageAccessToken) {
@@ -168,7 +188,7 @@ const handleOAuthCallback = async (req, res) => {
 // Fetch Instagram Account Details (/api/v1/instagram/account)
 const getAccountDetails = async (req, res) => {
   try {
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
 
     if (!account) {
       return res.status(200).json({
@@ -240,7 +260,7 @@ const getAccountDetails = async (req, res) => {
 // Fetch Instagram Analytics Dashboard (/api/v1/instagram/analytics)
 const getAnalytics = async (req, res) => {
   try {
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
     const stats = await instagramService.getAccountStats(account.instagramId, decrypt(account.instagramAccessToken));
@@ -318,7 +338,7 @@ const getPosts = async (req, res) => {
     const cachedData = await cache.get(cacheKey);
     if (cachedData) return res.status(200).json({ success: true, data: cachedData });
 
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
     if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
 
     const decryptedToken = decrypt(account.instagramAccessToken);
@@ -354,7 +374,7 @@ const getPosts = async (req, res) => {
 const getPostInsights = async (req, res) => {
   try {
     const { mediaId } = req.params;
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
     
     if (!account) {
       return res.status(404).json({ error: 'Instagram account not connected' });
@@ -395,7 +415,7 @@ const getPostInsights = async (req, res) => {
 // Disconnect Instagram Account
 const disconnectAccount = async (req, res) => {
   try {
-    await InstagramAccount.deleteOne({ userId: req.userId });
+    await prisma.instagramAccount.delete({ where: { userId: req.userId } });
 
     res.status(200).json({
       success: true,

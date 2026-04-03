@@ -1,6 +1,6 @@
 const instagramService = require('../services/instagramService');
-const InstagramAccount = require('../../models/InstagramAccount');
-const InstagramAnalytics = require('../../models/InstagramAnalytics');
+// const InstagramAccount = require('../../models/InstagramAccount'); // Deleted in Prisma migration
+// const InstagramAnalytics = require('../../models/InstagramAnalytics'); // Deleted in Prisma migration
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { cache } = require('../utils/cache');
@@ -12,7 +12,7 @@ logger.info('ANALYTICS', 'Analytics Controller initialized');
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
   try {
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
 
     if (!account) {
       return res.status(200).json({
@@ -37,8 +37,11 @@ const getDashboard = async (req, res) => {
       });
     }
 
-    // Get latest snapshot from mongo
-    let latestSnapshot = await InstagramAnalytics.findOne({ userId: req.userId }).sort({ date: -1 });
+    // Get latest snapshot from prisma
+    let latestSnapshot = await prisma.analyticsSnapshot.findFirst({ 
+      where: { userId: req.userId },
+      orderBy: { snapshotDate: 'desc' } 
+    });
 
     // Auto-refresh impressions if snapshot is older than 1 hour for "real-time" feel
     // OR if forceRefresh is requested by user
@@ -50,7 +53,7 @@ const getDashboard = async (req, res) => {
     let totalImpressions = 0;
     let totalReach = 0;
 
-    if (!latestSnapshot || latestSnapshot.date < oneHourAgo || forceRefresh) {
+    if (!latestSnapshot || latestSnapshot.snapshotDate < oneHourAgo || forceRefresh) {
       try {
         const stats = await instagramService.getAccountStats(account.instagramId, account.instagramAccessToken);
 
@@ -106,14 +109,16 @@ const getDashboard = async (req, res) => {
         }
 
         // Create or Update snapshot
-        latestSnapshot = await InstagramAnalytics.create({
-          userId: req.userId,
-          followers: stats.followers_count || 0,
-          posts: stats.media_count || 0,
-          following: stats.follows_count || 0,
-          impressions: totalImpressions,
-          reach: totalReach,
-          date: new Date()
+        latestSnapshot = await prisma.analyticsSnapshot.create({
+          data: {
+            userId: req.userId,
+            followers: stats.followers_count || 0,
+            posts: stats.media_count || 0,
+            following: stats.follows_count || 0,
+            impressions: totalImpressions,
+            reach: totalReach,
+            snapshotDate: new Date()
+          }
         });
       } catch (e) {
         console.warn('Snapshot refresh failed:', e.message);
@@ -139,13 +144,19 @@ const getDashboard = async (req, res) => {
     const startOfYesterday = new Date(yesterday);
     startOfYesterday.setHours(0, 0, 0, 0);
 
-    const previousSnapshot = await InstagramAnalytics.findOne({
-      userId: req.userId,
-      date: { $lt: startOfToday, $gte: startOfYesterday }
-    }).sort({ date: -1 }) || await InstagramAnalytics.findOne({
-      userId: req.userId,
-      date: { $lt: startOfToday }
-    }).sort({ date: -1 });
+    const previousSnapshot = await prisma.analyticsSnapshot.findFirst({
+      where: {
+        userId: req.userId,
+        snapshotDate: { lt: startOfToday, gte: startOfYesterday }
+      },
+      orderBy: { snapshotDate: 'desc' }
+    }) || await prisma.analyticsSnapshot.findFirst({
+      where: {
+        userId: req.userId,
+        snapshotDate: { lt: startOfToday }
+      },
+      orderBy: { snapshotDate: 'desc' }
+    });
 
     // Calculate growth
     const followerGrowth = (liveStats.followers_count && previousSnapshot)
@@ -155,22 +166,28 @@ const getDashboard = async (req, res) => {
     // Growth last 30 days
     const thirtyDaysAgo = new Date(startOfToday);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const snapshot30d = await InstagramAnalytics.findOne({
-      userId: req.userId,
-      date: { $gte: thirtyDaysAgo }
-    }).sort({ date: 1 });
+    const snapshot30d = await prisma.analyticsSnapshot.findFirst({
+      where: {
+        userId: req.userId,
+        snapshotDate: { gte: thirtyDaysAgo }
+      },
+      orderBy: { snapshotDate: 'asc' }
+    });
 
     const followerGrowth30d = (liveStats.followers_count && snapshot30d)
       ? liveStats.followers_count - snapshot30d.followers
       : 0;
 
     // Get history (last 30 days)
-    const history = await InstagramAnalytics.find({
-      userId: req.userId,
-      date: {
-        $gte: thirtyDaysAgo
-      }
-    }).sort({ date: 1 });
+    const history = await prisma.analyticsSnapshot.findMany({
+      where: {
+        userId: req.userId,
+        snapshotDate: {
+          gte: thirtyDaysAgo
+        }
+      },
+      orderBy: { snapshotDate: 'asc' }
+    });
 
     // Real-time unfollow calculation (difference between snapshots)
     const unfollowed = previousSnapshot && liveStats ? Math.max(0, previousSnapshot.followers - liveStats.followers_count) : 0;
@@ -234,9 +251,11 @@ const getDashboard = async (req, res) => {
     }
 
     // 30-day views
-    const mediaInsights = await InstagramAnalytics.find({
-      userId: req.userId,
-      date: { $gte: thirtyDaysAgo }
+    const mediaInsights = await prisma.analyticsSnapshot.findMany({
+      where: {
+        userId: req.userId,
+        snapshotDate: { gte: thirtyDaysAgo }
+      }
     });
     const views30d = mediaInsights.reduce((sum, m) => sum + (m.impressions || 0), 0);
 
@@ -294,7 +313,7 @@ const getDashboard = async (req, res) => {
         latestInteractions,
         unfollowedHistory: history.map(snap => snap.unfollowed || 0), // Future-proofing
         weeklyData: history.map(snap => ({
-          date: snap.date,
+          date: snap.snapshotDate,
           followers: snap.followers,
           impressions: snap.impressions,
           reach: snap.reach || 0,
@@ -403,7 +422,7 @@ const getMonthlyAnalytics = async (req, res) => {
 // Debug endpoint - shows raw API results to diagnose view count issues
 const debugViews = async (req, res) => {
   try {
-    const account = await InstagramAccount.findOne({ userId: req.userId });
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
     if (!account) return res.status(404).json({ error: 'No Instagram account found' });
 
     const results = {};
