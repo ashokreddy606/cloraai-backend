@@ -148,12 +148,13 @@ const handleWebhook = async (req, res) => {
 
         // Supported objects: 'instagram' (for DMs/Direct Comments) and 'page' (for Page Feed Comments)
         if (body.object !== 'instagram' && body.object !== 'page') {
-            logger.debug('WEBHOOK:IGNORED_OBJECT', `Ignored object type: ${body.object}`);
+            logger.info('WEBHOOK:IGNORED_OBJECT', `Ignored object type: ${body.object}`);
             return;
         }
 
         for (const entry of body.entry) {
-            logger.debug('WEBHOOK', `Processing entry ${entry.id}`);
+            logger.info('WEBHOOK', `Processing entry ${entry.id}`);
+            logger.info('WEBHOOK:RAW_PAYLOAD', 'Raw Entry Payload', { entry: JSON.stringify(entry) });
             
             // A. Handle Comments (Direct Instagram OR Page Feed)
             const changes = entry.changes || [];
@@ -163,7 +164,7 @@ const handleWebhook = async (req, res) => {
 
                 if (isInstagramComment || isPageFeedComment) {
                     const comment = change.value;
-                    logger.debug('WEBHOOK:COMMENT', 'Comment event received', { commentId: comment.id || comment.comment_id });
+                    logger.info('WEBHOOK:COMMENT', 'Comment event received', { commentId: comment.id || comment.comment_id });
                     
                     const commentId = comment.id || comment.comment_id;
                     const mediaId = comment.media?.id || comment.media_id || comment.post_id;
