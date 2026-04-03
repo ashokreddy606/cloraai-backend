@@ -55,6 +55,11 @@ async function processAccount(account) {
     try {
         const accessToken = decrypt(account.instagramAccessToken);
         const pageAccessToken = account.pageAccessToken ? decrypt(account.pageAccessToken) : null;
+
+        if (!accessToken) {
+            logger.warn('IG_POLL_WORKER', `Skipping account ${account.instagramId}: Token decryption failed. Reconnection required.`);
+            return;
+        }
         
         // 1. Fetch latest 3 media
         const mediaList = await instagramService.getUserMedia(account.instagramId, accessToken);

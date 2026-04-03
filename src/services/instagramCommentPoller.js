@@ -49,6 +49,11 @@ const pollInstagramComments = async () => {
         for (const account of accountsWithActiveRules) {
             try {
                 const decryptedUserToken = decryptToken(account.instagramAccessToken);
+                if (!decryptedUserToken) {
+                    logger.warn('CRON:POLLER', `Skipping account ${account.instagramId}: User token decryption failed.`);
+                    continue;
+                }
+                
                 // The worker requires pageAccessToken for direct DMs and graph actions. 
                 const decryptedPageToken = account.pageAccessToken ? decryptToken(account.pageAccessToken) : null;
                 

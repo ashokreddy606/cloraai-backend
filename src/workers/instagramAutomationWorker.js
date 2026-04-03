@@ -59,6 +59,11 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
     // STEP 1 & 6: Log full job data and worker start
     console.log("WORKER RECEIVED JOB:", job.data);
     logger.info('WORKER:START', `Worker picked up ${isDM ? 'DM' : 'comment'} job: ${eventId}`, { jobId: job.id, data: job.data });
+    
+    if (!instagramAccessToken && !pageAccessToken) {
+        logger.warn('WORKER:SKIP', `No valid access token available for job ${job.id}. Decryption might have failed.`, { userId });
+        return { skipped: true, reason: 'Missing access tokens' };
+    }
 
     try {
         if (!userId || !senderId || !incomingText) {
