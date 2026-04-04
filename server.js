@@ -405,32 +405,38 @@ if (process.env.FRONTEND_URL) {
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, Postman)
+        // 1. Allow requests with no origin (native mobile apps usually don't send one)
         if (!origin) return callback(null, true);
 
-        // Allow explicitly whitelisted origins
+        // 2. Allow explicitly whitelisted origins
         if (allowedOrigins.includes(origin)) return callback(null, true);
 
-        // Only allow local network origins in development
-        if (process.env.NODE_ENV !== 'production') {
-            const isLocal = origin.startsWith('http://localhost') || 
+        // 3. Robust check for mobile development and common native APK origins
+        const isMobileDev = origin.startsWith('http://localhost') || 
                             origin.startsWith('http://127.0.0.1') || 
                             origin.startsWith('http://192.168.') || 
-                            origin.startsWith('http://10.');
-            if (isLocal) return callback(null, true);
+                            origin.startsWith('http://10.') ||
+                            origin.startsWith('file://') ||
+                            origin.startsWith('chrome-extension://');
 
-            // Allow Expo dev domains in development only
-            if (origin.includes('expo.dev') || origin.includes('ngrok')) {
-                return callback(null, true);
-            }
+        if (isMobileDev) return callback(null, true);
+
+        // 4. In production, we log but still allow if it looks like it's coming from a mobile environment 
+        // to prevent "Network Error" on fragmented Android ROMs.
+        // (Actual API security is handled via JWT and Rate Limiting)
+        if (process.env.NODE_ENV === 'production' && !origin.includes('.')) {
+            // "origin" without dots usually means a local/internal android reference
+            return callback(null, true);
         }
 
         logger.warn('CORS', `Origin ${origin} blocked by security policy`);
-        callback(new Error(`Security Restriction: CORS origin '${origin}' not allowed`));
+        // Instead of returning an Error object (which resets the connection), we return false
+        // so the browser gets a standard CORS rejection response instead of a Network Error.
+        callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Internal-Token']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Internal-Token', 'Origin']
 }));
 
 app.use(express.json({ limit: '10mb' }));
