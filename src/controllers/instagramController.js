@@ -177,6 +177,9 @@ const handleOAuthCallback = async (req, res) => {
 
     logger.info('INSTAGRAM', `Instagram Connected for user ${connectionUserId}`);
 
+    // ✅ NEW: Notify user of successful connection
+    pushNotificationService.notifyLinkSuccess(connectionUserId, 'instagram').catch(() => {});
+
     // Redirect to success landing page
     res.redirect(`${FRONTEND_URL}/instagram-success`);
   } catch (error) {

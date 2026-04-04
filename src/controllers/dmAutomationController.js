@@ -109,8 +109,10 @@ const createRule = async (req, res) => {
       }
     });
 
-    // ✅ ULTRA-SPEED: Invalidate rules cache for this user
     await cache.del(`rules:ig:${req.userId}`);
+    
+    // ✅ NEW: Notify user of successful creation
+    pushNotificationService.sendAutomationActiveNotification(req.userId, 'instagram', rule.keyword || 'AI').catch(() => {});
 
     res.status(201).json({
       success: true,
@@ -263,6 +265,9 @@ const deleteRule = async (req, res) => {
 
     // ✅ ULTRA-SPEED: Invalidate rules cache for this user
     await cache.del(`rules:ig:${req.userId}`);
+
+    // ✅ NEW: Notify user of deletion
+    pushNotificationService.notifyAutomationDeleted(req.userId, 'instagram', existingRule.keyword || 'AI').catch(() => {});
 
     res.status(200).json({
       success: true,

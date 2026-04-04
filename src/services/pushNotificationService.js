@@ -53,6 +53,8 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
         messages.push({
             to: pushToken,
             sound: 'default',
+            priority: 'high', // Ensure visibility on lock screen
+            channelId: 'default', // Android channel
             title,
             body,
             data,
@@ -125,9 +127,11 @@ const createAndSendNotification = async (userId, { type, title, body, data = {},
         const notification = await prisma.notification.create({
             data: {
                 userId,
-                type,
+                type: type || 'system',
                 title,
                 body,
+                icon: options.icon || 'notifications',
+                color: options.color || '#6D28D9',
                 read: false,
             }
         });
@@ -353,5 +357,35 @@ module.exports = {
     notifySubscriptionSuccess,
     notifyCreditsAdded,
     notifyAILimitHit,
+    notifyCreditsAdded,
+    notifyAILimitHit,
     sendAutomationActiveNotification,
+    notifyAutomationDeleted: async (userId, platform, keyword) => {
+        return createAndSendNotification(userId, {
+            type: 'automation',
+            title: '🗑️ Automation Removed',
+            body: `Your ${platform} automation for '${keyword}' was deleted.`,
+            options: { icon: 'trash-outline', color: '#EF4444' }
+        });
+    },
+    notifyLinkSuccess: async (userId, platform) => {
+        const isYT = platform === 'youtube';
+        return createAndSendNotification(userId, {
+            type: 'account',
+            title: `🔗 ${isYT ? 'YouTube' : 'Instagram'} Connected`,
+            body: `Successfully linked your ${isYT ? 'YouTube channel' : 'Instagram account'} to CloraAI!`,
+            options: { 
+                icon: isYT ? 'logo-youtube' : 'logo-instagram', 
+                color: isYT ? '#FF0000' : '#E1306C' 
+            }
+        });
+    },
+    notifyAccountAction: async (userId, title, body) => {
+        return createAndSendNotification(userId, {
+            type: 'account',
+            title,
+            body,
+            options: { icon: 'person-circle-outline', color: '#6366F1' }
+        });
+    }
 };

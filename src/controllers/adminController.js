@@ -1040,33 +1040,7 @@ const broadcastNotification = async (req, res) => {
         }
         // target === 'all' → where stays {} → all users
 
-        const users = await prisma.user.findMany({
-            where,
-            select: { id: true, pushToken: true },
-        });
 
-        const results = await Promise.allSettled(
-            users.map(async (u) => {
-                await prisma.notification.create({
-                    data: { userId: u.id, type, icon: 'megaphone', color: '#7C3AED', title, body },
-                });
-            })
-        );
-
-        const pushTokens = users
-            .map((u) => u.pushToken)
-            .filter(Boolean);
-
-        if (pushTokens.length > 0) {
-            await pushNotificationService.sendPushNotification(
-                pushTokens,
-                title,
-                body,
-                { type: type || 'system' }
-            );
-        }
-
-        const sent = results.filter(r => r.status === 'fulfilled').length;
         logAdminAction(req.userId, 'BROADCAST_NOTIFICATION', `target:${target}`);
         res.json({ success: true, message: `Notification sent to ${sent}/${users.length} users` });
     } catch (error) {

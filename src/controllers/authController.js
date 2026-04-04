@@ -327,6 +327,10 @@ const updateProfile = async (req, res) => {
         ...(bio !== undefined && { bio: bio || null })
       }
     });
+
+    // ✅ NEW: Notify user of profile update
+    pushNotificationService.notifyAccountAction(req.userId, '👤 Profile Updated', 'Your profile information has been successfully updated.').catch(() => {});
+
     res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber, bio: user.bio } } });
   } catch (error) {
     logger.error('AUTH', 'Update profile error', { error: error.message, userId: req.userId });

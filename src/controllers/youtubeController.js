@@ -232,6 +232,9 @@ exports.handleCallback = async (req, res) => {
 
         logger.info('YOUTUBE_CALLBACK', 'YouTube account connected successfully', { userId, channelId });
 
+        // ✅ NEW: Notify user of successful connection
+        pushNotificationService.notifyLinkSuccess(userId, 'youtube').catch(() => {});
+
         // 7. Success Redirect
         // Use dynamic return URL from state if provided, otherwise fallback to default
         const redirectUrl = returnTo || getRedirectUrl('youtube-success');
@@ -402,6 +405,9 @@ exports.createRule = async (req, res) => {
         // ✅ ULTRA-SPEED: Invalidate rules cache for this user
         await cache.del(`rules:yt:${req.userId}`);
 
+        // ✅ NEW: Notify user of successful creation
+        pushNotificationService.sendAutomationActiveNotification(req.userId, 'youtube', rule.keyword).catch(() => {});
+
         res.status(201).json(rule);
     } catch (error) {
         // P2002 = Prisma unique constraint, 11000 = MongoDB native duplicate key
@@ -470,6 +476,9 @@ exports.deleteRule = async (req, res) => {
 
         // ✅ ULTRA-SPEED: Invalidate rules cache for this user
         await cache.del(`rules:yt:${req.userId}`);
+
+        // ✅ NEW: Notify user of deletion (we use generic 'Keyword' as we don't have existing rule data easily here without a fetch)
+        pushNotificationService.notifyAutomationDeleted(req.userId, 'youtube', 'Keyword').catch(() => {});
 
         res.json({ success: true });
     } catch (error) {
