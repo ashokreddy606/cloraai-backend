@@ -335,9 +335,8 @@ app.set('query parser', 'simple');
 
 // Trust the first proxy (Nginx / AWS ALB / Cloud Run) so express-rate-limit
 // and IP-based logic see the real client IP from X-Forwarded-For, not the proxy.
-// IMPORTANT: Only set to 1 (single trusted proxy). Set to the actual number of
-// proxies in front of your app in production if stacked.
-app.set('trust proxy', 1);
+// IMPORTANT: Set to true on Railway to trust the full proxy chain.
+app.set('trust proxy', true);
 
 // Compress responses
 app.use(compression());

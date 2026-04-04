@@ -31,6 +31,19 @@ const removeInvalidPushTokens = async (tokens) => {
 };
 
 /**
+ * Ensures a color is a valid 6-digit hex string with # prefix.
+ */
+const sanitizeHexColor = (color) => {
+    if (!color || typeof color !== 'string') return '#6D28D9'; // Default Clora Purple
+    let hex = color.startsWith('#') ? color : `#${color}`;
+    // Simple regex for #RRGGBB or #AARRGGBB
+    if (/^#([0-9A-F]{3}){1,2}$/i.test(hex) || /^#([0-9A-F]{4}){1,2}$/i.test(hex)) {
+        return hex;
+    }
+    return '#6D28D9';
+};
+
+/**
  * Send a push notification to one or more Expo push tokens.
  * 
  * @param {string|string[]} pushTokens - Expo push token(s) to send to
@@ -50,7 +63,8 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
             logger.warn('PUSH', `Invalid Expo push token: ${pushToken}`);
             continue;
         }
-        messages.push({
+
+        const message = {
             to: pushToken,
             sound: 'default',
             priority: 'high', // Ensure visibility on lock screen
@@ -59,7 +73,14 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
             body,
             data,
             ...options,
-        });
+        };
+
+        // Strict validation: color must be a valid hex for Android push!
+        if (message.color) {
+            message.color = sanitizeHexColor(message.color);
+        }
+
+        messages.push(message);
     }
 
     if (messages.length === 0) return { sent: 0, failed: 0 };
@@ -355,8 +376,6 @@ module.exports = {
     notifyReferralSuccess,
     notifyYouTubeWin,
     notifySubscriptionSuccess,
-    notifyCreditsAdded,
-    notifyAILimitHit,
     notifyCreditsAdded,
     notifyAILimitHit,
     sendAutomationActiveNotification,
