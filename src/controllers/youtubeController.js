@@ -329,7 +329,7 @@ exports.getRules = async (req, res) => {
 
 exports.createRule = async (req, res) => {
     try {
-        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, subscriberOnly, onlySubscribers, appendLinks, link1, link2, link3, link4 } = req.body;
+        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, subscriberOnly, onlySubscribers, appendLinks, link1, link2, link3, link4, isAI, triggerType } = req.body;
         if (!keyword || !replyMessage) {
             return res.status(400).json({ error: 'Keyword and replyMessage are required' });
         }
@@ -388,6 +388,8 @@ exports.createRule = async (req, res) => {
                 limitPerHour: limitPerHour || 20,
                 videoId: normalizedVideoId,
                 onlySubscribers: onlySubscribers !== undefined ? onlySubscribers : (subscriberOnly || false),
+                isAI: isAI || false,
+                triggerType: triggerType || 'keywords',
                 appendLinks: appendLinks || false,
                 link1: link1 || null,
                 link2: link2 || null,
@@ -414,7 +416,7 @@ exports.createRule = async (req, res) => {
 exports.updateRule = async (req, res) => {
     try {
         const { id } = req.params;
-        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, subscriberOnly, onlySubscribers, appendLinks, link1, link2, link3, link4 } = req.body;
+        const { keyword, replyMessage, isActive, replyDelay, limitPerHour, videoId, subscriberOnly, onlySubscribers, appendLinks, link1, link2, link3, link4, isAI, triggerType } = req.body;
         const existing = await prisma.youtubeAutomationRule.findFirst({ where: { id, userId: req.userId } });
         if (!existing) return res.status(404).json({ error: 'Rule not found' });
         const updated = await prisma.youtubeAutomationRule.update({
@@ -428,6 +430,8 @@ exports.updateRule = async (req, res) => {
                 videoId: videoId !== undefined ? (videoId || null) : existing.videoId,
                 onlySubscribers: onlySubscribers !== undefined ? onlySubscribers : (subscriberOnly !== undefined ? subscriberOnly : existing.onlySubscribers),
                 appendLinks: appendLinks !== undefined ? appendLinks : existing.appendLinks,
+                isAI: isAI !== undefined ? isAI : existing.isAI,
+                triggerType: triggerType !== undefined ? triggerType : existing.triggerType,
                 link1: link1 !== undefined ? (link1 || null) : existing.link1,
                 link2: link2 !== undefined ? (link2 || null) : existing.link2,
                 link3: link3 !== undefined ? (link3 || null) : existing.link3,
@@ -742,7 +746,14 @@ exports.getChannelAnalytics = async (req, res) => {
             where: { userId: req.userId, snapshotDate: { gte: minus30dDate } },
             orderBy: { snapshotDate: 'asc' }
         });
-        responsePayload.stats.subscriberHistory = snapshots.map(s => s.subscribers || 0);
+        
+        if (snapshots.length === 1) {
+            // For a single point, create a baseline (same value) so the chart renders a flat line
+            const singleVal = snapshots[0].subscribers || 0;
+            responsePayload.stats.subscriberHistory = [singleVal, singleVal];
+        } else {
+            responsePayload.stats.subscriberHistory = snapshots.map(s => s.subscribers || 0);
+        }
 
         logger.info('YOUTUBE', 'Analytics response prepared', { 
             views28d: responsePayload.stats.views28d, 
@@ -865,6 +876,7 @@ exports.getVideoAnalytics = async (req, res) => {
 // ── Video Management ──────────────────────────────────────────────────────
 
 exports.getUserVideos = async (req, res) => {
+    logger.info('YOUTUBE', 'FETCH_VIDEOS_REQUEST', { userId: req.userId });
     try {
         const { youtube, client } = await getYoutubeClientForUser(req.userId);
         const { maxResults = 20 } = req.query;

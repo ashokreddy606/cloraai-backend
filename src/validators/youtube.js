@@ -18,6 +18,8 @@ const createRuleSchema = z.object({
         link2: z.string().url().max(2048).optional().nullable().or(z.literal('')),
         link3: z.string().url().max(2048).optional().nullable().or(z.literal('')),
         link4: z.string().url().max(2048).optional().nullable().or(z.literal('')),
+        isAI: z.boolean().optional().default(false),
+        triggerType: z.string().trim().optional().default('keywords'),
     }),
 });
 

@@ -11,6 +11,12 @@ const verifyResourceOwnership = require('../middleware/ownership');
 
 router.use(youtubeGuard);
 
+// ── Videos (Picker) ──────────────────────────────────────────────────────
+router.get('/videos', (req, res, next) => {
+    logger.info('YOUTUBE', 'FETCH_VIDEOS_ROUTER_HIT', { path: req.path });
+    next();
+}, authenticate, youtubeController.getUserVideos);
+
 // ── OAuth Flow ─────────────────────────────────────────────────────────────
 router.get('/auth', authenticate, youtubeController.getAuthUrl);
 router.get('/callback', youtubeController.handleCallback);
@@ -28,5 +34,8 @@ router.get('/analytics', authenticate, checkProAccess, youtubeController.getAnal
 
 // ── Channel Analytics (Real YouTube Data API) ─────────────────────────────
 router.get('/channel-analytics', authenticate, youtubeController.getChannelAnalytics);
+
+// ── Videos ───────────────────────────────────────────────────────────────
+router.get('/videos', authenticate, youtubeController.getUserVideos);
 
 module.exports = router;

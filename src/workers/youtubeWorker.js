@@ -188,11 +188,11 @@ async function processUser(user) {
 
             // Keyword matching — video-specific rule takes priority over global
             let matchedRule = user.youtubeRules.find(
-                r => r.videoId === videoId && textDisplay.includes(r.keyword.toLowerCase())
+                r => r.videoId === videoId && (r.triggerType === 'any' || textDisplay.includes(r.keyword.toLowerCase()))
             );
             if (!matchedRule) {
                 matchedRule = user.youtubeRules.find(
-                    r => !r.videoId && textDisplay.includes(r.keyword.toLowerCase())
+                    r => !r.videoId && (r.triggerType === 'any' || textDisplay.includes(r.keyword.toLowerCase()))
                 );
             }
             if (!matchedRule) {

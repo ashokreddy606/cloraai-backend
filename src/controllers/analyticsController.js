@@ -170,9 +170,19 @@ const getDashboard = async (req, res) => {
     });
 
     // Calculate growth (Today)
-    const followerGrowth = (liveStats.followers_count && previousSnapshot)
-      ? liveStats.followers_count - (previousSnapshot.followers ?? 0)
-      : 0;
+    let followerGrowth = 0;
+    if (liveStats.followers_count && previousSnapshot) {
+        followerGrowth = liveStats.followers_count - (previousSnapshot.followers ?? 0);
+    } else if (liveStats.followers_count) {
+        // New user baseline: check if we have an early snapshot from today
+        const firstToday = await prisma.analyticsSnapshot.findFirst({
+            where: { userId: req.userId, snapshotDate: { gte: startOfToday } },
+            orderBy: { snapshotDate: 'asc' }
+        });
+        if (firstToday && latestSnapshot && firstToday.id !== latestSnapshot.id) {
+            followerGrowth = liveStats.followers_count - (firstToday.followers ?? 0);
+        }
+    }
 
     // Growth last 30 days (Find earliest snapshot in history to provide baseline)
     const thirtyDaysAgo = new Date(startOfToday);
@@ -317,6 +327,7 @@ const getDashboard = async (req, res) => {
           views30d,
         },
         totalViews: Math.max(
+          views30d, // Prioritise 30-day sum for the main dashboard views stat
           latestSnapshot?.impressions ?? 0,
           latestSnapshot?.reach ?? 0,
           totalImpressions,

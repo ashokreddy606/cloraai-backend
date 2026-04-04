@@ -478,6 +478,8 @@ model YoutubeAutomationRule {
   channelId    String? // Link to specific YouTube channel
   
   videoId      String? // Optional: If a rule is bound to a specific video
+  isAI         Boolean @default(false)
+  triggerType  String  @default("keywords") // 'keywords' | 'any'
   onlySubscribers Boolean @default(false)
   appendLinks  Boolean @default(false)
   link1        String?
