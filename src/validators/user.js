@@ -35,10 +35,21 @@ const registerPushTokenSchema = z.object({
   }),
 });
 
+const registerDeviceSchema = z.object({
+  body: z.object({
+    deviceId: z.string().min(1, 'Device ID is required'),
+    fcmToken: z.string().min(1, 'FCM token is required'),
+    platform: z.enum(['android', 'ios', 'web'], {
+      errorMap: () => ({ message: "Platform must be 'android', 'ios', or 'web'" })
+    }),
+  }),
+});
+
 module.exports = {
   updateProfileSchema,
   markNotificationReadSchema,
   logoutSessionSchema,
   logoutAllDevicesSchema,
   registerPushTokenSchema,
+  registerDeviceSchema,
 };

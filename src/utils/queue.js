@@ -15,11 +15,12 @@ const QUEUES = {
     REPLY: 'reply-queue',
     COMMENT: 'instagramAutomationQueue',
     ANALYTICS: 'analytics-queue',
-    TOKEN_REFRESH: 'token-refresh-queue'
+    TOKEN_REFRESH: 'token-refresh-queue',
+    NOTIFICATIONS: 'notification-queue'
 };
 
 // Initialize Queues safely
-let aiQueue, webhookQueue, subscriptionQueue, instagramQueue, youtubeQueue, replyQueue, commentQueue, analyticsQueue, tokenRefreshQueue;
+let aiQueue, webhookQueue, subscriptionQueue, instagramQueue, youtubeQueue, replyQueue, commentQueue, analyticsQueue, tokenRefreshQueue, notificationQueue;
 
 if (connection) {
     const queueOptions = { connection };
@@ -32,6 +33,7 @@ if (connection) {
     commentQueue = new Queue(QUEUES.COMMENT, queueOptions);
     analyticsQueue = new Queue(QUEUES.ANALYTICS, queueOptions);
     tokenRefreshQueue = new Queue(QUEUES.TOKEN_REFRESH, queueOptions);
+    notificationQueue = new Queue(QUEUES.NOTIFICATIONS, queueOptions);
 } else {
     logger.warn('QUEUE', 'Redis connection missing. Queues are disabled (expected in local dev without Redis).');
 }
@@ -68,5 +70,6 @@ module.exports = {
     commentQueue,
     analyticsQueue,
     tokenRefreshQueue,
+    notificationQueue,
     enqueueJob
 };

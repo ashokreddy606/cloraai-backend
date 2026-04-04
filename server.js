@@ -12,11 +12,15 @@ const prisma = require('./src/lib/prisma');
 const validateEnv = require('./src/utils/envValidator');
 const fs = require('fs');
 const path = require('path');
+const connectDB = require('./src/lib/mongoose');
+const { initializeFirebase } = require('./src/lib/firebase');
 
 validateEnv();
 
 // Initialize Prisma
 // (Now using shared instance from src/lib/prisma.js)
+connectDB();
+initializeFirebase();
 
 const { rateLimit } = require('./src/middleware/auth');
 
@@ -69,6 +73,12 @@ const webhookController = require('./src/controllers/webhookController');
 // Initialize Express app
 const app = express();
 
+// ─── Global Request Logger ──────────────────────────────────────────────────
+app.use((req, res, next) => {
+    logger.info('API_REQUEST', `${req.method} ${req.originalUrl}`);
+    next();
+});
+
 // HTML-encode helper for safe template rendering (prevents XSS)
 const escapeHtml = (str) => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
@@ -82,6 +92,14 @@ app.get("/test", (req, res) => {
 });
 
 // Webhook diagnostic (production-safe — no header logging)
+app.get("/api/v1", (req, res) => {
+    res.status(200).json({ 
+        success: true, 
+        message: 'CloraAI API v1 is active and reachable.',
+        documentation: 'https://cloraai.com/docs'
+    });
+});
+
 app.get("/api/v1/webhook-test", (req, res) => {
     res.status(200).json({ 
         success: true, 
@@ -568,9 +586,15 @@ app.use('/api/v1/notifications', notificationRoutes);
 
 // 404 handler (must come before error middleware)
 app.use((req, res, next) => {
+    const message = `Route not found: ${req.method} ${req.originalUrl}`;
+    logger.warn('404', message);
     res.status(404).json({
+        success: false,
         error: 'Not found',
-        path: req.path
+        message: message,
+        hint: req.method === 'GET' && req.originalUrl.includes('login') 
+            ? 'Accessing a POST route via browser (GET). Use Postman for login testing.' 
+            : undefined
     });
 });
 
@@ -599,6 +623,7 @@ if (process.env.NODE_ENV !== 'test') {
         require('./src/workers/instagramAutomationWorker');
         require('./src/workers/instagramCommentPollWorker'); 
         require('./src/workers/youtubeWorker');
+        require('./src/workers/notificationWorker');
 
         // ── Cron Triggers (Distributed) ───────────────────────────────────
         const cron = require('node-cron');

@@ -1,50 +1,130 @@
-const prisma = require('../lib/prisma');
+const notificationService = require('../services/notificationService');
+const Notification = require('../models/Notification');
 const logger = require('../utils/logger');
+const mongoose = require('mongoose');
 
 /**
- * Register/Update Push Token for User
+ * Register/Update Device Token
  */
-exports.registerToken = async (req, res) => {
+exports.registerDevice = async (req, res) => {
   try {
-    const userId = req.userId;
-    const { pushToken } = req.body;
+    const userId = req.userId; // From JWT
+    const { deviceId, fcmToken, platform } = req.body;
 
-    if (!pushToken) {
-      return res.status(400).json({ error: 'Push token is required' });
-    }
+    await notificationService.registerDevice(userId, { deviceId, fcmToken, platform });
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { pushToken }
+    res.status(200).json({
+      success: true,
+      message: 'Device registered successfully'
     });
-
-    logger.info('NOTIFICATION', `Push token registered for user ${userId}`);
-    res.status(200).json({ success: true, message: 'Push token updated' });
   } catch (error) {
-    logger.error('NOTIFICATION', 'Register token error:', error);
-    res.status(500).json({ error: 'Failed to register token' });
+    logger.error('NOTIFICATION_CONTROLLER', 'Register device error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to register device' });
   }
 };
 
 /**
- * Get User Notifications
+ * Remove Device Token (Logout)
+ */
+exports.removeDevice = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { deviceId } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+
+    await notificationService.removeDevice(userId, deviceId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Device removed successfully'
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Remove device error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to remove device' });
+  }
+};
+
+/**
+ * List User Devices
+ */
+exports.getDevices = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const devices = await notificationService.getUserDevices(userId);
+
+    res.status(200).json({
+      success: true,
+      data: { devices }
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Get devices error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch devices' });
+  }
+};
+
+/**
+ * Get User Notification History
  */
 exports.getNotifications = async (req, res) => {
   try {
     const userId = req.userId;
-    const notifications = await prisma.notification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 50
-    });
+    const { page = 1, limit = 20 } = req.query;
+
+    const query = { userId: new mongoose.Types.ObjectId(userId) };
+    
+    const notifications = await Notification.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit));
+
+    const total = await Notification.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { notifications }
+      data: {
+        notifications,
+        pagination: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(total / limit)
+        }
+      }
     });
   } catch (error) {
-    logger.error('NOTIFICATION', 'Get notifications error:', error);
+    logger.error('NOTIFICATION_CONTROLLER', 'Get notifications error:', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+};
+
+/**
+ * Mark Notification as Read
+ */
+exports.markAsRead = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { id } = req.params;
+
+    const notification = await Notification.findOneAndUpdate(
+      { _id: id, userId: new mongoose.Types.ObjectId(userId) },
+      { read: true },
+      { new: true }
+    );
+
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Notification marked as read'
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Mark as read error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to update notification' });
   }
 };
 
@@ -55,98 +135,46 @@ exports.markAllRead = async (req, res) => {
   try {
     const userId = req.userId;
 
-    await prisma.notification.updateMany({
-      where: { userId, read: false },
-      data: { read: true }
-    });
+    await Notification.updateMany(
+      { userId: new mongoose.Types.ObjectId(userId), read: false },
+      { read: true }
+    );
 
-    res.status(200).json({ success: true });
+    res.status(200).json({
+      success: true,
+      message: 'All notifications marked as read'
+    });
   } catch (error) {
-    logger.error('NOTIFICATION', 'Mark all read error:', error);
+    logger.error('NOTIFICATION_CONTROLLER', 'Mark all read error:', { error: error.message });
     res.status(500).json({ error: 'Failed to update notifications' });
   }
 };
 
 /**
- * Mark Single Notification as Read
+ * Send Test Notification (Admin/Internal)
  */
-exports.markAsRead = async (req, res) => {
-    try {
-      const { id } = req.params;
-      const userId = req.userId;
-  
-      await prisma.notification.updateMany({
-        where: { id, userId },
-        data: { read: true }
-      });
-  
-      res.status(200).json({ success: true });
-    } catch (error) {
-      logger.error('NOTIFICATION', 'Mark read error:', error);
-      res.status(500).json({ error: 'Failed to update notification' });
-    }
-};
-
-/**
- * Delete Single Notification
- */
-exports.deleteNotification = async (req, res) => {
+exports.sendTestNotification = async (req, res) => {
   try {
-    const { id } = req.params;
-    const userId = req.userId;
+    const { userId, title, body, data } = req.body;
 
-    await prisma.notification.deleteMany({
-      where: { id, userId }
-    });
-
-    res.status(200).json({ success: true, message: 'Notification deleted' });
-  } catch (error) {
-    logger.error('NOTIFICATION', 'Delete notification error:', error);
-    res.status(500).json({ error: 'Failed to delete notification' });
-  }
-};
-
-/**
- * Clear All Notifications for User
- */
-exports.clearNotifications = async (req, res) => {
-  try {
-    const userId = req.userId;
-
-    await prisma.notification.deleteMany({
-      where: { userId }
-    });
-
-    res.status(200).json({ success: true, message: 'All notifications cleared' });
-  } catch (error) {
-    logger.error('NOTIFICATION', 'Clear notifications error:', error);
-    res.status(500).json({ error: 'Failed to clear notifications' });
-  }
-};
-
-/**
- * Bulk Delete Notifications
- */
-exports.deleteBulkNotifications = async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { ids } = req.body;
-
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({ error: 'No IDs provided for deletion' });
+    if (!userId || !title || !body) {
+      return res.status(400).json({ error: 'userId, title, and body are required' });
     }
 
-    const { count } = await prisma.notification.deleteMany({
-      where: {
-        userId,
-        id: { in: ids }
-      }
+    const notification = await notificationService.sendToUser(userId, {
+      title,
+      body,
+      data: data || {},
+      priority: 'high'
     });
 
-    logger.info('NOTIFICATION', `Bulk delete complete: ${count} notifications removed for user ${userId}`);
-    res.status(200).json({ success: true, count });
+    res.status(200).json({
+      success: true,
+      message: 'Test notification queued',
+      data: { notificationId: notification._id }
+    });
   } catch (error) {
-    logger.error('NOTIFICATION', 'Bulk delete error:', error);
-    res.status(500).json({ error: 'Failed to delete notifications' });
+    logger.error('NOTIFICATION_CONTROLLER', 'Send test notification error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to queue test notification' });
   }
 };
