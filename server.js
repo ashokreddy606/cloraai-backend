@@ -464,10 +464,18 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const globalLimiter = rateLimit(2000, 15);
 
 app.use((req, res, next) => {
-    // Webhooks get separate, lighter rate limit (not unlimited)
-    if (req.path.startsWith("/webhook")) {
+    // ─── RATE LIMIT EXCLUSIONS ──────────────────────────────────────────────
+    // 1. Webhooks: Handled by dedicated lighter limiter to prevent blocking Meta.
+    if (req.path.startsWith("/webhook") || req.path.startsWith("/api/v1/webhook")) {
         return webhookLimiter(req, res, next);
     }
+    
+    // 2. Auth Routes: Skip global limiter because they use specialized brute-force 
+    // protection (authLimiterLogin, etc). Applying both causes ERR_ERL_DOUBLE_COUNT.
+    if (req.path.startsWith("/auth") || req.path.startsWith("/api/v1/auth")) {
+        return next();
+    }
+
     return globalLimiter(req, res, next);
 });
 

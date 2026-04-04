@@ -7,7 +7,7 @@ const checkProAccess = require('../middleware/checkProAccess');
 const validate = require('../middleware/validate');
 const { createRuleSchema, updateRuleSchema } = require('../validators/youtube');
 
-const verifyResourceOwnership = require('../middleware/ownership');
+const logger = require('../utils/logger');
 
 router.use(youtubeGuard);
 
@@ -34,8 +34,5 @@ router.get('/analytics', authenticate, checkProAccess, youtubeController.getAnal
 
 // ── Channel Analytics (Real YouTube Data API) ─────────────────────────────
 router.get('/channel-analytics', authenticate, youtubeController.getChannelAnalytics);
-
-// ── Videos ───────────────────────────────────────────────────────────────
-router.get('/videos', authenticate, youtubeController.getUserVideos);
 
 module.exports = router;

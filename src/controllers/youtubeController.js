@@ -577,9 +577,19 @@ exports.getChannelAnalytics = async (req, res) => {
             part: 'snippet,statistics,contentDetails',
             mine: true,
             auth: client // Explicitly pass client
-        }).catch(err => {
-            logger.error('YOUTUBE', 'channels.list failed', { error: err.response?.data || err.message });
-            throw new Error(`YouTube Data API failed: ${err.message}`);
+        }).catch(async (err) => {
+            const errorMsg = err.response?.data?.error_description || err.message;
+            logger.error('YOUTUBE', 'channels.list failed', { error: errorMsg, userId: req.userId });
+            
+            // If token is invalid/revoked, mark as disconnected immediately
+            if (errorMsg.includes('invalid_grant') || errorMsg.includes('Token has been expired or revoked')) {
+                await prisma.user.update({
+                    where: { id: req.userId },
+                    data: { youtubeConnected: false }
+                }).catch(() => {});
+                throw new Error('YouTube session expired. Please reconnect your account.');
+            }
+            throw new Error(`YouTube Data API failed: ${errorMsg}`);
         });
 
         const channels = channelRes.data.items || [];
