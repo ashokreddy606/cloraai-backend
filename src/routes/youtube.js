@@ -8,6 +8,7 @@ const validate = require('../middleware/validate');
 const { createRuleSchema, updateRuleSchema } = require('../validators/youtube');
 
 const logger = require('../utils/logger');
+const verifyResourceOwnership = require('../middleware/ownership');
 
 router.use(youtubeGuard);
 
