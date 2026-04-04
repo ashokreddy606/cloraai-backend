@@ -43,7 +43,7 @@ cron.schedule(config.cron.instagramPoll, async () => {
                         select: {
                             dmAutomations: {
                                 where: { isActive: true },
-                                select: { id: true, keyword: true, replyMessage: true }
+                                select: { id: true, keyword: true, autoReplyMessage: true }
                             }
                         }
                     }
