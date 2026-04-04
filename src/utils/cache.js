@@ -29,17 +29,15 @@ const cache = {
         }
     },
 
+    /**
+     * ✅ FIX: Replaced redis.KEYS() with redis.SCAN() iterator.
+     * KEYS blocks the entire Redis server in O(N) and is FATAL at 25K users.
+     * SCAN is non-blocking, iterates in small batches, safe for production.
+     */
     async clearUserCache(userId) {
         try {
-            const patterns = [`route:${userId}:*`];
-            let allKeys = [];
-            for (const p of patterns) {
-                const keys = await redisClient.keys(p);
-                allKeys = [...allKeys, ...keys];
-            }
-            if (allKeys.length > 0) {
-                await redisClient.del(allKeys);
-            }
+            const pattern = `route:${userId}:*`;
+            await this._scanAndDelete(pattern);
         } catch (error) {
             logger.warn('REDIS', `Cache clear error for user: ${userId}`, { error: error.message });
         }
@@ -47,12 +45,30 @@ const cache = {
 
     async clearPattern(pattern) {
         try {
-            const keys = await redisClient.keys(pattern);
-            if (keys.length > 0) {
-                await redisClient.del(keys);
-            }
+            await this._scanAndDelete(pattern);
         } catch (error) {
             logger.warn('REDIS', `Cache clear pattern error: ${pattern}`, { error: error.message });
+        }
+    },
+
+    /**
+     * Internal: Non-blocking SCAN iterator to find and delete keys by pattern.
+     * Safe for production at any scale.
+     */
+    async _scanAndDelete(pattern) {
+        let cursor = '0';
+        let deleted = 0;
+        do {
+            const [nextCursor, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+            cursor = nextCursor;
+            if (keys.length > 0) {
+                await redisClient.del(keys);
+                deleted += keys.length;
+            }
+        } while (cursor !== '0');
+
+        if (deleted > 0) {
+            logger.debug('REDIS', `Deleted ${deleted} keys matching pattern: ${pattern}`);
         }
     }
 };

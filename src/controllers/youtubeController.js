@@ -14,6 +14,7 @@ const { getRedirectUrl } = require('../utils/urlUtils');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { s3Client, awsConfig } = require('../config/aws');
+const { cache } = require('../utils/cache');
 
 const youtubeBreaker = createBreaker(async (fn) => {
     return await fn();
@@ -398,9 +399,8 @@ exports.createRule = async (req, res) => {
             }
         });
         // Send confirmation notification
-        pushNotificationService.sendAutomationActiveNotification(req.userId, 'youtube', keyword).catch(err => 
-            logger.warn('YOUTUBE', 'Failed to send activation notification', { userId: req.userId, error: err.message })
-        );
+        // ✅ ULTRA-SPEED: Invalidate rules cache for this user
+        await cache.del(`rules:yt:${req.userId}`);
 
         res.status(201).json(rule);
     } catch (error) {
@@ -445,6 +445,9 @@ exports.updateRule = async (req, res) => {
             );
         }
 
+        // ✅ ULTRA-SPEED: Invalidate rules cache for this user
+        await cache.del(`rules:yt:${req.userId}`);
+
         res.json(updated);
     } catch (error) {
         logger.error('YOUTUBE', 'updateRule', error);
@@ -464,6 +467,10 @@ exports.deleteRule = async (req, res) => {
         if (result.count === 0) {
             return res.status(404).json({ error: 'Rule not found or unauthorized' });
         }
+
+        // ✅ ULTRA-SPEED: Invalidate rules cache for this user
+        await cache.del(`rules:yt:${req.userId}`);
+
         res.json({ success: true });
     } catch (error) {
         logger.error('YOUTUBE', 'deleteRule error', error);

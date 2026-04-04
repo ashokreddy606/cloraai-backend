@@ -5,6 +5,9 @@ const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { decrypt, encrypt } = require('../utils/cryptoUtils');
 const { getYoutubeOAuth2Client } = require('../config/youtube');
+const { checkRateLimit } = require('../utils/scaling/rateLimiter');
+const { cache } = require('../utils/cache');
+const { config } = require('../utils/tierConfig');
 const pushNotificationService = require('../services/pushNotificationService');
 
 /**
@@ -73,6 +76,10 @@ async function isCommenterSubscribed(youtube, authorChannelId, channelId) {
 
 async function sendReply(youtubeClient, parentId, textOriginal, userId) {
     try {
+        if (process.env.DRY_RUN === 'true') {
+            logger.info('WORKER:DRY_RUN', `[MOCK] YouTube Reply Sent for thread ${parentId}`);
+            return true;
+        }
         await youtubeClient.comments.insert({
             part: 'snippet',
             requestBody: {
@@ -98,24 +105,68 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
     const { userId } = job.data;
     
     try {
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            include: { youtubeRules: { where: { isActive: true } } }
-        });
+        const rulesCacheKey = `rules:yt:${userId}`;
+        let user = await cache.get(rulesCacheKey);
+
+        if (!user) {
+            user = await prisma.user.findUnique({
+                where: { id: userId },
+                select: {
+                    id: true, youtubeConnected: true, youtubeAccessToken: true, youtubeRefreshToken: true,
+                    youtubeChannelId: true,
+                    youtubeRules: { 
+                        where: { isActive: true },
+                        select: {
+                            id: true, videoId: true, triggerType: true, keyword: true,
+                            onlySubscribers: true, limitPerHour: true, isAI: true,
+                            replyMessage: true, productName: true, productDescription: true,
+                            productUrl: true, appendLinks: true, link1: true, link2: true,
+                            link3: true, link4: true
+                        }
+                    }
+                }
+            });
+            if (user) {
+                await cache.set(rulesCacheKey, user, config.cacheTTL.activeRules);
+                logger.debug('YOUTUBE_PROCESSOR:RULES', `DB hit: loaded rules for user ${userId}`);
+            }
+        } else {
+            logger.debug('YOUTUBE_PROCESSOR:RULES', `Cache hit: using rules for user ${userId}`);
+        }
 
         if (!user || !user.youtubeConnected || !user.youtubeAccessToken) return;
 
         const youtube = await getYoutubeClient(user);
         logger.info('YOUTUBE_PROCESSOR', `Processing user ${user.id}`, { channelId: user.youtubeChannelId });
 
-        const response = await youtube.commentThreads.list({
-            part: 'snippet,replies',
-            allThreadsRelatedToChannelId: user.youtubeChannelId,
-            maxResults: 50,
-            order: 'time'
-        });
+        let items = [];
+        if (process.env.DRY_RUN === 'true') {
+            logger.info('WORKER:DRY_RUN', `[MOCK] YouTube Comment List fetched for ${user.id}`);
+            // Return one mock item to trigger the logic
+            items = [{
+                id: 'mock_thread_id',
+                snippet: {
+                    topLevelComment: {
+                        id: 'mock_comment_id',
+                        snippet: {
+                            videoId: 'mock_video_id',
+                            textDisplay: 'mock comment text',
+                            authorDisplayName: 'MockUser',
+                            authorChannelId: { value: 'mock_author_id' }
+                        }
+                    }
+                }
+            }];
+        } else {
+            const response = await youtube.commentThreads.list({
+                part: 'snippet,replies',
+                allThreadsRelatedToChannelId: user.youtubeChannelId,
+                maxResults: 50,
+                order: 'time'
+            });
 
-        const items = response.data.items || [];
+            items = response.data.items || [];
+        }
         if (items.length === 0) return;
 
         for (const item of items) {
@@ -154,13 +205,19 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
             }
 
             if (shouldReply) {
-                const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-                const recentRepliesCount = await prisma.youtubeComment.count({
-                    where: { userId: user.id, replied: true, createdAt: { gte: oneHourAgo } }
-                });
-                if (recentRepliesCount >= matchedRule.limitPerHour) {
+                // ─── SCALING: MULTI-LAYER RATE LIMIT CHECK ──────────────────────────
+                const limit = await checkRateLimit(user.id, 'YOUTUBE', 'comment', matchedRule.limitPerHour);
+                
+                if (!limit.allowed) {
                     shouldReply = false;
                     skipReason = 'rate_limit';
+                    
+                    const retryDelay = limit.retryAfter * 1000 || 3600000;
+                    logger.warn('YOUTUBE_PROCESSOR:RATE_LIMITED', `User ${user.id} hit YouTube rate limit. Retrying in ${retryDelay}ms`);
+                    
+                    // Note: Since this is a polling-based worker that processes many rules, 
+                    // we don't necessarily want to delay the whole job, 
+                    // but we skip this specific reply for now.
                 }
             }
 
@@ -223,10 +280,14 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
                 });
             }
         }
+        logger.info('YOUTUBE_PROCESSOR:SUCCESS', `Job completed for user ${userId}`);
     } catch (error) {
-        logger.error('YOUTUBE_PROCESSOR', `Job failed for user ${userId}`, { error: error.message });
+        logger.error('YOUTUBE_PROCESSOR:FAILED', `Job failed for user ${userId}`, { error: error.message });
         throw error;
     }
-}, { connection, concurrency: 10 });
+}, { 
+    connection, 
+    concurrency: config.concurrency.youtube  // ✅ Tier-aware concurrency
+});
 
 module.exports = { youtubeProcessor };

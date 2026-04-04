@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const { appConfig } = require('../config');
 const logger = require('../utils/logger');
 const pushNotificationService = require('../services/pushNotificationService');
+const { cache } = require('../utils/cache');
 
 // Create DM Automation Rule
 const createRule = async (req, res) => {
@@ -108,10 +109,8 @@ const createRule = async (req, res) => {
       }
     });
 
-    // Send confirmation notification
-    pushNotificationService.sendAutomationActiveNotification(req.userId, 'instagram', keyword || 'AI').catch(err => 
-      logger.warn('DM_AUTOMATION', 'Failed to send activation notification', { userId: req.userId, error: err.message })
-    );
+    // ✅ ULTRA-SPEED: Invalidate rules cache for this user
+    await cache.del(`rules:ig:${req.userId}`);
 
     res.status(201).json({
       success: true,
@@ -210,6 +209,9 @@ const updateRule = async (req, res) => {
       );
     }
 
+    // ✅ ULTRA-SPEED: Invalidate rules cache for this user
+    await cache.del(`rules:ig:${req.userId}`);
+
     res.status(200).json({
       success: true,
       data: {
@@ -258,6 +260,9 @@ const deleteRule = async (req, res) => {
         logger.warn('DM_AUTOMATION', 'Delete rule db warning', { error: deleteError.message, ruleId: id });
       }
     }
+
+    // ✅ ULTRA-SPEED: Invalidate rules cache for this user
+    await cache.del(`rules:ig:${req.userId}`);
 
     res.status(200).json({
       success: true,

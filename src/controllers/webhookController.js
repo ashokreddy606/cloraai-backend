@@ -6,6 +6,10 @@ const logger = require('../utils/logger');
 const { matchesKeyword } = require('../utils/automationUtils');
 
 const { enqueueJob, commentQueue } = require('../utils/queue');
+const { checkBackpressure } = require('../utils/scaling/backpressure');
+const { getDynamicDelay } = require('../utils/scaling/delayEngine');
+const { cache } = require('../utils/cache');
+const { config } = require('../utils/tierConfig');
 
 const prisma = require('../lib/prisma');
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
@@ -80,37 +84,42 @@ const verifyWebhook = (req, res) => {
 };
 
 /**
- * HELPER: Resolve Instagram Account from Entry ID or Page ID
- * Robust fallback mechanism to prevent silent null failures.
+ * HELPER: Resolve Instagram Account from Entry ID or Page ID.
+ * ✅ PERF: Results are cached in Redis to avoid a DB hit on every webhook.
+ * At 25K users, a single popular post can generate hundreds of webhooks/min.
  */
 const resolveInstagramAccount = async (entryId, commentOwnerId = null) => {
-    // Create a unique array of candidate IDs to check
     const candidateIds = [...new Set([entryId, commentOwnerId].filter(Boolean))];
-    logger.debug('WEBHOOK:RESOLVE', 'Resolving Instagram account', { candidateIds });
 
     for (const id of candidateIds) {
-        // 1. Try matching by instagramId (Instagram Business Account)
+        // 1. Redis cache check first (avoids DB entirely for most webhooks)
+        const cacheKey = `ig_account:${id}`;
+        const cached = await cache.get(cacheKey);
+        if (cached) {
+            logger.debug('WEBHOOK:RESOLVE', 'Cache hit for Instagram account', { id });
+            return cached;
+        }
+
+        // 2. Cache miss → hit DB
         let account = await prisma.instagramAccount.findFirst({
             where: { instagramId: id, isConnected: true }
         });
 
-        if (account) {
-            logger.debug('WEBHOOK:RESOLVE', 'Matched via instagramId', { instagramId: account.instagramId });
-            return account;
+        if (!account) {
+            account = await prisma.instagramAccount.findFirst({
+                where: { pageId: id, isConnected: true }
+            });
         }
 
-        // 2. Try matching by pageId (Meta Page Feed event object fallback)
-        account = await prisma.instagramAccount.findFirst({
-            where: { pageId: id, isConnected: true }
-        });
-
         if (account) {
-            logger.debug('WEBHOOK:RESOLVE', 'Matched via pageId', { pageId: account.pageId });
+            // Store in Redis for TTL seconds (tier-aware)
+            await cache.set(cacheKey, account, config.cacheTTL.instagramAccount);
+            logger.debug('WEBHOOK:RESOLVE', 'DB hit + cached Instagram account', { id });
             return account;
         }
     }
 
-    logger.warn('WEBHOOK:RESOLVE', 'No active Instagram account matched any candidate IDs', { candidateIds });
+    logger.warn('WEBHOOK:RESOLVE', 'No active Instagram account matched', { candidateIds });
     return null;
 };
 
@@ -136,6 +145,13 @@ const handleWebhook = async (req, res) => {
 
     // 2. Immediate Acknowledgment (Meta requires 200 within 20s)
     res.status(200).send('EVENT_RECEIVED');
+
+    // 3. BACKPRESSURE CHECK: Reject processing if queue is overloaded
+    const pressure = await checkBackpressure(commentQueue);
+    if (pressure.overloaded) {
+        logger.warn('WEBHOOK:BACKPRESSURE', `Skipping webhook processing due to queue overload (${pressure.count} jobs)`);
+        return;
+    }
 
     try {
         const { body } = req;
@@ -191,6 +207,9 @@ const handleWebhook = async (req, res) => {
                         const decryptedUserToken = decryptToken(account.instagramAccessToken);
                         const decryptedPageToken = account.pageAccessToken ? decryptToken(account.pageAccessToken) : null;
 
+                        // 4. DYNAMIC DELAY: Calculate delay based on load
+                        const delay = await getDynamicDelay(commentQueue);
+
                         await enqueueJob(commentQueue, 'process-comment', {
                             mediaId,
                             commentId,
@@ -200,7 +219,7 @@ const handleWebhook = async (req, res) => {
                             userId: account.userId,
                             instagramAccessToken: decryptedUserToken,
                             pageAccessToken: decryptedPageToken
-                        });
+                        }, { delay });
                         logger.info('QUEUE:JOB_CREATED', `Enqueued comment ${commentId} for user ${account.userId}`, { 
                             commentId, 
                             mediaId,
@@ -242,6 +261,9 @@ const handleWebhook = async (req, res) => {
                     logger.info('WEBHOOK:QUICK_REPLY', `Intercepted quick reply for rule ${forceRuleId}`);
                 }
 
+                // 4. DYNAMIC DELAY: Calculate delay based on load
+                const delay = await getDynamicDelay(commentQueue);
+
                 // Enqueue DM processing
                 await enqueueJob(commentQueue, 'process-dm', {
                     messageId,
@@ -252,7 +274,7 @@ const handleWebhook = async (req, res) => {
                     instagramAccessToken: decryptedUserToken,
                     pageAccessToken: decryptedPageToken,
                     forceRuleId
-                });
+                }, { delay });
                 logger.info('QUEUE:JOB_CREATED', `Enqueued DM ${messageId} for user ${account.userId}`, { 
                     messageId, 
                     senderId,

@@ -6,7 +6,10 @@ const prisma = require('../lib/prisma');
 const { appConfig } = require('../config');
 const { matchesKeyword } = require('../utils/automationUtils');
 const { generateAIReply } = require('../utils/aiUtils');
+const { checkRateLimit } = require('../utils/scaling/rateLimiter');
 const pushNotificationService = require('../services/pushNotificationService');
+const { cache } = require('../utils/cache');
+const { config } = require('../utils/tierConfig');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -28,10 +31,10 @@ const handleMetaError = async (error, userId, instagramId) => {
         await prisma.instagramAccount.updateMany({
             where: { instagramId, userId },
             data: { isConnected: false }
-        }).catch(() => {});
+        }).catch(() => { });
 
         // Notify user about token expiry
-        await pushNotificationService.notifyTokenExpired(userId).catch(err => 
+        await pushNotificationService.notifyTokenExpired(userId).catch(err =>
             logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send token expiry notification', { error: err.message })
         );
     }
@@ -50,16 +53,29 @@ const handleMetaError = async (error, userId, instagramId) => {
  */
 const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
     const { mediaId, commentId, commentText, messageId: dmMessageId, text: dmText, instagramId, senderId, instagramAccessToken, pageAccessToken, userId, forceRuleId } = job.data;
-    
+
     // Standardize identification
     const isDM = !!dmMessageId;
     const eventId = isDM ? dmMessageId : `comment_${commentId}`;
     const incomingText = isDM ? dmText : commentText;
 
-    // STEP 1 & 6: Log full job data and worker start
-    console.log("WORKER RECEIVED JOB:", job.data);
+    // STEP 1 & 6: Log worker start (Async logger instead of sync console.log)
     logger.info('WORKER:START', `Worker picked up ${isDM ? 'DM' : 'comment'} job: ${eventId}`, { jobId: job.id, data: job.data });
-    
+
+    // ─── SCALING: MULTI-LAYER RATE LIMIT CHECK ──────────────────────────
+    const platform = 'INSTAGRAM';
+    const actionType = isDM ? 'dm' : 'comment';
+    const limit = await checkRateLimit(userId, platform, actionType);
+
+    if (!limit.allowed) {
+        const retryDelay = limit.retryAfter * 1000 || 60000; // Default 1 min
+        logger.warn('WORKER:RATE_LIMITED', `Rate limit hit for ${userId}. Retrying in ${retryDelay}ms`, { userId, platform, actionType });
+
+        // Move to delayed state for automatic retry
+        await job.moveToDelayed(Date.now() + retryDelay);
+        throw new Error(`RATE_LIMIT_EXCEEDED: ${platform} ${actionType}`);
+    }
+
     if (!instagramAccessToken && !pageAccessToken) {
         logger.warn('WORKER:SKIP', `No valid access token available for job ${job.id}. Decryption might have failed.`, { userId });
         return { skipped: true, reason: 'Missing access tokens' };
@@ -71,13 +87,25 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             return { skipped: true, reason: 'Missing payload data' };
         }
 
-        console.log("COMMENT TEXT:", incomingText);
+        // ─── 1. ULTRA-FAST IDEMPOTENCY CHECK (REDIS SET NX) ─────────────────
+        // 1ms check before hitting the DB. Safe for 30 days.
+        const idCacheKey = `worker:event:seen:${eventId}`;
+        const hasSeen = await cache.get(idCacheKey);
+        if (hasSeen) {
+            logger.info('WORKER:IDEMPOTENCY', `Event ${eventId} already in cache. Skipping.`, { jobId: job.id });
+            return { skipped: true, reason: 'Duplicate event (cached)' };
+        }
 
-        // 1. Idempotency Check
-        const existing = await prisma.dmInteraction.findUnique({ where: { messageId: eventId } });
+        // ─── 2. DB IDEMPOTENCY FALLBACK ─────────────────────────────────────
+        const existing = await prisma.dmInteraction.findUnique({
+            where: { messageId: eventId },
+            select: { id: true } // ✅ PERF: Select only ID
+        });
+
         if (existing) {
-            logger.info('WORKER:IDEMPOTENCY', `Event ${eventId} already processed. Skipping.`, { jobId: job.id });
-            return { skipped: true, reason: 'Duplicate event' };
+            await cache.set(idCacheKey, true, 86400 * 30); // Backfill cache
+            logger.info('WORKER:IDEMPOTENCY', `Event ${eventId} already in DB. Skipping.`, { jobId: job.id });
+            return { skipped: true, reason: 'Duplicate event (db)' };
         }
 
         // 2. Resolve Automation Rules
@@ -88,28 +116,28 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             // Bypass keyword matching logic entirely if this is a Quick Reply callback
             matchedRule = await prisma.dMAutomation.findUnique({ where: { id: forceRuleId } });
             if (!matchedRule) {
-                 logger.warn('WORKER:FORCE_RULE_NOT_FOUND', `Could not find forced rule ${forceRuleId}`);
-                 return { success: true };
+                logger.warn('WORKER:FORCE_RULE_NOT_FOUND', `Could not find forced rule ${forceRuleId}`);
+                return { success: true };
             }
             logger.info('WORKER:FORCE_RULE', `Using forced rule ${forceRuleId} (Follow Request bypass)`, { jobId: job.id });
-            
+
             const apiTokenForVerification = pageAccessToken || instagramAccessToken;
             try {
                 // strict API validation to verify if the user is ACTUALLY following before sending the product link
                 const profileUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${senderId}?fields=name,is_user_follow_business&access_token=${apiTokenForVerification}`;
                 const profileRes = await axios.get(profileUrl);
                 const isFollowing = profileRes.data.is_user_follow_business;
-                
+
                 if (isFollowing) {
                     logger.info('WORKER:FOLLOW_VERIFIED', `User ${senderId} is following. Proceeding.`, { jobId: job.id });
                     // Critical: Turn off mustFollow so we actually send the link this time!
                     matchedRule.mustFollow = false;
                 } else {
                     logger.info('WORKER:FOLLOW_DENIED', `User ${senderId} clicked 'I followed' but isn't following.`, { jobId: job.id });
-                    
+
                     // Provide feedback that they need to actually follow!
                     const notifyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForVerification}`;
-                    
+
                     const retryQuickReplies = [{
                         content_type: "text",
                         title: "I have followed! ✅",
@@ -118,7 +146,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
                     await axios.post(notifyUrl, {
                         recipient: { id: senderId },
-                        message: { 
+                        message: {
                             text: "I just checked, and it looks like you aren't following the page yet! 😅 Please hit Follow on my profile first, then tap the button below to verify and unlock your link.",
                             quick_replies: retryQuickReplies
                         }
@@ -129,7 +157,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                         const profileUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${senderId}?fields=username&access_token=${apiTokenForVerification}`;
                         const profileRes = await axios.get(profileUrl);
                         const username = profileRes.data.username || 'A user';
-                        
+
                         await pushNotificationService.notifyFollowGateBlock(userId, username);
                     } catch (err) {
                         logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send follow-gate notification', { error: err.message });
@@ -138,16 +166,33 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     return { success: true, bypassed: false };
                 }
             } catch (err) {
-                 logger.warn('WORKER:FOLLOW_CHECK_ERROR', `Could not verify follower status for ${senderId}. Defaulting to grant access.`, { error: err.message });
-                 // If API fails (e.g. scope missing), default to trusting the user so we don't break the funnel during Meta outages
-                 matchedRule.mustFollow = false;
+                logger.warn('WORKER:FOLLOW_CHECK_ERROR', `Could not verify follower status for ${senderId}. Defaulting to grant access.`, { error: err.message });
+                // If API fails (e.g. scope missing), default to trusting the user so we don't break the funnel during Meta outages
+                matchedRule.mustFollow = false;
             }
         } else {
-            const rules = await prisma.dMAutomation.findMany({
-                where: { userId, isActive: true }
-            });
-            
-            logger.debug('WORKER:RULES_LOADED', `Loaded ${rules.length} active rules`, { jobId: job.id });
+            // ─── 3. ULTRA-SPEED RULE LOOKUP (CACHED) ────────────────────────
+            const rulesCacheKey = `rules:ig:${userId}`;
+            let rules = await cache.get(rulesCacheKey);
+
+            if (!rules) {
+                rules = await prisma.dMAutomation.findMany({
+                    where: { userId, isActive: true },
+                    select: {
+                        id: true, keyword: true, reelId: true, triggerType: true,
+                        isAI: true, productName: true, productDescription: true, productUrl: true,
+                        autoReplyMessage: true, replyType: true, appendLinks: true,
+                        link1: true, link2: true, link3: true, link4: true,
+                        dmButtonText: true, mustFollow: true, publicReplies: true,
+                        customFollowEnabled: true, customFollowHeader: true, customFollowSubtext: true,
+                        followButtonText: true, followedButtonText: true
+                    }
+                });
+                await cache.set(rulesCacheKey, rules, config.cacheTTL.activeRules);
+                logger.debug('WORKER:RULES', `DB hit: loaded ${rules.length} rules for user ${userId}`);
+            } else {
+                logger.debug('WORKER:RULES', `Cache hit: using ${rules.length} rules for user ${userId}`);
+            }
 
             // Rules prioritized by keyword length (most specific first)
             const sortedRules = rules.sort((a, b) => {
@@ -160,17 +205,16 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 // STEP 4: Verify Reel Filtering with flexibility
                 const isMatchReel = !rule.reelId || (mediaId && String(mediaId).includes(String(rule.reelId)));
                 const isMatchKeyword = rule.triggerType === 'any' || matchesKeyword(incomingText, rule.keyword);
-                
-                logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, { 
-                    jobId: job.id, 
-                    reelFilter: rule.reelId || 'GLOBAL', 
+
+                logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, {
+                    jobId: job.id,
+                    reelFilter: rule.reelId || 'GLOBAL',
                     reelMatch: isMatchReel,
                     keywordMatch: isMatchKeyword
                 });
 
                 if (isMatchReel && isMatchKeyword) {
                     matchedRule = rule;
-                    console.log("RULE MATCHED:", rule.keyword);
                     logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword}`, { jobId: job.id, ruleId: rule.id });
                     break;
                 }
@@ -178,16 +222,17 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         }
 
         if (!matchedRule) {
-            console.log(`[WORKER:SKIPPED] No matching rule for text: ${incomingText.substring(0, 30)}...`);
-            logger.info('WORKER:SKIPPED', `No matching rule for ${isDM ? 'DM' : 'comment'} ${eventId}`, { jobId: job.id, incomingText });
+            logger.info('WORKER:SKIPPED', `No matching rule for ${isDM ? 'DM' : 'comment'} ${eventId}`, { jobId: job.id, incomingText: incomingText.substring(0, 50) });
             return { success: true, matched: false };
         }
 
-        // 3. Atomically claim this event
+        // ─── 4. ATOMIC EVENT CLAIM & CACHE SYNC ─────────────────────────────
         try {
             await prisma.dmInteraction.create({
                 data: { userId, messageId: eventId, ruleId: matchedRule.id, status: 'sent' }
             });
+            // Mark as seen in Redis immediately to block other workers
+            await cache.set(idCacheKey, true, 86400 * 30);
         } catch (err) {
             logger.warn('WORKER:CONFLICT', `Event ${eventId} claimed by another worker`, { jobId: job.id });
             return { skipped: true, reason: 'Event claimed by another worker' };
@@ -195,14 +240,14 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
         // 4. Prepare Reply (Private DM)
         let finalMessage = matchedRule.autoReplyMessage || '';
-        
+
         // AI Generation override with Safety Checks
         if (matchedRule.isAI) {
             const { checkAILimit } = require('../middleware/aiLimiter');
             const feature = matchedRule.triggerType === 'keywords' ? 'caption' : 'brand_deal'; // Map to closest feature
-            
+
             const limitCheck = await checkAILimit(userId, feature);
-            
+
             if (limitCheck.allowed) {
                 const aiReply = await generateAIReply(incomingText, {
                     userId,
@@ -216,7 +261,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             } else {
                 logger.warn('WORKER:AI_LIMIT_HIT', `AI limit hit for user ${userId}. Falling back to static reply.`, { code: limitCheck.code });
                 // Notify user
-                await pushNotificationService.notifyAILimitHit(userId, feature).catch(err => 
+                await pushNotificationService.notifyAILimitHit(userId, feature).catch(err =>
                     logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send AI limit notification', { error: err.message })
                 );
             }
@@ -249,12 +294,12 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         if (matchedRule.mustFollow) {
             let header = "Thanks for asking!";
             let subtext = "I've sent the link, but make sure to follow for more updates!";
-            
+
             if (matchedRule.customFollowEnabled) {
                 if (matchedRule.customFollowHeader) header = matchedRule.customFollowHeader;
                 if (matchedRule.customFollowSubtext) subtext = matchedRule.customFollowSubtext;
             }
-            
+
             let quickReplies = [];
             if (matchedRule.customFollowEnabled) {
                 if (matchedRule.followButtonText) {
@@ -303,7 +348,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         // 5. Execute API Calls (Private Reply then Public Reply for comments)
         const apiTokenForDM = pageAccessToken || instagramAccessToken;
         const dmUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForDM}`;
-        
+
         try {
             // STEP A: Send Follow Request if enabled
             // The product link will NOT be sent until they click the Quick Reply button (handled via Webhook)
@@ -317,7 +362,7 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             } else {
                 // STEP B: Send Main Product Link / Message
                 logger.info('WORKER:API_DM', `Sending main message for ${eventId}`, { jobId: job.id });
-                
+
                 const productPayload = { text: finalMessage };
                 if (productQuickReplies.length > 0) {
                     productPayload.quick_replies = productQuickReplies;
@@ -330,9 +375,9 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     message: productPayload
                 });
 
-                logger.info('WORKER:DM_SENT', `Direct message flow completed for ${eventId}`, { 
+                logger.info('WORKER:DM_SENT', `Direct message flow completed for ${eventId}`, {
                     jobId: job.id,
-                    metaResponse: response.data 
+                    metaResponse: response.data
                 });
                 console.log(`[WORKER:API_SUCCESS] DM Sent for event ${eventId}`);
                 logger.increment('dmSent');
@@ -351,9 +396,9 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             }
         } catch (err) {
             await handleMetaError(err, userId, instagramId);
-            logger.error('WORKER:ERROR_DM', `DM failed for ${eventId}`, { 
+            logger.error('WORKER:ERROR_DM', `DM failed for ${eventId}`, {
                 jobId: job.id,
-                error: err.response?.data || err.message 
+                error: err.response?.data || err.message
             });
             logger.increment('dmFailed');
             throw err; // Retry
@@ -367,16 +412,16 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             try {
                 logger.info('WORKER:API_REPLY', `Sending public comment reply for ${commentId}`, { jobId: job.id });
                 const response = await axios.post(replyUrl, { message: publicReply }, { params: { access_token: apiTokenForDM } });
-                logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`, { 
+                logger.info('WORKER:REPLY_SENT', `Public comment reply sent for ${eventId}`, {
                     jobId: job.id,
-                    metaResponse: response.data 
+                    metaResponse: response.data
                 });
                 console.log("PUBLIC COMMENT SENT");
             } catch (err) {
                 await handleMetaError(err, userId, instagramId);
-                logger.error('WORKER:ERROR_REPLY', `Public reply failed for ${commentId}`, { 
+                logger.error('WORKER:ERROR_REPLY', `Public reply failed for ${commentId}`, {
                     jobId: job.id,
-                    error: err.response?.data || err.message 
+                    error: err.response?.data || err.message
                 });
             }
         }
@@ -385,14 +430,16 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
         return { success: true };
 
     } catch (error) {
-        logger.error('WORKER:JOB_FAILED', `Job failed for ${eventId}:`, { 
+        logger.error('WORKER:JOB_FAILED', `Job failed for ${eventId}:`, {
             jobId: job.id,
-            error: error.message,
-            stack: error.stack
+            error: error.message
         });
         throw error; // Triggers BullMQ retry
     }
-}, { connection, concurrency: 10 });
+}, {
+    connection,
+    concurrency: config.concurrency.comment  // ✅ Tier-aware concurrency
+});
 
 logger.info('WORKER', '✅ Instagram Automation Worker initialized');
 

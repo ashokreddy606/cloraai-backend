@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { acquireLock, releaseLock } = require('../utils/redisLock');
 const { enqueueJob, QUEUES } = require('../utils/queue');
+const { checkBackpressure } = require('../utils/scaling/backpressure');
 
 // Worker runs every 1 minute
 cron.schedule('* * * * *', async () => {
@@ -17,6 +18,15 @@ cron.schedule('* * * * *', async () => {
 
     if (!locked) {
         logger.debug('YOUTUBE_DISPATCHER', 'Cron is locked by another instance. Skipping.');
+        return;
+    }
+
+    // ─── BACKPRESSURE CHECK: Avoid overloading if YouTube queue is full ───
+    const { youtubeQueue } = require('../utils/queue');
+    const pressure = await checkBackpressure(youtubeQueue, 5000); // 5k limit for polling
+    if (pressure.overloaded) {
+        logger.warn('YOUTUBE_DISPATCHER:BACKPRESSURE', `Skipping dispatch due to queue overload (${pressure.count} jobs)`);
+        await releaseLock(lockName);
         return;
     }
 

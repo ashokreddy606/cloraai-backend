@@ -171,7 +171,7 @@ model Notification {
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  @@index([userId, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 // Instagram Account Integration
@@ -263,8 +263,7 @@ model AnalyticsSnapshot {
   snapshotDate DateTime? @default(now())
   createdAt    DateTime? @default(now())
 
-  @@index([userId])
-  @@index([snapshotDate])
+  @@index([userId, snapshotDate(sort: Desc)])
   @@unique([userId, snapshotDate])
   @@map("instagramanalytics")
 }
@@ -326,7 +325,7 @@ model DmInteraction {
   status    String   @default("sent") // sent | skipped | failed
   createdAt DateTime @default(now())
 
-  @@index([userId, createdAt]) // Fast rolling 24hr window queries
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 // Brand Deal Detection
@@ -461,8 +460,8 @@ model YoutubeComment {
 
   createdAt DateTime @default(now())
 
-  @@index([userId, videoId])
-  @@index([replied])
+  @@index([userId, videoId, createdAt(sort: Desc)])
+  @@index([replied, createdAt(sort: Desc)])
 }
 
 model YoutubeAutomationRule {
@@ -522,7 +521,6 @@ model YoutubeAnalyticsSnapshot {
   createdAt    DateTime? @default(now())
 
   @@unique([userId, snapshotDate])
-  @@index([userId])
-  @@index([snapshotDate])
+  @@index([userId, snapshotDate(sort: Desc)])
   @@map("youtubeanalyticsstats")
 }

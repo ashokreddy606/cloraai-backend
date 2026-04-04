@@ -4,23 +4,9 @@ const { Worker } = require('bullmq');
 const { connection, QUEUES } = require('./utils/queue');
 const logger = require('./utils/logger');
 const prisma = require('./lib/prisma');
-const axios = require('axios');
-const { decryptToken, decrypt, encrypt } = require('./utils/cryptoUtils');
-// const { createNotification } = require('./controllers/notificationController'); // Deleted in refactor
 const { cache } = require('./utils/cache');
-
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { google } = require('googleapis');
+const { config } = require('./utils/tierConfig');
 const { s3Client, awsConfig } = require('./config/aws');
-const { GetObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { getYoutubeOAuth2Client } = require('./config/youtube');
-// const User = require('../models/User'); // Deleted in Prisma migration
-
-// Run diagnostics on startup
-debugUserFetching();
 
 /**
  * Diagnostic function to debug why users might not be found by workers.
@@ -89,7 +75,6 @@ process.on('unhandledRejection', (reason) => {
 // ─── Start Cron Jobs ─────────────────────────────────────────────────────────
 logger.info('WORKER', 'Starting background cron jobs...');
 
-// ─── S3 Environment Sync Check ───────────────────────────────────────────────
 const s3ConfigData = {
     region: awsConfig.region,
     bucket: awsConfig.bucketName,
@@ -102,43 +87,34 @@ if (!s3ConfigData.hasAccessKey || !s3ConfigData.hasSecretKey) {
     logger.warn('WORKER:S3_WARNING', 'AWS credentials are missing. Pre-signed URLs will fail.');
 }
 
-// ─── Initializing Redis queue processors...
 console.log("🚀 CloraAI Worker running [Production Mode]");
-
-// const { schedulerTasks, releaseLock } = require('./services/schedulerCron'); // Deleted in refactor
 logger.info('WORKER', "Worker initialized successfully");
 
-
-
-// ─── Initialize BullMQ Workers with Optimized Concurrency ──────────────────
+// ─── Initialize BullMQ Workers with Tier-Aware Concurrency ─────────────────
 logger.info('WORKER', 'Initializing Redis queue processors...');
 
 
 // 2. Webhook Processor
-// Concurrency set to 5 for Instagram/Payment webhooks
 const webhookWorker = new Worker(QUEUES.WEBHOOKS, async (job) => {
     logger.info('WORKER', `Processing webhook: ${job.name}`, { jobId: job.id });
 }, {
     connection,
-    concurrency: 5
+    concurrency: config.concurrency.webhook  // ✅ Tier-aware (2 free / 10 small / 25 large)
 });
 
 // 3. Subscription Reconciliation Worker
-// Concurrency set to 2 to gently handle internal db updates
 const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
     logger.info('WORKER', `Processing subscription: ${job.name}`, { jobId: job.id });
 }, {
     connection,
-    concurrency: 2
+    concurrency: config.concurrency.subscription  // ✅ Tier-aware (1 free / 3 small / 10 large)
 });
-
-
 
 // 5. YouTube Upload Worker (Consolidated)
 const { processYoutubeUpload } = require('./workers/youtubeUploadWorker');
-const youtubeWorker = new Worker(QUEUES.YOUTUBE, processYoutubeUpload, { 
-    connection, 
-    concurrency: 3 
+const youtubeWorker = new Worker(QUEUES.YOUTUBE, processYoutubeUpload, {
+    connection,
+    concurrency: config.concurrency.youtube  // ✅ Tier-aware (3 free / 10 small / 20 large)
 });
 
 // Worker Error Event Listeners
