@@ -59,7 +59,14 @@ const getDashboard = async (req, res) => {
 
     if (isStale) {
       logger.info('ANALYTICS', `Snapshot stale/force for ${req.userId}. Dispatching background refresh.`);
-      enqueueJob(analyticsQueue, 'refresh-analytics', { userId: req.userId }, {
+      const decryptedToken = decrypt(account.instagramAccessToken);
+      
+      enqueueJob(analyticsQueue, 'refresh-analytics', { 
+        userId: req.userId,
+        instagramId: account.instagramId,
+        accessToken: decryptedToken,
+        syncType: forceRefresh ? 'deep' : 'fast'
+      }, {
         jobId: `refresh-${req.userId}` // Ensure only one active refresh per user
       }).catch(err => logger.error('ANALYTICS:ENQUEUE_FAIL', err.message));
     }
