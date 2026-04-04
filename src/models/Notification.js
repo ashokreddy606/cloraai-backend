@@ -25,12 +25,16 @@ const notificationSchema = new mongoose.Schema({
   },
   notificationId: {
     type: String,
-    unique: true, // For deduplication as requested
-    sparse: true, // Allow multiple nulls if ID is not provided
+    unique: true, // Strict uniqueness for deduplication
+    index: true,
+    sparse: true, // Allow multiple nulls if ID is not provided for one-offs
   },
 }, {
   timestamps: true,
 });
+
+// TTL Index: Auto-delete notifications after 30 days
+notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
 
 // Compound index for fast user notification history lookup
 notificationSchema.index({ userId: 1, createdAt: -1 });

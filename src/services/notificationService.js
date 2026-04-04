@@ -4,30 +4,42 @@ const { notificationQueue, enqueueJob } = require('../utils/queue');
 const { admin } = require('../lib/firebase');
 const logger = require('../utils/logger');
 const mongoose = require('mongoose');
+const redis = require('../lib/redis');
 
 /**
  * Service to handle multi-device notifications
  */
 class NotificationService {
   /**
+   * Helper: Acquire a Redis lock for idempotency
+   * @param {string} notificationId 
+   * @param {number} expirySeconds 
+   * @returns {Promise<boolean>} True if lock acquired, False if already exists
+   */
+  async acquireLock(notificationId, expirySeconds = 60) {
+    if (!notificationId) return true; // No ID, no lock needed
+    const lockKey = `notification_lock:${notificationId}`;
+    try {
+      // SET NX = Set if Not eXists, EX = EXpirty in seconds
+      const result = await redis.set(lockKey, 'true', 'NX', 'EX', expirySeconds);
+      return result === 'OK';
+    } catch (error) {
+      logger.error('NOTIFICATION_SERVICE', `Redis lock error for ${notificationId}:`, { error: error.message });
+      return true; // Fallback: allow if Redis is down
+    }
+  }
+
+  /**
    * Register or Update a device token for a user
-   * @param {string} userId 
-   * @param {Object} deviceInfo { deviceId, fcmToken, platform }
    */
   async registerDevice(userId, { deviceId, fcmToken, platform }) {
     try {
       const userObjectId = new mongoose.Types.ObjectId(userId);
-      
       const device = await DeviceToken.findOneAndUpdate(
         { userId: userObjectId, deviceId },
-        { 
-          fcmToken, 
-          platform, 
-          lastActive: new Date() 
-        },
+        { fcmToken, platform, lastActive: new Date() },
         { upsert: true, new: true }
       );
-
       logger.info('NOTIFICATION_SERVICE', `Device registered/updated for user ${userId}: ${deviceId}`);
       return device;
     } catch (error) {
@@ -37,40 +49,46 @@ class NotificationService {
   }
 
   /**
-   * Remove a device token
-   * @param {string} userId 
-   * @param {string} deviceId 
-   */
-  async removeDevice(userId, deviceId) {
-    try {
-      const userObjectId = new mongoose.Types.ObjectId(userId);
-      await DeviceToken.deleteOne({ userId: userObjectId, deviceId });
-      logger.info('NOTIFICATION_SERVICE', `Device removed for user ${userId}: ${deviceId}`);
-    } catch (error) {
-      logger.error('NOTIFICATION_SERVICE', 'Error removing device:', { error: error.message });
-      throw error;
-    }
-  }
-
-  /**
-   * Get all devices for a user
-   * @param {string} userId 
-   */
-  async getUserDevices(userId) {
-    const userObjectId = new mongoose.Types.ObjectId(userId);
-    return await DeviceToken.find({ userId: userObjectId }).sort({ lastActive: -1 });
-  }
-
-  /**
-   * Trigger a notification for a user (sends to all active devices)
-   * @param {string} userId 
-   * @param {Object} payload { title, body, data, notificationId, priority }
+   * Trigger a notification for a user (Enterprise Logic)
+   * Deduplication: Redis Lock -> MongoDB Check -> Token Check
    */
   async sendToUser(userId, { title, body, data = {}, notificationId = null, priority = 'normal' }) {
     try {
       const userObjectId = new mongoose.Types.ObjectId(userId);
 
-      // 1. Store notification in history
+      // 1. REDIS IDEMPOTENCY LOCK
+      if (notificationId) {
+        const lockAcquired = await this.acquireLock(notificationId);
+        if (!lockAcquired) {
+          logger.warn('NOTIFICATION_SERVICE', `SKIP: Duplicate request intercepted by Redis lock: ${notificationId}`);
+          return null;
+        }
+      }
+
+      // 2. MONGODB DEDUPLICATION CHECK
+      if (notificationId) {
+        const existing = await Notification.findOne({ notificationId, userId: userObjectId });
+        if (existing) {
+          logger.warn('NOTIFICATION_SERVICE', `SKIP: Duplicate request found in DB: ${notificationId}`);
+          return existing;
+        }
+      }
+
+      // 3. FETCH AND VALIDATE TOKENS
+      const devices = await DeviceToken.find({ userId: userObjectId });
+      if (!devices || devices.length === 0) {
+        logger.warn('NOTIFICATION_SERVICE', `FALLBACK: No active devices for user ${userId}. Skipping FCM.`);
+        // Still save to DB so user can see it in history later
+        return await Notification.create({
+          userId: userObjectId,
+          title,
+          body,
+          data,
+          notificationId
+        });
+      }
+
+      // 4. STORE IN HISTORY
       const notification = await Notification.create({
         userId: userObjectId,
         title,
@@ -79,17 +97,9 @@ class NotificationService {
         notificationId
       });
 
-      // 2. Fetch all active device tokens
-      const devices = await DeviceToken.find({ userId: userObjectId });
-      
-      if (devices.length === 0) {
-        logger.warn('NOTIFICATION_SERVICE', `No active devices found for user ${userId}. Notification stored but not sent.`);
-        return notification;
-      }
+      const tokens = devices.map(d => d.fcmToken).filter(t => !!t);
 
-      const tokens = devices.map(d => d.fcmToken);
-
-      // 3. Enqueue for background processing
+      // 5. ENQUEUE FOR BACKGROUND PROCESSING
       await enqueueJob(notificationQueue, 'send-notification', {
         userId,
         notificationId: notification._id,
@@ -106,10 +116,7 @@ class NotificationService {
           },
           apns: {
             payload: {
-              aps: {
-                contentAvailable: true,
-                badge: 1
-              }
+              aps: { contentAvailable: true, badge: 1 }
             }
           }
         }
@@ -129,7 +136,11 @@ class NotificationService {
   async processBatchDelivery(jobData) {
     const { tokens, payload, userId } = jobData;
     
-    if (!tokens || tokens.length === 0) return;
+    // FIREBASE FALLBACK: Avoid silent failures
+    if (!tokens || tokens.length === 0) {
+      logger.info('NOTIFICATION_SERVICE', `Delivery skipped for user ${userId}: No valid tokens.`);
+      return { successCount: 0, failureCount: 0 };
+    }
 
     try {
       const response = await admin.messaging().sendEachForMulticast({
@@ -142,12 +153,11 @@ class NotificationService {
       response.responses.forEach((res, idx) => {
         if (!res.success) {
           const error = res.error;
-          // Check if token is invalid or unregistered
           if (error.code === 'messaging/registration-token-not-registered' || 
               error.code === 'messaging/invalid-registration-token') {
             tokensToRemove.push(tokens[idx]);
           }
-          logger.warn('NOTIFICATION_SERVICE', `FCM Delivery failed: ${error.code}`, { token: tokens[idx] });
+          logger.warn('NOTIFICATION_SERVICE', `FCM Delivery failed for user ${userId}: ${error.code} (${error.message})`, { token: tokens[idx] });
         }
       });
 
@@ -161,9 +171,20 @@ class NotificationService {
       
       return response;
     } catch (error) {
-      logger.error('NOTIFICATION_SERVICE', 'FCM Multicast error:', { error: error.message });
+      logger.error('NOTIFICATION_SERVICE', `FCM Multicast FATAL error for user ${userId}:`, { error: error.message });
       throw error; // Re-throw to trigger BullMQ retry
     }
+  }
+
+  async removeDevice(userId, deviceId) {
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    await DeviceToken.deleteOne({ userId: userObjectId, deviceId });
+    logger.info('NOTIFICATION_SERVICE', `Device removed: ${userId} -> ${deviceId}`);
+  }
+
+  async getUserDevices(userId) {
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    return await DeviceToken.find({ userId: userObjectId }).sort({ lastActive: -1 });
   }
 }
 
