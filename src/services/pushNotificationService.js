@@ -23,9 +23,8 @@ const removeInvalidPushTokens = async (tokens) => {
     if (!tokens.length) return;
 
     await Promise.allSettled(
-        tokens.map((token) => prisma.user.updateMany({
-            where: { pushToken: token },
-            data: { pushToken: null },
+        tokens.map((token) => prisma.deviceToken.deleteMany({
+            where: { token: token },
         }))
     );
 };
@@ -187,15 +186,17 @@ const createAndSendNotification = async (userId, { type, title, body, data = {},
             }
         });
 
-        // 2. Fetch User's Push Token
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { pushToken: true }
+        // 2. Fetch User's Push Tokens (ALL Devices)
+        const deviceTokens = await prisma.deviceToken.findMany({
+            where: { userId: userId },
+            select: { token: true }
         });
 
-        // 3. Send Push if token exists
-        if (user?.pushToken) {
-            await sendPushNotification(user.pushToken, title, body, { ...data, notificationId: notification.id }, options);
+        const activeTokens = deviceTokens.map(dt => dt.token);
+
+        // 3. Send Push if any tokens exist
+        if (activeTokens.length > 0) {
+            await sendPushNotification(activeTokens, title, body, { ...data, notificationId: notification.id }, options);
         }
 
         return notification;

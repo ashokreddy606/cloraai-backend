@@ -244,6 +244,26 @@ const login = async (req, res) => {
       await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
+    if (req.body.pushToken && pushNotificationService.isLikelyExpoToken(req.body.pushToken)) {
+      await prisma.deviceToken.upsert({
+        where: { token: req.body.pushToken },
+        create: {
+          token: req.body.pushToken,
+          userId: user.id,
+          deviceName,
+          deviceType,
+          os,
+          lastUsed: new Date()
+        },
+        update: {
+          userId: user.id, // Re-assign to current user if token was previously used by someone else
+          lastUsed: new Date(),
+          deviceName,
+          os
+        }
+      });
+    }
+
     await prisma.user.update({
       where: { id: user.id },
       data: { ipAddress, ...(deviceFingerprint && { deviceFingerprint }), failedLoginAttempts: 0, lockoutUntil: null }
@@ -347,7 +367,13 @@ const logout = async (req, res) => {
         await redisClient.del(`refresh_token:${req.userId.toString()}:${session.sessionToken}`);
       }
     }
-    // Clear push token on logout to ensure old device stops receiving
+    // Clear specific push token on logout if provided
+    if (req.body.pushToken) {
+      await prisma.deviceToken.deleteMany({
+        where: { userId: req.userId, token: req.body.pushToken }
+      });
+    }
+    // Also clear from user record for backward compatibility
     if (req.userId) {
       await prisma.user.update({
         where: { id: req.userId },
@@ -804,11 +830,18 @@ const logoutSession = catchAsync(async (req, res, next) => {
     throw new AppError('wrong password please enter correct password', 401);
   }
 
-  // Reset failed attempts on success and clear push token
+  // Reset failed attempts on success
   await prisma.user.update({
     where: { id: user.id },
     data: { failedLogoutAttempts: 0, logoutLockoutUntil: null, pushToken: null }
   });
+
+  // Clear specific push token if provided
+  if (req.body.pushToken) {
+    await prisma.deviceToken.deleteMany({
+      where: { userId: user.id, token: req.body.pushToken }
+    });
+  }
 
   const session = await prisma.loginSession.findUnique({ where: { id: sessionId } });
   if (!session || session.userId.toString() !== req.userId.toString()) throw new AppError('Session not found', 404);
@@ -820,6 +853,12 @@ const logoutSession = catchAsync(async (req, res, next) => {
   await prisma.loginSession.delete({ where: { id: sessionId } });
   
   // Clear push token as well when a specific session is logged out
+  if (req.body.pushToken) {
+    await prisma.deviceToken.deleteMany({
+       where: { userId: req.userId, token: req.body.pushToken }
+    });
+  }
+
   await prisma.user.update({
     where: { id: req.userId },
     data: { pushToken: null }

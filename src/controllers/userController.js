@@ -59,19 +59,45 @@ const markNotificationRead = async (req, res) => {
 
 const updatePushToken = async (req, res) => {
     try {
-        const { pushToken } = req.body;
+        const { pushToken, deviceName, deviceType, os } = req.body;
         const userId = req.userId;
+        const pushNotificationService = require('../services/pushNotificationService');
 
         if (!pushToken) {
             return res.status(400).json({ error: 'Push token is required' });
         }
 
+        // 1. Hardened Validation
+        if (!pushNotificationService.isLikelyExpoToken(pushToken)) {
+            return res.status(400).json({ error: 'Invalid push token format' });
+        }
+
+        // 2. Multi-device registration
+        await prisma.deviceToken.upsert({
+            where: { token: pushToken },
+            create: {
+                token: pushToken,
+                userId: userId,
+                deviceName: deviceName || 'Unknown Device',
+                deviceType: deviceType || 'mobile',
+                os: os || 'unknown',
+                lastUsed: new Date()
+            },
+            update: {
+                userId: userId,
+                lastUsed: new Date(),
+                ...(deviceName && { deviceName }),
+                ...(os && { os })
+            }
+        });
+
+        // 3. Backward compatibility (Sync to User model)
         await prisma.user.update({
             where: { id: userId },
             data: { pushToken }
         });
 
-        logger.info('NOTIFICATION', `Push token updated for user ${userId}`);
+        logger.info('NOTIFICATION', `Push token updated for user ${userId} (Multi-device: true)`);
         res.status(200).json({ success: true, message: 'Push token updated successfully' });
     } catch (error) {
         logger.error('NOTIFICATION', 'Update push token error:', error);
