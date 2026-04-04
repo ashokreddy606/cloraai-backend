@@ -32,15 +32,28 @@ const removeInvalidPushTokens = async (tokens) => {
 
 /**
  * Ensures a color is a valid 6-digit hex string with # prefix.
+ * Returns null if invalid instead of a default to allow optionality in payload.
  */
 const sanitizeHexColor = (color) => {
-    if (!color || typeof color !== 'string') return '#6D28D9'; // Default Clora Purple
-    let hex = color.startsWith('#') ? color : `#${color}`;
-    // Simple regex for #RRGGBB or #AARRGGBB
-    if (/^#([0-9A-F]{3}){1,2}$/i.test(hex) || /^#([0-9A-F]{4}){1,2}$/i.test(hex)) {
-        return hex;
+    if (!color || typeof color !== 'string') return null;
+    
+    // Normalize: remove Hash if present, then re-add
+    let hex = color.startsWith('#') ? color.slice(1) : color;
+    
+    // Convert to lowercase as some APIs are case-sensitive
+    hex = hex.toLowerCase();
+
+    // Strictly validate 6-digit hex (No alpha, no 3-digit)
+    if (/^[0-9a-f]{6}$/.test(hex)) {
+        return `#${hex}`;
     }
-    return '#6D28D9';
+    
+    // If it's a 3-digit hex, expand it
+    if (/^[0-9a-f]{3}$/.test(hex)) {
+        return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`;
+    }
+
+    return null;
 };
 
 /**
@@ -72,6 +85,8 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
             type, icon, ...details 
         } = options;
 
+        const sanitizedColor = sanitizeHexColor(color || options.color);
+
         const message = {
             to: pushToken,
             sound: sound || 'default',
@@ -85,8 +100,8 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
                 ...(icon && { icon }),
                 ...details 
             },
-            // Android specific
-            color: sanitizeHexColor(color || options.color), 
+            // Android specific: ONLY include if valid hex
+            ...(sanitizedColor && { color: sanitizedColor }),
             ...(badge !== undefined && { badge }),
             ...(ttl !== undefined && { ttl }),
             ...(expiration !== undefined && { expiration }),
@@ -157,6 +172,8 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
  */
 const createAndSendNotification = async (userId, { type, title, body, data = {}, options = {} }) => {
     try {
+        const sanitizedColor = sanitizeHexColor(options.color) || '#6d28d9';
+
         // 1. Create DB record first (so it's in history even if push fails)
         const notification = await prisma.notification.create({
             data: {
@@ -165,7 +182,7 @@ const createAndSendNotification = async (userId, { type, title, body, data = {},
                 title,
                 body,
                 icon: options.icon || 'notifications',
-                color: options.color || '#6D28D9',
+                color: sanitizedColor,
                 read: false,
             }
         });

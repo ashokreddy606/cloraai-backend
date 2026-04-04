@@ -73,6 +73,9 @@ const webhookController = require('./src/controllers/webhookController');
 // Initialize Express app
 const app = express();
 
+// Trust first proxy (Railway/Cloudflare) for correct IP detection in rate limiting
+app.set('trust proxy', 1);
+
 // ─── Global Request Logger ──────────────────────────────────────────────────
 app.use((req, res, next) => {
     logger.info('API_REQUEST', `${req.method} ${req.originalUrl}`);

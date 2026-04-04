@@ -137,13 +137,7 @@ const rateLimit = (max = 500, windowMinutes = 15, keyGenerator = undefined) => {
     standardHeaders: true,
     legacyHeaders: false,
     store, // Each limiter now gets its own store instance
-    keyGenerator: keyGenerator || ((req) => {
-      // Prioritize standard headers from trusted proxies (Railway/Cloudflare/AWS)
-      return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 
-             req.headers['x-real-ip'] || 
-             req.ip || 
-             '127.0.0.1';
-    }),
+    keyGenerator: keyGenerator || ((req) => req.ip || '127.0.0.1'),
     message: {
       error: "Too many requests. Please try again later."
     },
@@ -155,7 +149,7 @@ const rateLimit = (max = 500, windowMinutes = 15, keyGenerator = undefined) => {
   });
 };
 
-const authLimiterLogin = rateLimit(100, 15); // INCREASED: 100 attempts/15min to prevent false positives in shared network environments
+const authLimiterLogin = rateLimit(500, 15); // INCREASED: 500 attempts/15min to prevent false positives during active testing or shared networks
 const authLimiterRegister = rateLimit(5, 60); // Stricter for registration
 const authLimiterForgot = rateLimit(5, 60);
 
