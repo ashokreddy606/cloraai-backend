@@ -3,7 +3,7 @@ const logger = require('../utils/logger');
 const { cache } = require('../utils/cache');
 const { decrypt } = require('../utils/cryptoUtils');
 const { instagramBreaker = {} } = require('./instagramController');
-const { enqueueJob, QUEUES } = require('../utils/queue');
+const { enqueueJob, analyticsQueue } = require('../utils/queue');
 const instagramService = require('../services/instagramService');
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -59,7 +59,7 @@ const getDashboard = async (req, res) => {
 
     if (isStale) {
       logger.info('ANALYTICS', `Snapshot stale/force for ${req.userId}. Dispatching background refresh.`);
-      enqueueJob(QUEUES.ANALYTICS, 'refresh-analytics', { userId: req.userId }, {
+      enqueueJob(analyticsQueue, 'refresh-analytics', { userId: req.userId }, {
         jobId: `refresh-${req.userId}` // Ensure only one active refresh per user
       }).catch(err => logger.error('ANALYTICS:ENQUEUE_FAIL', err.message));
     }

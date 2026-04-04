@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { acquireLock, releaseLock } = require('../utils/redisLock');
-const { enqueueJob, QUEUES } = require('../utils/queue');
+const { enqueueJob, youtubeQueue } = require('../utils/queue');
 const { checkBackpressure } = require('../utils/scaling/backpressure');
 
 // Worker runs every 1 minute
@@ -22,7 +22,7 @@ cron.schedule('* * * * *', async () => {
     }
 
     // ─── BACKPRESSURE CHECK: Avoid overloading if YouTube queue is full ───
-    const { youtubeQueue } = require('../utils/queue');
+
     const pressure = await checkBackpressure(youtubeQueue, 5000); // 5k limit for polling
     if (pressure.overloaded) {
         logger.warn('YOUTUBE_DISPATCHER:BACKPRESSURE', `Skipping dispatch due to queue overload (${pressure.count} jobs)`);
@@ -50,7 +50,7 @@ cron.schedule('* * * * *', async () => {
 
         // Parallelize: Enqueue each user as a separate job
         for (const user of usersWithYoutube) {
-            await enqueueJob(QUEUES.YOUTUBE, 'process-user', { userId: user.id })
+            await enqueueJob(youtubeQueue, 'process-user', { userId: user.id })
                 .catch(err => logger.error('YOUTUBE_DISPATCHER:ENQUEUE_FAIL', `Failed to enqueue user ${user.id}`, err));
         }
 
