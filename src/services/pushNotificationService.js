@@ -64,21 +64,34 @@ const sendPushNotification = async (pushTokens, title, body, data = {}, options 
             continue;
         }
 
+        // Separate Expo-standard options from custom data
+        const { 
+            // Expo Root Fields
+            sound, priority, channelId, badge, ttl, expiration, _displayInForeground, color,
+            // Custom fields to move to data
+            type, icon, ...details 
+        } = options;
+
         const message = {
             to: pushToken,
-            sound: 'default',
-            priority: 'high', // Ensure visibility on lock screen
-            channelId: 'default', // Android channel
+            sound: sound || 'default',
+            priority: priority || 'high',
+            channelId: channelId || 'default',
             title,
             body,
-            data,
-            ...options,
+            data: { 
+                ...data, 
+                ...(type && { type }), 
+                ...(icon && { icon }),
+                ...details 
+            },
+            // Android specific
+            color: sanitizeHexColor(color || options.color), 
+            ...(badge !== undefined && { badge }),
+            ...(ttl !== undefined && { ttl }),
+            ...(expiration !== undefined && { expiration }),
+            ...(_displayInForeground !== undefined && { _displayInForeground }),
         };
-
-        // Strict validation: color must be a valid hex for Android push!
-        if (message.color) {
-            message.color = sanitizeHexColor(message.color);
-        }
 
         messages.push(message);
     }

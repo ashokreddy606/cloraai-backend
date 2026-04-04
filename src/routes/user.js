@@ -8,5 +8,6 @@ const { markNotificationReadSchema } = require('../validators/user');
 router.delete('/delete-account', authenticate, userController.deleteAccount);
 router.get('/notifications', authenticate, userController.getNotifications);
 router.patch('/notifications/:id/read', authenticate, validate(markNotificationReadSchema), userController.markNotificationRead);
+router.post('/push-token', authenticate, userController.updatePushToken);
 
 module.exports = router;

@@ -57,4 +57,26 @@ const markNotificationRead = async (req, res) => {
     }
 };
 
-module.exports = { deleteAccount, getNotifications, markNotificationRead };
+const updatePushToken = async (req, res) => {
+    try {
+        const { pushToken } = req.body;
+        const userId = req.userId;
+
+        if (!pushToken) {
+            return res.status(400).json({ error: 'Push token is required' });
+        }
+
+        await prisma.user.update({
+            where: { id: userId },
+            data: { pushToken }
+        });
+
+        logger.info('NOTIFICATION', `Push token updated for user ${userId}`);
+        res.status(200).json({ success: true, message: 'Push token updated successfully' });
+    } catch (error) {
+        logger.error('NOTIFICATION', 'Update push token error:', error);
+        res.status(500).json({ error: 'Failed to update push token' });
+    }
+};
+
+module.exports = { deleteAccount, getNotifications, markNotificationRead, updatePushToken };

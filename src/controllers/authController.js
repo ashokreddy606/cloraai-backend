@@ -347,6 +347,13 @@ const logout = async (req, res) => {
         await redisClient.del(`refresh_token:${req.userId.toString()}:${session.sessionToken}`);
       }
     }
+    // Clear push token on logout to ensure old device stops receiving
+    if (req.userId) {
+      await prisma.user.update({
+        where: { id: req.userId },
+        data: { pushToken: null }
+      });
+    }
     res.status(200).json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
     res.status(200).json({ success: true, message: 'Logged out' });
@@ -797,10 +804,10 @@ const logoutSession = catchAsync(async (req, res, next) => {
     throw new AppError('wrong password please enter correct password', 401);
   }
 
-  // Reset failed attempts on success
+  // Reset failed attempts on success and clear push token
   await prisma.user.update({
     where: { id: user.id },
-    data: { failedLogoutAttempts: 0, logoutLockoutUntil: null }
+    data: { failedLogoutAttempts: 0, logoutLockoutUntil: null, pushToken: null }
   });
 
   const session = await prisma.loginSession.findUnique({ where: { id: sessionId } });
@@ -811,6 +818,13 @@ const logoutSession = catchAsync(async (req, res, next) => {
   }
 
   await prisma.loginSession.delete({ where: { id: sessionId } });
+  
+  // Clear push token as well when a specific session is logged out
+  await prisma.user.update({
+    where: { id: req.userId },
+    data: { pushToken: null }
+  });
+
   res.status(200).json({ success: true, message: 'Logged out from device.' });
 });
 
