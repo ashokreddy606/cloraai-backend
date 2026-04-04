@@ -5,51 +5,59 @@ const logger = require('../utils/logger');
 
 /**
  * Worker for multi-device notification delivery
+ * Configured with concurrency and rate limiting for production stability
  */
 const notificationWorker = new Worker(
   QUEUES.NOTIFICATIONS,
   async (job) => {
-    logger.info('NOTIFICATION_WORKER', `Processing notification job: ${job.id} (user: ${job.data.userId})`);
+    const { userId, notificationId } = job.data;
+    logger.info('NOTIFICATION_WORKER', `[START] Job:${job.id} | User:${userId} | Notif:${notificationId}`);
 
     try {
       if (job.name === 'send-notification') {
-        const { userId, tokens, payload } = job.data;
-
-        if (!tokens || tokens.length === 0) {
-          logger.warn('NOTIFICATION_WORKER', `No tokens provided for notification ${job.id} for user ${userId}. Job skipped.`);
-          return;
-        }
-
-        // Handle batch delivery and auto-token-cleanup
         const response = await notificationService.processBatchDelivery(job.data);
+        
+        logger.info('NOTIFICATION_WORKER', `[SUCCESS] Job:${job.id} | Sent:${response.successCount} | Failed:${response.failureCount}`);
         
         return {
           successCount: response.successCount,
           failureCount: response.failureCount,
         };
       }
+      
+      logger.warn('NOTIFICATION_WORKER', `[SKIP] Unknown job name: ${job.name}`);
     } catch (error) {
-      logger.error('NOTIFICATION_WORKER', `Job failed: ${job.id}`, { error: error.message });
-      throw error; // Re-throw to trigger BullMQ retry with backoff
+      logger.error('NOTIFICATION_WORKER', `[ERROR] Job:${job.id} failed`, { 
+        error: error.message,
+        attempt: job.attemptsMade + 1
+      });
+      // Re-throwing triggers BullMQ's automatic exponential backoff retry.
+      throw error; 
     }
   },
   {
     connection,
-    concurrency: 5, // Process multiple notifications in parallel
+    concurrency: 10, // Process up to 10 notifications in parallel
     limiter: {
-      max: 100, // Max 100 notifications per 1 second (burst)
+      max: 50, // FCM recommended limit per batch to avoid socket exhaustion
       duration: 1000,
     },
+    // Ensure jobs are picked up even if the connection was briefly interrupted
+    maxRetriesPerRequest: null, 
   }
 );
 
-// Worker event handlers
+// Worker event handlers for deep monitoring
 notificationWorker.on('completed', (job) => {
-  logger.info('NOTIFICATION_WORKER', `✅ Job completed: ${job.id}`);
+  // Clean up metadata if needed
 });
 
 notificationWorker.on('failed', (job, err) => {
-  logger.error('NOTIFICATION_WORKER', `❌ Job failed: ${job.id}`, { error: err.message });
+  logger.error('NOTIFICATION_WORKER', `[RETRY_FAILED] Job:${job.id} after max attempts`, { error: err.message });
+});
+
+notificationWorker.on('error', (err) => {
+  logger.error('NOTIFICATION_WORKER', `[CRITICAL] Worker encounterd a global error`, { error: err.message });
 });
 
 module.exports = notificationWorker;

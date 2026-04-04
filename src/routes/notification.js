@@ -54,4 +54,11 @@ router.post('/test',
   notificationController.sendTestNotification
 );
 
+// Health Check (Queue/Worker Monitoring)
+router.get('/health', 
+  authenticate, 
+  requireAdmin, 
+  notificationController.getHealth
+);
+
 module.exports = router;

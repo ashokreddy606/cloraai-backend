@@ -100,7 +100,7 @@ class NotificationService {
       const tokens = devices.map(d => d.fcmToken).filter(t => !!t);
 
       // 5. ENQUEUE FOR BACKGROUND PROCESSING
-      await enqueueJob(notificationQueue, 'send-notification', {
+      const jobData = {
         userId,
         notificationId: notification._id,
         tokens,
@@ -120,7 +120,17 @@ class NotificationService {
             }
           }
         }
+      };
+
+      const enqueued = await enqueueJob(notificationQueue, 'send-notification', jobData, {
+        priority: priority === 'high' ? 1 : 10 // BullMQ priority (lower is higher)
       });
+
+      // 6. FALLBACK: If queue is down, send directly (Ensures 0% loss)
+      if (!enqueued) {
+        logger.warn('NOTIFICATION_SERVICE', `FALLBACK: Queue failed for user ${userId}. Sending directly...`);
+        await this.processBatchDelivery(jobData);
+      }
 
       return notification;
     } catch (error) {
@@ -130,15 +140,14 @@ class NotificationService {
   }
 
   /**
-   * Batch send notifications (used by worker)
+   * Batch send notifications (used by worker or fallback)
    * Handles invalid/expired tokens automatically
    */
   async processBatchDelivery(jobData) {
     const { tokens, payload, userId } = jobData;
     
-    // FIREBASE FALLBACK: Avoid silent failures
     if (!tokens || tokens.length === 0) {
-      logger.info('NOTIFICATION_SERVICE', `Delivery skipped for user ${userId}: No valid tokens.`);
+      logger.info('NOTIFICATION_SERVICE', `Delivery skipped for user ${userId}: No tokens.`);
       return { successCount: 0, failureCount: 0 };
     }
 

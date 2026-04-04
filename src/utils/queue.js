@@ -38,23 +38,36 @@ if (connection) {
     logger.warn('QUEUE', 'Redis connection missing. Queues are disabled (expected in local dev without Redis).');
 }
 
-// Helper function to add jobs
+// Helper function to add jobs with enhanced reliability
 const enqueueJob = async (queue, jobName, data, options = {}) => {
+    if (!queue) {
+        logger.error('QUEUE', `CRITICAL: Queue not initialized for ${jobName}. Falling back to direct execution if possible.`);
+        return false;
+    }
+
     try {
         const defaultOptions = {
-            removeOnComplete: true,
-            removeOnFail: false,
-            // default backoff
+            removeOnComplete: {
+                age: 24 * 3600, // keep for 24 hours
+                count: 1000,   // or max 1000 jobs
+            },
+            removeOnFail: {
+                age: 48 * 3600, // keep failures for 48 hours for debugging
+            },
+            attempts: 5,
             backoff: {
                 type: 'exponential',
-                delay: 1000,
+                delay: 2000, // 2s initial delay
             },
             ...options
         };
-        await queue.add(jobName, data, defaultOptions);
-        logger.info('QUEUE:JOB_CREATED', `Enqueued ${jobName} job into ${queue.name}`);
+
+        const job = await queue.add(jobName, data, defaultOptions);
+        logger.info('QUEUE:JOB_CREATED', `Enqueued ${jobName} [JobID: ${job.id}] into ${queue.name}`);
+        return true;
     } catch (err) {
-        logger.error('QUEUE', `Failed to enqueue ${jobName} job`, { error: err.message });
+        logger.error('QUEUE', `Failed to enqueue ${jobName} job`, { error: err.message, stack: err.stack });
+        return false;
     }
 };
 

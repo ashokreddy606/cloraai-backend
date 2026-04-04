@@ -178,3 +178,47 @@ exports.sendTestNotification = async (req, res) => {
     res.status(500).json({ error: 'Failed to queue test notification' });
   }
 };
+
+/**
+ * Get Notification System Health (Admin Only)
+ */
+exports.getHealth = async (req, res) => {
+  try {
+    const { notificationQueue } = require('../utils/queue');
+    
+    if (!notificationQueue) {
+      return res.status(503).json({
+        success: false,
+        status: 'Unhealthy',
+        message: 'Notification queue not initialized (Redis connection issue)'
+      });
+    }
+
+    const [waiting, active, completed, failed, delayed] = await Promise.all([
+      notificationQueue.getWaitingCount(),
+      notificationQueue.getActiveCount(),
+      notificationQueue.getCompletedCount(),
+      notificationQueue.getFailedCount(),
+      notificationQueue.getDelayedCount()
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        status: 'Healthy',
+        counts: {
+          waiting,
+          active,
+          completed,
+          failed,
+          delayed
+        },
+        workerConcurrency: 10,
+        timestamp: new Date()
+      }
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Health check error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to perform health check' });
+  }
+};
