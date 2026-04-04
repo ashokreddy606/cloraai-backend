@@ -23,6 +23,61 @@ const getDaysRemaining = (planEndDate, plan) => {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 };
 
+/**
+ * Automatically grants 1 month of PRO as a reward for 5 paid referrals.
+ */
+const checkAndGrantReferralRewards = async (inviteeId) => {
+    try {
+        const invitee = await prisma.user.findUnique({
+            where: { id: inviteeId },
+            select: { referredById: true }
+        });
+
+        if (!invitee || !invitee.referredById) return;
+
+        const inviterId = invitee.referredById;
+
+        // Atomic update and reward check
+        await prisma.$transaction(async (tx) => {
+            const inviter = await tx.user.update({
+                where: { id: inviterId },
+                data: { paidReferrals: { increment: 1 } },
+                select: { id: true, username: true, paidReferrals: true, milestoneClaimedCount: true, plan: true, planEndDate: true }
+            });
+
+            // Milestone: every 5 paid referrals
+            const eligibleMilestones = Math.floor(inviter.paidReferrals / 5);
+            
+            if (eligibleMilestones > inviter.milestoneClaimedCount) {
+                const currentEnd = inviter.planEndDate && new Date(inviter.planEndDate) > new Date() 
+                    ? new Date(inviter.planEndDate) 
+                    : new Date();
+                
+                const newEndDate = new Date(currentEnd.getTime() + (30 * 24 * 60 * 60 * 1000));
+
+                await tx.user.update({
+                    where: { id: inviterId },
+                    data: {
+                        plan: 'PRO', // Upgrade or keep PRO
+                        planEndDate: newEndDate,
+                        subscriptionStatus: 'ACTIVE',
+                        milestoneClaimedCount: eligibleMilestones
+                    }
+                });
+
+                logger.info('REFERRAL', `Granted 30 days PRO reward to ${inviter.username} (${inviter.id}) for reaching ${inviter.paidReferrals} paid referrals.`);
+                
+                // Notify the inviter
+                await pushNotificationService.notifyReferralReward(inviterId, inviter.paidReferrals).catch(err => 
+                    logger.warn('REFERRAL:NOTIFY_ERROR', 'Failed to send reward notification', { error: err.message, userId: inviterId })
+                );
+            }
+        });
+    } catch (e) {
+        logger.error('REFERRAL', 'Reward automation failed', { error: e.message, inviteeId });
+    }
+};
+
 // Razorpay logic removed - Google Play Billing is now the primary monetization system.
 
 // ─── 3. GET SUBSCRIPTION STATUS ──────────────────────────────────────────────
@@ -142,6 +197,11 @@ const verifyGooglePlayPurchase = async (req, res) => {
         await pushNotificationService.notifySubscriptionSuccess(userId, productId === 'cloraai_pro_yearly' ? 'Pro Yearly' : 'Pro Monthly').catch(err => 
           logger.warn('SUBSCRIPTION:NOTIFY_ERROR', 'Failed to send subscription notification', { error: err.message, userId })
         );
+
+        // TRIGGER: Check for referral rewards for the person who invited this user
+        if (!existingPayment) {
+            checkAndGrantReferralRewards(userId).catch(e => logger.error('SUBSCRIPTION:REWARD_FAIL', e.message));
+        }
 
         return res.status(200).json({ success: true, message: 'Subscription activated' });
       }

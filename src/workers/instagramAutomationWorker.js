@@ -215,7 +215,10 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                 if (aiReply) finalMessage = aiReply;
             } else {
                 logger.warn('WORKER:AI_LIMIT_HIT', `AI limit hit for user ${userId}. Falling back to static reply.`, { code: limitCheck.code });
-                // fallback remains the static autoReplyMessage
+                // Notify user
+                await pushNotificationService.notifyAILimitHit(userId, feature).catch(err => 
+                    logger.warn('WORKER:NOTIFY_ERROR', 'Failed to send AI limit notification', { error: err.message })
+                );
             }
         }
 

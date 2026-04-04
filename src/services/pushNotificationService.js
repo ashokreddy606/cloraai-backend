@@ -323,6 +323,19 @@ const notifyCreditsAdded = async (userId, amount) => {
     });
 };
 
+/**
+ * Convenience: AI Limit Hit
+ */
+const notifyAILimitHit = async (userId, feature) => {
+    return createAndSendNotification(userId, {
+        type: 'account',
+        title: '🛑 AI Limit Reached',
+        body: `You've reached your daily AI limit for ${feature.replace(/_/g, ' ')}. Upgrade to PRO for unlimited usage!`,
+        data: { type: 'AI_LIMIT', feature },
+        options: { priority: 'high' }
+    });
+};
+
 module.exports = {
     sendPushNotification,
     isLikelyExpoToken,
@@ -339,5 +352,6 @@ module.exports = {
     notifyYouTubeWin,
     notifySubscriptionSuccess,
     notifyCreditsAdded,
+    notifyAILimitHit,
     sendAutomationActiveNotification,
 };

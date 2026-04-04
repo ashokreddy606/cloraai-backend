@@ -170,6 +170,12 @@ const checkAILimit = async (userId, feature) => {
         });
 
         if (usedToday >= dailyLimit) {
+            // PRO users get UNLIMITED AI usage (bypass daily cap)
+            if (plan === 'PRO') {
+                logger.debug('AI_LIMITER', `PRO user ${userId} bypassing daily cap for ${feature}.`);
+                return { allowed: true, plan, usedToday };
+            }
+
             return {
                 allowed: false,
                 error: `Daily limit of ${dailyLimit} reached for ${feature}.`,

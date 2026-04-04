@@ -1,11 +1,10 @@
-const instagramService = require('../services/instagramService');
-// const InstagramAccount = require('../../models/InstagramAccount'); // Deleted in Prisma migration
-// const InstagramAnalytics = require('../../models/InstagramAnalytics'); // Deleted in Prisma migration
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
 const { cache } = require('../utils/cache');
 const { decrypt } = require('../utils/cryptoUtils');
-const { instagramBreaker } = require('./instagramController');
+const { instagramBreaker = {} } = require('./instagramController');
+const { enqueueJob, QUEUES } = require('../utils/queue');
+const instagramService = require('../services/instagramService');
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
 logger.info('ANALYTICS', 'Analytics Controller initialized');
@@ -56,85 +55,13 @@ const getDashboard = async (req, res) => {
 
     const snapshotDate = latestSnapshot?.snapshotDate ? new Date(latestSnapshot.snapshotDate) : new Date(0);
 
-    if (!latestSnapshot || snapshotDate < oneHourAgo || forceRefresh) {
-      try {
-        const decryptedToken = decrypt(account.instagramAccessToken);
-        if (!decryptedToken) {
-          logger.warn('ANALYTICS', `Skipping stats fetch: Unable to decrypt token for user ${req.userId}`);
-          throw new Error('Token decryption failed');
-        }
+    const isStale = !latestSnapshot || snapshotDate < oneHourAgo || forceRefresh;
 
-        const stats = await instagramService.getAccountStats(account.instagramId, decryptedToken);
-
-        // Decrypt page token if present, otherwise use decrypted user token
-        const pToken = account.pageAccessToken ? (decrypt(account.pageAccessToken) || decryptedToken) : decryptedToken;
-
-        // Try getting account-level insights first (more reliable for total views)
-        const accountInsights = await instagramService.getAccountInsights(
-          account.instagramId, 
-          pToken,
-          'day'
-        );
-
-        // EXTRA: Fetch 28-day insights to capture long-term views (matches user screenshot "41 views in last 30 days")
-        const accountInsights30d = await instagramService.getAccountInsights(
-          account.instagramId,
-          pToken,
-          'days_28'
-        );
-
-        const accountDay = accountInsights.reach || 0;
-        const account28d = accountInsights30d.reach || 0;
-
-        totalReach = Math.max(accountDay, account28d);
-        totalImpressions = Math.max(accountInsights.impressions || 0, accountInsights30d.impressions || 0, totalReach);
-
-        // Always fetch media insights for a "live" feel and aggregate them
-        const media = await instagramService.getUserMedia(account.instagramId, decryptedToken);
-        let totalMediaReach = 0;
-        let totalMediaImpressions = 0;
-        let totalPlays = 0;
-        let totalInteractions = 0;
-
-        if (media && media.length > 0) {
-          const topMedia = media.slice(0, 30);
-
-          // Fetch plays independently (direct field) and insights
-          const videoItems = topMedia.filter(m => m.media_type === 'VIDEO' || m.media_type === 'REELS');
-          const videoPlayCounts = await Promise.all(
-            videoItems.map(m => instagramService.getVideoViewCount(m.id, decryptedToken))
-          );
-          const directPlays = videoPlayCounts.reduce((sum, v) => sum + v, 0);
-
-          const insights = await Promise.all(topMedia.map(m => instagramService.getMediaInsights(m.id, decryptedToken, m.media_type)));
-          
-          totalMediaImpressions = insights.reduce((sum, ins) => sum + (ins.impressions || 0), 0);
-          totalPlays = insights.reduce((sum, ins) => sum + (ins.plays || 0), 0) + directPlays;
-          totalMediaReach = insights.reduce((sum, ins) => sum + (ins.reach || 0), 0);
-          totalInteractions = insights.reduce((sum, ins) => sum + (ins.total_interactions || 0), 0);
-          
-          logger.info('ANALYTICS', `Final Aggregation: Account[${accountDay}/${account28d}] Media[${totalMediaReach}/${totalMediaImpressions}/${totalPlays}] Interactions[${totalInteractions}]`);
-
-          // Take the highest value across relevant sources to be robust
-          totalImpressions = Math.max(totalImpressions, totalMediaImpressions, totalPlays);
-          totalReach = Math.max(totalReach, totalMediaReach);
-        }
-
-        // Create or Update snapshot
-        latestSnapshot = await prisma.analyticsSnapshot.create({
-          data: {
-            userId: req.userId,
-            followers: stats.followers_count || 0,
-            posts: stats.media_count || 0,
-            following: stats.follows_count || 0,
-            impressions: totalImpressions,
-            reach: totalReach,
-            snapshotDate: new Date()
-          }
-        });
-      } catch (e) {
-        console.warn('Snapshot refresh failed:', e.message);
-      }
+    if (isStale) {
+      logger.info('ANALYTICS', `Snapshot stale/force for ${req.userId}. Dispatching background refresh.`);
+      enqueueJob(QUEUES.ANALYTICS, 'refresh-analytics', { userId: req.userId }, {
+        jobId: `refresh-${req.userId}` // Ensure only one active refresh per user
+      }).catch(err => logger.error('ANALYTICS:ENQUEUE_FAIL', err.message));
     }
 
     // ALWAYS fetch live summary stats for "real-time" dashboard feel
@@ -299,6 +226,8 @@ const getDashboard = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      isRefreshing: isStale,
+      lastUpdated: latestSnapshot?.snapshotDate || null,
       data: {
         current: {
           followers,
