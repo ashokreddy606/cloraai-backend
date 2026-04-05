@@ -265,7 +265,6 @@ model Invoice {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
-  @@index([invoiceNumber])
 }
 
 // ─── Razorpay Webhook Event Deduplication ────────────────────────────────────
@@ -303,7 +302,6 @@ model AnalyticsSnapshot {
   createdAt    DateTime? @default(now())
 
   @@index([userId, snapshotDate(sort: Desc)])
-  @@unique([userId, snapshotDate])
   @@map("instagramanalytics")
 }
 
@@ -559,9 +557,7 @@ model YoutubeAnalyticsSnapshot {
   snapshotDate DateTime? @default(now())
   createdAt    DateTime? @default(now())
 
-  @@unique([userId, snapshotDate])
   @@index([userId, snapshotDate(sort: Desc)])
-  @@map("youtubeanalyticsstats")
 }
 
 // Device Push Tokens
