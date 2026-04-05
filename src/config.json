@@ -1,8 +1,8 @@
 {
-  "subscriptionPrice": 199,
-  "yearlyPrice": 2388,
-  "offerPriceMonthly": 99,
-  "offerPriceYearly": 1199,
+  "subscriptionPrice": 299,
+  "yearlyPrice": 3588,
+  "offerPriceMonthly": null,
+  "offerPriceYearly": 2499,
   "freeFeatures": [
     "Basic analytics",
     "1 Dm Rules"

@@ -45,10 +45,13 @@ const createSubscription = async (req, res) => {
         const planId = billingCycle === 'MONTHLY' 
             ? process.env.RAZORPAY_PLAN_MONTHLY 
             : process.env.RAZORPAY_PLAN_YEARLY;
-
-        if (!planId) {
-            logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${billingCycle} is not configured.`);
-            return res.status(500).json({ error: 'Subscription configuration error' });
+ 
+        if (!planId || planId === 'undefined' || planId === '') {
+            logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${billingCycle} is not configured in .env`);
+            return res.status(400).json({ 
+                error: 'Subscription Payment Error: Plan ID not configured. Please contact support or check backend .env file.',
+                code: 'PLAN_ID_MISSING'
+            });
         }
 
         // 3. Create Razorpay Subscription
