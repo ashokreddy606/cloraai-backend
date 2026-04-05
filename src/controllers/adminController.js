@@ -648,24 +648,45 @@ const getDMAutomations = async (req, res) => {
     }
 };
 
-const stopAllAutomations = async (req, res) => {
+const stopInstagramAutomations = async (req, res) => {
     try {
-        const { count: igCount } = await prisma.dMAutomation.updateMany({ data: { isActive: false } });
-        const { count: ytCount } = await prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } });
-        
+        const { count } = await prisma.dMAutomation.updateMany({ data: { isActive: false } });
         const { appConfig, saveConfig } = require('../config');
-        appConfig.featureFlags.autoDMEnabled = false;
+        appConfig.featureFlags.instagramAutomationEnabled = false;
+        saveConfig();
+        logAdminAction(req.userId, 'STOP_INSTAGRAM_AUTO');
+        res.json({ success: true, message: `Stopped All Instagram: ${count} rules disabled.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to stop Instagram automation' });
+    }
+};
+
+const stopYouTubeAutomations = async (req, res) => {
+    try {
+        const { count } = await prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } });
+        const { appConfig, saveConfig } = require('../config');
         appConfig.featureFlags.youtubeAutomationEnabled = false;
         saveConfig();
-        
-        logAdminAction(req.userId, 'STOP_ALL_DM_AND_YT');
-        res.json({ 
-            success: true, 
-            message: `Emergency Stop Successful: ${igCount} Instagram and ${ytCount} YouTube automation rules have been disabled globally.` 
-        });
-    } catch (error) {
-        logger.error('ADMIN:STOP_AUTO_FAIL', 'Failed to stop automations', error);
-        res.status(500).json({ error: 'Failed to stop automations', message: error.message });
+        logAdminAction(req.userId, 'STOP_YOUTUBE_AUTO');
+        res.json({ success: true, message: `Stopped All YouTube: ${count} rules disabled.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to stop YouTube automation' });
+    }
+};
+
+const toggleAppFeature = async (req, res) => {
+    try {
+        const { flag, status } = req.body;
+        const { appConfig, saveConfig } = require('../config');
+        if (appConfig.featureFlags[flag] === undefined) {
+             return res.status(400).json({ error: 'Invalid feature flag' });
+        }
+        appConfig.featureFlags[flag] = status;
+        saveConfig();
+        logAdminAction(req.userId, `TOGGLE_${flag.toUpperCase()}`, status);
+        res.json({ success: true, message: `Feature ${flag} updated to ${status}` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to toggle feature' });
     }
 };
 

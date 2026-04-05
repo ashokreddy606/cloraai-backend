@@ -1,34 +1,101 @@
 /**
- * Subscription Service for CloraAI
- * Handles complex logic like proration and date calculations.
+ * src/services/SubscriptionService.js
+ * SaaS Lifecycle Engine
  */
 
-/**
- * Calculates the new plan expiry date including proration of existing days.
- * @param {Object} user - The Prisma user record.
- * @param {number} newPlanDurationDays - The duration of the new plan in days.
- * @returns {Date} - The new calculated expiry date.
- */
-const calculateProratedExpiry = (user, newPlanDurationDays) => {
-    const now = new Date();
-    let baseDate = now;
+const prisma = require('../lib/prisma');
+const logger = require('../utils/logger');
 
-    // If user has an active plan and it's not expired yet
-    if (
-        user.plan !== 'FREE' &&
-        user.planEndDate &&
-        new Date(user.planEndDate) > now
-    ) {
-        // Start the new plan after the current one ends
-        baseDate = new Date(user.planEndDate);
+class SubscriptionService {
+    /**
+     * Audit Log Helper
+     */
+    async logAction(adminId, targetId, action, before, after) {
+        return prisma.auditLog.create({
+            data: {
+                adminId,
+                targetId,
+                action,
+                details: JSON.stringify({ before, after })
+            }
+        });
     }
 
-    const newExpiry = new Date(baseDate.getTime());
-    newExpiry.setDate(newExpiry.getDate() + newPlanDurationDays);
+    /**
+     * Admin Override: Pause Subscription
+     * Temporarily blocks access without cancelling the recurring billing (Manual action).
+     */
+    async pauseSubscription(adminId, userId) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new Error('User not found');
 
-    return newExpiry;
-};
+        const updated = await prisma.user.update({
+            where: { id: userId },
+            data: { 
+                subscriptionStatus: 'PAUSED',
+                pausedAt: new Date()
+            }
+        });
 
-module.exports = {
-    calculateProratedExpiry
-};
+        await this.logAction(adminId, userId, 'PAUSE_SUBSCRIPTION', 'ACTIVE', 'PAUSED');
+        return updated;
+    }
+
+    /**
+     * Admin Override: Resume Subscription
+     */
+    async resumeSubscription(adminId, userId) {
+        const updated = await prisma.user.update({
+            where: { id: userId },
+            data: { 
+                subscriptionStatus: 'ACTIVE',
+                pausedAt: null
+            }
+        });
+
+        await this.logAction(adminId, userId, 'RESUME_SUBSCRIPTION', 'PAUSED', 'ACTIVE');
+        return updated;
+    }
+
+    /**
+     * Safe Downgrade to Free
+     * Cancels the active subscription and moves the user to FREE plan immediately.
+     */
+    async forceFree(adminId, userId) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new Error('User not found');
+
+        const updated = await prisma.user.update({
+            where: { id: userId },
+            data: {
+                plan: 'FREE',
+                subscriptionStatus: 'EXPIRED',
+                planEndDate: new Date(),
+                razorpaySubscriptionId: null
+            }
+        });
+
+        await this.logAction(adminId, userId, 'FORCE_FREE_PLAN', user.plan, 'FREE');
+        return updated;
+    }
+
+    /**
+     * Handle Subscription Expiry
+     * Typically called by CRON job when planEndDate is reached.
+     */
+    async processExpiry(userId) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.plan === 'FREE') return;
+
+        // If it's a manual upgrade from admin, don't auto-renew
+        if (user.manuallyUpgraded) {
+            await prisma.user.update({
+                where: { id: userId },
+                data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' }
+            });
+            logger.info('SUBSCRIPTION_EXPIRED_ADMIN', `Manual grant for ${userId} expired.`);
+        }
+    }
+}
+
+module.exports = new SubscriptionService();

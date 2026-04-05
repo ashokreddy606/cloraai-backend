@@ -58,7 +58,8 @@ router.delete('/captions/:id', admin.deleteCaption);
 
 // ── DM Automation ─────────────────────────────────────────────────────
 router.get('/dm-automations', admin.getDMAutomations);
-router.post('/dm-automations/stop-all', admin.stopAllAutomations);
+router.post('/dm-automations/stop-all-ig', admin.stopInstagramAutomations);
+router.post('/dm-automations/stop-all-yt', admin.stopYouTubeAutomations);
 router.delete('/dm-automations/:id', admin.deleteDMAutomation);
 
 // ── Brand Deals ───────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ router.post('/broadcast', admin.broadcastNotification);
 // ── App Config ────────────────────────────────────────────────────────
 router.get('/config', admin.getAppConfig);
 router.patch('/config', admin.updateAppConfig);
+router.post('/config/toggle-feature', admin.toggleAppFeature);
 
 // ── AI Feature Control ────────────────────────────────────────────────
 router.get('/ai-config', admin.getAIConfig);

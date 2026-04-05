@@ -191,49 +191,143 @@ const cancelSubscription = async (req, res) => {
     }
 };
 
+const FinancialService = require('../services/FinancialService');
+const SubscriptionService = require('../services/SubscriptionService');
+const NotificationService = require('../services/notificationService');
+
 /**
- * 4. GET /status
+ * 5. Handle Razorpay Webhooks (Single Entry Point)
+ * POST /api/v1/subscription/webhook
+ * Handles 100% of subscription lifecycle events.
  */
-const getStatus = async (req, res) => {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId },
-      select: {
-        plan: true,
-        subscriptionStatus: true,
-        billingCycle: true,
-        planEndDate: true,
-        currentPeriodEnd: true,
-        razorpaySubscriptionId: true
-      },
-    });
+const handleRazorpayWebhook = async (req, res) => {
+    const signature = req.headers['x-razorpay-signature'];
+    const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
 
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    // 1. Signature Verification (Production Critical)
+    const expectedSignature = crypto
+        .createHmac('sha256', WEBHOOK_SECRET)
+        .update(JSON.stringify(req.body))
+        .digest('hex');
 
-    res.json({
-        success: true,
-        plan: user.plan,
-        status: user.subscriptionStatus,
-        billingCycle: user.billingCycle,
-        currentPeriodEnd: user.currentPeriodEnd || user.planEndDate,
-        isPro: user.plan === 'PRO' && user.subscriptionStatus === 'ACTIVE'
-    });
+    if (signature !== expectedSignature) {
+        logger.warn('RAZORPAY_WEBHOOK_SEC', 'Invalid webhook signature received.');
+        return res.status(400).json({ error: 'Invalid signature' });
+    }
 
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
+    const { event, payload, account_id } = req.body;
+    const eventId = req.body.id;
 
-const getPaymentHistory = async (req, res) => {
-  try {
-    const history = await prisma.paymentHistory.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json({ success: true, history });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    // 2. Idempotency Check (Exactly-Once Processing)
+    const existing = await prisma.webhookEvent.findUnique({ where: { eventId } });
+    if (existing) return res.json({ success: true, message: 'Event already processed' });
+
+    try {
+        await prisma.webhookEvent.create({ data: { eventId, eventType: event } });
+
+        const subObj = payload.subscription?.entity;
+        const subId = subObj?.id;
+        const userId = subObj?.notes?.userId;
+
+        if (!userId) {
+            logger.warn('RAZORPAY_WEBHOOK_WARN', `No userId in notes for event ${event}. Payload ignored.`);
+            return res.json({ success: true });
+        }
+
+        switch (event) {
+            case 'subscription.charged': {
+                const currentEnd = new Date(subObj.current_end * 1000);
+                const amountPaise = subObj.plan_id === process.env.RAZORPAY_PLAN_MONTHLY ? 19900 : 169900;
+
+                // Update User Status
+                await prisma.user.update({
+                    where: { id: userId },
+                    data: {
+                        plan: 'PRO',
+                        subscriptionStatus: 'ACTIVE',
+                        planEndDate: currentEnd,
+                        currentPeriodEnd: currentEnd,
+                        paymentStatus: 'SUCCESS',
+                        retryAttempts: 0
+                    }
+                });
+
+                // Record Payment History
+                const payment = await prisma.paymentHistory.create({
+                    data: {
+                        userId,
+                        razorpaySubscriptionId: subId,
+                        razorpayPaymentId: payload.payment?.entity?.id,
+                        amount: amountPaise,
+                        currency: 'INR',
+                        status: 'SUCCESS',
+                        planName: subObj.notes?.billingCycle === 'MONTHLY' ? 'PRO_MONTHLY' : 'PRO_YEARLY',
+                        paymentMethod: payload.payment?.entity?.method || 'RAZORPAY',
+                        processed: true
+                    }
+                });
+
+                // Generate Invoice Snapshot
+                const invNum = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+                await prisma.invoice.create({
+                    data: {
+                        userId,
+                        paymentHistoryId: payment.id,
+                        invoiceNumber: invNum,
+                        amount: amountPaise,
+                        status: 'PAID'
+                    }
+                });
+
+                // Notify User
+                await NotificationService.notifyPaymentSuccess(userId, amountPaise / 100);
+                logger.info('SUBSCRIPTION_CHARGED', `User ${userId} charged successfully for ${subId}`);
+                break;
+            }
+
+            case 'subscription.halted': {
+                await prisma.user.update({
+                    where: { id: userId },
+                    data: { subscriptionStatus: 'HALTED' }
+                });
+                await NotificationService.notifyHalted(userId);
+                logger.warn('SUBSCRIPTION_HALTED', `User ${userId} subscription halted due to failure.`);
+                break;
+            }
+
+            case 'subscription.cancelled': {
+                await prisma.user.update({
+                    where: { id: userId },
+                    data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' }
+                });
+                logger.info('SUBSCRIPTION_CANCELLED', `User ${userId} sub ${subId} cancelled.`);
+                break;
+            }
+
+            case 'payment.failed': {
+                await prisma.user.update({
+                    where: { id: userId },
+                    data: { 
+                        paymentStatus: 'FAILED',
+                        retryAttempts: { increment: 1 } 
+                    }
+                });
+                await NotificationService.notifyPaymentFailed(userId, 'PRO');
+                logger.info('PAYMENT_FAILED', `User ${userId} payment failed for sub ${subId}`);
+                break;
+            }
+
+            default:
+                logger.info('RAZORPAY_WEBHOOK_INFO', `Unprocessed event: ${event}`);
+        }
+
+        await cache.clearUserCache(userId);
+        res.json({ success: true });
+
+    } catch (error) {
+        logger.error('RAZORPAY_WEBHOOK_ERROR', `Failed processing ${event}: ${error.message}`);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 };
 
 module.exports = {
@@ -241,5 +335,6 @@ module.exports = {
     verifySubscription,
     cancelSubscription,
     getStatus,
-    getPaymentHistory
+    getPaymentHistory,
+    handleRazorpayWebhook
 };

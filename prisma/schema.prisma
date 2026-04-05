@@ -23,6 +23,8 @@ enum SubscriptionStatus {
   EXPIRED
   CANCELLED
   PAST_DUE
+  HALTED
+  PAUSED
   PENDING
 }
 
@@ -73,6 +75,8 @@ model User {
   paymentStatus      String              @default("NONE") // NONE | SUCCESS | FAILED
   retryAttempts      Int                 @default(0)
   credits            Int                 @default(0)
+  pausedAt           DateTime?           // For manual pause/resume logic
+  trialEndDate       DateTime?           // For free trial grants
 
   // ── Razorpay Live Link ───────────────────────────────────────────────────
   razorpayCustomerId           String?
@@ -237,6 +241,31 @@ model PaymentHistory {
   @@index([razorpaySubscriptionId])
   @@index([status])
   @@index([createdAt])
+
+  invoice       Invoice?
+}
+
+// ─── SaaS Invoices (PDF/Snapshots) ──────────────────────────────────────────
+model Invoice {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId           String   @db.ObjectId
+  paymentHistoryId String   @db.ObjectId @unique
+  invoiceNumber    String   @unique // INV-2026-0001
+  amount           Int      // in paise
+  currency         String   @default("INR")
+  billingDate      DateTime @default(now())
+  pdfUrl           String?
+  customerName     String?
+  customerEmail    String?
+  status           String   @default("PAID") // PAID | OPEN | VOID
+
+  paymentHistory   PaymentHistory @relation(fields: [paymentHistoryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([invoiceNumber])
 }
 
 // ─── Razorpay Webhook Event Deduplication ────────────────────────────────────

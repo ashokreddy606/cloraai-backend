@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const FinancialService = require('../services/FinancialService');
 
 /**
  * Admin Analytics Controller
@@ -8,86 +9,43 @@ const prisma = require('../lib/prisma');
 // 1. Core Billing Dashboard
 const getBillingDashboard = async (req, res) => {
     try {
+        const [
+            mrr, 
+            arr, 
+            arpu, 
+            breakdown, 
+            activeSubscribers,
+            churnRiskCount
+        ] = await Promise.all([
+            FinancialService.getMRR(),
+            FinancialService.getARR(),
+            FinancialService.getARPU(),
+            FinancialService.getBreakdown(),
+            prisma.user.count({ where: { plan: { in: ['PRO', 'LIFETIME'] }, subscriptionStatus: 'ACTIVE' } }),
+            prisma.user.count({ where: { subscriptionStatus: { in: ['PAST_DUE', 'HALTED'] } } })
+        ]);
+
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const firstDayOfYear = new Date(now.getFullYear(), 0, 1);
-
-        // Revenue Aggregation
-        const totalRevenueResult = await prisma.paymentHistory.aggregate({
-            where: { status: { in: ['SUCCESS', 'PARTIALLY_REFUNDED'] } },
-            _sum: { amount: true }
-        });
-
+        
         const monthlyRevenueResult = await prisma.paymentHistory.aggregate({
-            where: {
-                status: { in: ['SUCCESS', 'PARTIALLY_REFUNDED'] },
-                createdAt: { gte: firstDayOfMonth }
-            },
+            where: { status: 'SUCCESS', createdAt: { gte: firstDayOfMonth } },
             _sum: { amount: true }
         });
-
-        const yearlyRevenueResult = await prisma.paymentHistory.aggregate({
-            where: {
-                status: { in: ['SUCCESS', 'PARTIALLY_REFUNDED'] },
-                createdAt: { gte: firstDayOfYear }
-            },
-            _sum: { amount: true }
-        });
-
-        const totalRevenue = (totalRevenueResult._sum.amount || 0) / 100;
-        const monthlyRevenue = (monthlyRevenueResult._sum.amount || 0) / 100;
-        const yearlyRevenue = (yearlyRevenueResult._sum.amount || 0) / 100;
-
-        // MRR Calculation (Netflix Model)
-        const monthlyUsers = await prisma.user.count({
-            where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'MONTHLY' }
-        });
-        const yearlyUsers = await prisma.user.count({
-            where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'YEARLY' }
-        });
-
-        const mrr = (monthlyUsers * 299) + (yearlyUsers * (2499 / 12));
-
-        // Subscriber Metrics
-        const activeSubscribers = await prisma.user.count({
-            where: { plan: { in: ['PRO', 'LIFETIME'] }, subscriptionStatus: 'ACTIVE' }
-        });
-
-        const newSubscribersThisMonth = await prisma.user.count({
-            where: {
-                plan: { in: ['PRO', 'LIFETIME'] },
-                planStartDate: { gte: firstDayOfMonth }
-            }
-        });
-
-        const expiredSubscribers = await prisma.user.count({
-            where: { subscriptionStatus: 'EXPIRED' }
-        });
-
-        const totalEverPaid = await prisma.user.count({
-            where: { plan: { not: 'FREE' } }
-        });
-
-        const churnRate = totalEverPaid > 0
-            ? (expiredSubscribers / (activeSubscribers + expiredSubscribers)) * 100
-            : 0;
-
-        const averageRevenuePerUser = activeSubscribers > 0 ? (monthlyRevenue / activeSubscribers) : 0;
 
         res.json({
             success: true,
             data: {
-                totalRevenue,
-                monthlyRevenue,
-                yearlyRevenue,
+                mrr,
+                arr,
+                arpu,
                 activeSubscribers,
-                newSubscribersThisMonth,
-                churnRate: parseFloat(churnRate.toFixed(2)),
-                averageRevenuePerUser: parseFloat(averageRevenuePerUser.toFixed(2))
+                monthlyRevenue: (monthlyRevenueResult._sum.amount || 0) / 100,
+                churnRiskCount,
+                breakdown
             }
         });
     } catch (error) {
-        console.error('[AdminAnalytics] Billing Dashboard Error:', error);
         res.status(500).json({ error: 'Failed to fetch billing dashboard' });
     }
 };
@@ -284,6 +242,26 @@ const getMRR = async (req, res) => {
     }
 };
 
+/**
+ * 9. Customer Segments API
+ * GET /api/admin/billing/segments
+ */
+const getCustomerSegments = async (req, res) => {
+    try {
+        const [topCustomers, riskUsers] = await Promise.all([
+            FinancialService.getTopCustomers(20),
+            FinancialService.getChurnRiskUsers()
+        ]);
+
+        res.json({
+            success: true,
+            data: { topCustomers, riskUsers }
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch segments' });
+    }
+};
+
 module.exports = {
     getBillingDashboard,
     getRevenueChart,
@@ -292,5 +270,6 @@ module.exports = {
     getTopCustomers,
     getRecentTransactions,
     getDailyRevenue,
-    getMRR
+    getMRR,
+    getCustomerSegments
 };

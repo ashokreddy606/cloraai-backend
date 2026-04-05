@@ -23,11 +23,13 @@ const defaultAppConfig = {
     maintenanceMode: false,
     minAppVersion: '1.1.0',
     featureFlags: {
-        autoDMEnabled: true,
-        youtubeEnabled: true,
+        instagramAutomationEnabled: true,
+        instagramAIRepliesEnabled: true,
+        instagramCustomRepliesEnabled: true,
         youtubeAutomationEnabled: true,
-        youtubeCommentRepliesEnabled: true,
-        emergencyStopAutomation: false,
+        youtubeAIRepliesEnabled: true,
+        youtubeCustomRepliesEnabled: true,
+        maintenanceMode: false,
     },
     aiLimits: {
         freeDailyDMs: 10,
