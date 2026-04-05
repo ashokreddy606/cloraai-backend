@@ -123,18 +123,15 @@ const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
     concurrency: config.concurrency.subscription
 });
 
-// 4. YouTube Upload Worker
-const { processYoutubeUpload } = require('./workers/youtubeUploadWorker');
-const youtubeWorker = new Worker(QUEUES.YOUTUBE, processYoutubeUpload, {
-    connection,
-    concurrency: config.concurrency.youtube
-});
+// 4. YouTube upload/comment check worker
+const { youtubeProcessor } = require('./workers/youtubeWorkerProcessor');
+const youtubeWorker = youtubeProcessor; // alias for clarity
 
 // 5. Shared Background Workers
 require('./workers/analyticsWorker');
 require('./workers/tokenRefreshWorker');
 require('./workers/instagramAutomationWorker');
-require('./workers/refreshInstagramTokenWorker');
+// require('./workers/refreshInstagramTokenWorker'); // Removed: File does not exist
 require('./workers/instagramCommentPollWorker');
 
 // Worker Error Event Listeners
@@ -154,6 +151,7 @@ const attachErrorHandlers = (worker, name) => {
 attachErrorHandlers(webhookWorker, 'Webhook');
 attachErrorHandlers(subscriptionWorker, 'Subscription');
 attachErrorHandlers(youtubeWorker, 'YouTube');
+attachErrorHandlers(notificationWorker, 'Notification');
 
 // ─── Cron Triggers (Distributed) ───────────────────────────────────────────
 const cron = require('node-cron');
@@ -224,15 +222,17 @@ cron.schedule('0 0 * * *', async () => {
         const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
         logger.info('CRON', 'Running 24h notification cleanup...', { threshold });
         
-        const deleted = await prisma.notification.deleteMany({
-            where: {
-                createdAt: {
-                    lt: threshold
+        // Safety check: only run if prisma is connected
+        if (prisma.notification) {
+            const deleted = await prisma.notification.deleteMany({
+                where: {
+                    createdAt: {
+                        lt: threshold
+                    }
                 }
-            }
-        });
-        
-        logger.info('CRON', `Cleanup complete: ${deleted.count} notifications removed`);
+            });
+            logger.info('CRON', `Cleanup complete: ${deleted.count} notifications removed`);
+        }
     } catch (err) {
         logger.error('CRON', 'Notification cleanup failed', { error: err.message });
     }

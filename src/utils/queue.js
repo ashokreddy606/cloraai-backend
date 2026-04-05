@@ -54,10 +54,10 @@ const enqueueJob = async (queue, jobName, data, options = {}) => {
             removeOnFail: {
                 age: 48 * 3600, // keep failures for 48 hours for debugging
             },
-            attempts: 5,
+            attempts: options.attempts || (queue.name === 'notification-queue' ? 3 : 5),
             backoff: {
                 type: 'exponential',
-                delay: 2000, // 2s initial delay
+                delay: options.delay || 2000, 
             },
             ...options
         };

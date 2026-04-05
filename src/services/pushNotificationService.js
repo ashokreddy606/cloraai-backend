@@ -6,12 +6,30 @@ const notificationService = require('./notificationService');
 const logger = require('../utils/logger');
 
 module.exports = {
-    // Core Bridge: Redirects to FCM sendToUser
+    // Core Bridge: Redirects to FCM sendToUser or direct batch delivery
     sendPushNotification: async (pushTokens, title, body, data = {}) => {
-        logger.info('PUSH_BRIDGE', 'Redirecting legacy sendPushNotification to FCM');
-        // Note: In this bridge, we can't easily map back to a single userId if multiple tokens are passed
-        // but most callers use the convenience methods below.
-        return { sent: 0, failed: 0, message: 'Deprecated: Use notificationService.sendToUser instead' };
+        logger.info('PUSH_BRIDGE', `Redirecting legacy multicast to FCM for ${pushTokens.length} tokens`);
+        
+        // Construct a standard v1 payload for the bridge
+        const payload = {
+            notification: { title, body },
+            data: { ...data, title, body },
+            android: {
+                priority: 'high',
+                notification: { sound: 'default', channelId: 'default' }
+            },
+            apns: {
+                payload: {
+                    aps: { alert: { title, body }, sound: 'default', mutableContent: true }
+                }
+            }
+        };
+
+        return notificationService.processBatchDelivery({
+            tokens: pushTokens,
+            payload,
+            userId: 'BROADCAST_SYSTEM'
+        });
     },
 
     isLikelyExpoToken: (token) => {
@@ -43,6 +61,15 @@ module.exports = {
 
     notifyAccountAction: (userId, title, body) => 
         notificationService.notifyAccountAction(userId, title, body),
+
+    notifyYouTubeWin: (userId, authorName) => 
+        notificationService.notifyYouTubeWin(userId, authorName),
+
+    notifyAnalyticsMilestone: (userId, metric, value) => 
+        notificationService.notifyAnalyticsMilestone(userId, metric, value),
+
+    notifyViralAlert: (userId, contentName, reach) => 
+        notificationService.notifyViralAlert(userId, contentName, reach),
 
     // Additional mappings for un-implemented but used methods
     notifyPostSuccess: (pushToken, postTitle) => {

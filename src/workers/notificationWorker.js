@@ -15,13 +15,16 @@ const notificationWorker = new Worker(
 
     try {
       if (job.name === 'send-notification') {
+        const startTime = Date.now();
         const response = await notificationService.processBatchDelivery(job.data);
+        const duration = Date.now() - startTime;
         
-        logger.info('NOTIFICATION_WORKER', `[SUCCESS] Job:${job.id} | Sent:${response.successCount} | Failed:${response.failureCount}`);
+        logger.info('NOTIFICATION_WORKER', `[SUCCESS] Job:${job.id} | User:${userId} | Time:${duration}ms | Sent:${response.successCount} | Failed:${response.failureCount}`);
         
         return {
           successCount: response.successCount,
           failureCount: response.failureCount,
+          durationMs: duration
         };
       }
       

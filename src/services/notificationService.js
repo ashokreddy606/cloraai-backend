@@ -115,34 +115,38 @@ class NotificationService {
           notification: { 
             title, 
             body,
-            imageUrl: 'https://clora.ai/logo-fcm.png' // URL for rich notifications
+            image: data.imageUrl || 'https://clora.ai/logo-fcm.png' 
           },
           data: {
             ...data,
             notificationId: notification._id.toString(),
-            externalId: notificationId || ''
+            externalId: notificationId || '',
+            click_action: data.clickAction || 'FLUTTER_NOTIFICATION_CLICK'
           },
           android: {
             priority: priority === 'high' ? 'high' : 'normal',
             notification: {
-              channelId: 'default',
-              priority: priority === 'high' ? 'high' : 'default',
+              channelId: data.channelId || 'default',
+              notificationPriority: priority === 'high' ? 'high' : 'default',
               visibility: 'public',
-              icon: 'notification_icon',
-              largeIcon: 'https://clora.ai/logo-fcm.png', // Logo appears on the right
-              color: '#7e22ce', // CloraAI Purple
+              icon: data.icon || 'notification_icon',
+              image: data.imageUrl || 'https://clora.ai/logo-fcm.png',
+              color: '#7e22ce',
+              sound: 'default'
             },
           },
           apns: {
             payload: {
               aps: { 
+                alert: { title, body },
+                sound: 'default',
                 contentAvailable: true, 
+                mutableContent: true, 
                 badge: 1,
-                alert: { title, body }
               }
             },
-            fcm_options: {
-              image: 'https://clora.ai/logo-fcm.png' // Rich media for iOS
+            fcmOptions: {
+              image: data.imageUrl || 'https://clora.ai/logo-fcm.png'
             }
           }
         }
@@ -166,6 +170,45 @@ class NotificationService {
   }
 
   /**
+   * Direct Delivery to a single token (Production-Ready)
+   * Bypasses DB lookup, used for one-offs/system tests
+   */
+  async sendToToken(token, title, body, data = {}) {
+    try {
+      const payload = {
+        token, // Required for single send
+        notification: { title, body, image: data.imageUrl },
+        data: { ...data, title, body },
+        android: {
+          priority: 'high',
+          notification: { 
+            sound: 'default', 
+            channelId: data.channelId || 'default',
+            icon: data.icon || 'notification_icon',
+            image: data.imageUrl
+          }
+        },
+        apns: {
+          payload: {
+            aps: { alert: { title, body }, sound: 'default', mutableContent: true }
+          }
+        }
+      };
+
+      const response = await admin.messaging().send(payload);
+      logger.info('NOTIFICATION_SERVICE', `Direct delivery success: ${response}`);
+      return { success: true, messageId: response };
+    } catch (error) {
+      if (error.code === 'messaging/registration-token-not-registered') {
+        await DeviceToken.deleteOne({ fcmToken: token });
+        logger.warn('NOTIFICATION_SERVICE', 'Purged invalid token during direct send.');
+      }
+      logger.error('NOTIFICATION_SERVICE', 'Direct delivery failed:', { error: error.message, code: error.code });
+      throw error;
+    }
+  }
+
+  /**
    * Batch send notifications (used by worker or fallback)
    * Handles invalid/expired tokens automatically
    */
@@ -178,6 +221,7 @@ class NotificationService {
     }
 
     try {
+      // Use sendEachForMulticast for batching (best practice for v1)
       const response = await admin.messaging().sendEachForMulticast({
         tokens,
         ...payload
@@ -188,6 +232,7 @@ class NotificationService {
       response.responses.forEach((res, idx) => {
         if (!res.success) {
           const error = res.error;
+          // Detection of invalid tokens
           if (error.code === 'messaging/registration-token-not-registered' || 
               error.code === 'messaging/invalid-registration-token') {
             tokensToRemove.push(tokens[idx]);
@@ -196,13 +241,13 @@ class NotificationService {
         }
       });
 
-      // Auto-delete invalid tokens
+      // Auto-delete invalid tokens from DB
       if (tokensToRemove.length > 0) {
         await DeviceToken.deleteMany({ fcmToken: { $in: tokensToRemove } });
         logger.info('NOTIFICATION_SERVICE', `Cleaned up ${tokensToRemove.length} invalid tokens for user ${userId}`);
       }
 
-      logger.info('NOTIFICATION_SERVICE', `Batch delivery complete for user ${userId}: ${response.successCount} success, ${response.failureCount} failure`);
+      logger.info('NOTIFICATION_SERVICE', `Batch results for ${userId}: ${response.successCount} success, ${response.failureCount} failure`);
       
       return response;
     } catch (error) {
@@ -287,6 +332,30 @@ class NotificationService {
       title,
       body,
       data: { type: 'account' }
+    });
+  }
+
+  async notifyYouTubeWin(userId, authorName) {
+    return this.sendToUser(userId, {
+      title: 'YouTube Automation Win! 🚀',
+      body: `You just replied to ${authorName}'s comment automatically. Great work!`,
+      data: { type: 'YOUTUBE_WIN', authorName }
+    });
+  }
+
+  async notifyAnalyticsMilestone(userId, metric, value) {
+    return this.sendToUser(userId, {
+      title: 'New Milestone Achieved! 🏆',
+      body: `Congratulations! You've reached ${value.toLocaleString()} ${metric.toLowerCase()} on Instagram.`,
+      data: { type: 'ANALYTICS_MILESTONE', metric, value: value.toString() }
+    });
+  }
+
+  async notifyViralAlert(userId, contentName, reach) {
+    return this.sendToUser(userId, {
+      title: 'Content is Going Viral! 🔥',
+      body: `Your content "${contentName}" has reached over ${reach.toLocaleString()} people!`,
+      data: { type: 'VIRAL_ALERT', contentName, reach: reach.toString() }
     });
   }
 
