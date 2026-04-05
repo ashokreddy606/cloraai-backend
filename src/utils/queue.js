@@ -22,7 +22,7 @@ const QUEUES = {
 // Initialize Queues safely
 let aiQueue, webhookQueue, subscriptionQueue, instagramQueue, youtubeQueue, replyQueue, commentQueue, analyticsQueue, tokenRefreshQueue, notificationQueue;
 
-if (connection) {
+if (connection && !connection.isMock) {
     const queueOptions = { connection };
     aiQueue = new Queue(QUEUES.AI_TASKS, queueOptions);
     webhookQueue = new Queue(QUEUES.WEBHOOKS, queueOptions);

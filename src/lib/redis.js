@@ -39,7 +39,8 @@ if (redisUrl && !isPlaceholder && process.env.NODE_ENV !== 'test') {
     status: 'ready',
     options: {},
     quit: async () => 'OK',
-    disconnect: () => { }
+    disconnect: () => { },
+    isMock: true
   };
 }
 
