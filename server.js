@@ -618,74 +618,9 @@ if (process.env.SENTRY_DSN) {
 const errorHandler = require('./src/middleware/errorHandler');
 app.use(errorHandler);
 
-// Background Workers (Bypassed in tests to avoid Redis/Cron interference)
-if (process.env.NODE_ENV !== 'test') {
-    try {
-        const { Worker } = require('bullmq');
-        const { connection, QUEUES } = require('./src/utils/queue');
 
-
-
-        // ── BullMQ Distributed Workers (Scaling Phase) ─────────────────────
-        // Import workers to initialize them (they auto-attach to connection)
-        require('./src/workers/analyticsWorker');
-        require('./src/workers/tokenRefreshWorker');
-        require('./src/workers/instagramAutomationWorker');
-        require('./src/workers/instagramCommentPollWorker'); 
-        require('./src/workers/youtubeWorker');
-        require('./src/workers/notificationWorker');
-
-        // ── Cron Triggers (Distributed) ───────────────────────────────────
-        const cron = require('node-cron');
-        const { analyticsQueue, tokenRefreshQueue, enqueueJob } = require('./src/utils/queue');
-
-        // 1. Daily Analytics Trigger (Midnight)
-        // Enqueues individual jobs for all connected users into BullMQ
-        cron.schedule('0 0 * * *', async () => {
-            logger.info('CRON:TRIGGER', 'Starting daily analytics batch enqueue...');
-            const accounts = await prisma.instagramAccount.findMany({
-                where: { isConnected: true },
-                select: { userId: true, instagramId: true, instagramAccessToken: true }
-            });
-            for (const acc of accounts) {
-                await enqueueJob(analyticsQueue, 'process-analytics', {
-                    userId: acc.userId,
-                    instagramId: acc.instagramId,
-                    accessToken: acc.instagramAccessToken
-                });
-            }
-            logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} analytics jobs.`);
-        });
-
-        // 2. Token Refresh Trigger (1:00 AM)
-        cron.schedule('0 1 * * *', async () => {
-            logger.info('CRON:TRIGGER', 'Starting token refresh batch check...');
-            const fifteenDaysFromNow = new Date();
-            fifteenDaysFromNow.setDate(fifteenDaysFromNow.getDate() + 15);
-
-            const accounts = await prisma.instagramAccount.findMany({
-                where: { 
-                    isConnected: true,
-                    tokenExpiresAt: { lte: fifteenDaysFromNow }
-                },
-                select: { userId: true, instagramId: true, instagramAccessToken: true }
-            });
-            for (const acc of accounts) {
-                await enqueueJob(tokenRefreshQueue, 'refresh-token', {
-                    userId: acc.userId,
-                    instagramId: acc.instagramId,
-                    accessToken: acc.instagramAccessToken
-                });
-            }
-            logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} token refresh jobs.`);
-        });
-        
-
-        logger.info('SERVER', '✅ All background workers initialized (unified process).');
-    } catch (err) {
-        logger.error('SERVER', 'Failed to initialize background workers:', { error: err.message });
-    }
-}
+// API Initialization Status
+logger.info('SERVER', '✅ API Server initialized (Workers isolated to dedicated process).');
 
 // Start server
 // Start server - Railway uses process.env.PORT (often 8080 or random)

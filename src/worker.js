@@ -90,16 +90,18 @@ if (!s3ConfigData.hasAccessKey || !s3ConfigData.hasSecretKey) {
 console.log("🚀 CloraAI Worker running [Production Mode]");
 logger.info('WORKER', "Worker initialized successfully");
 
-// ─── Initialize BullMQ Workers with Tier-Aware Concurrency ─────────────────
+// ─── Initialize BullMQ Workers ──────────────────────────────────────────────
 logger.info('WORKER', 'Initializing Redis queue processors...');
 
+// 1. Notification Worker
+const notificationWorker = require('./workers/notificationWorker');
 
 // 2. Webhook Processor
 const webhookWorker = new Worker(QUEUES.WEBHOOKS, async (job) => {
     logger.info('WORKER', `Processing webhook: ${job.name}`, { jobId: job.id });
 }, {
     connection,
-    concurrency: config.concurrency.webhook  // ✅ Tier-aware (2 free / 10 small / 25 large)
+    concurrency: config.concurrency.webhook
 });
 
 // 3. Subscription Reconciliation Worker
@@ -107,15 +109,22 @@ const subscriptionWorker = new Worker(QUEUES.SUBSCRIPTIONS, async (job) => {
     logger.info('WORKER', `Processing subscription: ${job.name}`, { jobId: job.id });
 }, {
     connection,
-    concurrency: config.concurrency.subscription  // ✅ Tier-aware (1 free / 3 small / 10 large)
+    concurrency: config.concurrency.subscription
 });
 
-// 5. YouTube Upload Worker (Consolidated)
+// 4. YouTube Upload Worker
 const { processYoutubeUpload } = require('./workers/youtubeUploadWorker');
 const youtubeWorker = new Worker(QUEUES.YOUTUBE, processYoutubeUpload, {
     connection,
-    concurrency: config.concurrency.youtube  // ✅ Tier-aware (3 free / 10 small / 20 large)
+    concurrency: config.concurrency.youtube
 });
+
+// 5. Shared Background Workers
+require('./workers/analyticsWorker');
+require('./workers/tokenRefreshWorker');
+require('./workers/instagramAutomationWorker');
+require('./workers/refreshInstagramTokenWorker');
+require('./workers/instagramCommentPollWorker');
 
 // Worker Error Event Listeners
 const attachErrorHandlers = (worker, name) => {
@@ -133,18 +142,62 @@ const attachErrorHandlers = (worker, name) => {
 
 attachErrorHandlers(webhookWorker, 'Webhook');
 attachErrorHandlers(subscriptionWorker, 'Subscription');
-
 attachErrorHandlers(youtubeWorker, 'YouTube');
 
-// Initializing additional automation
-require('./workers/instagramAutomationWorker');
-require('./workers/refreshInstagramTokenWorker');
-
-// ─── Comment Poller Cron (Fallback for missed Meta webhooks) ─────────────────
+// ─── Cron Triggers (Distributed) ───────────────────────────────────────────
 const cron = require('node-cron');
-const { pollInstagramComments } = require('./services/instagramCommentPoller');
+const { analyticsQueue, tokenRefreshQueue, enqueueJob } = require('./utils/queue');
 
-// Run every 2 minutes to catch any comments Meta webhooks may have missed
+// 1. Daily Analytics Trigger (Midnight)
+cron.schedule('0 0 * * *', async () => {
+    try {
+        logger.info('CRON:TRIGGER', 'Starting daily analytics batch enqueue...');
+        const accounts = await prisma.instagramAccount.findMany({
+            where: { isConnected: true },
+            select: { userId: true, instagramId: true, instagramAccessToken: true }
+        });
+        for (const acc of accounts) {
+            await enqueueJob(analyticsQueue, 'process-analytics', {
+                userId: acc.userId,
+                instagramId: acc.instagramId,
+                accessToken: acc.instagramAccessToken
+            });
+        }
+        logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} analytics jobs.`);
+    } catch (err) {
+        logger.error('CRON:ERROR', 'Daily analytics trigger failed', { error: err.message });
+    }
+});
+
+// 2. Token Refresh Trigger (1:00 AM)
+cron.schedule('0 1 * * *', async () => {
+    try {
+        logger.info('CRON:TRIGGER', 'Starting token refresh batch check...');
+        const fifteenDaysFromNow = new Date();
+        fifteenDaysFromNow.setDate(fifteenDaysFromNow.getDate() + 15);
+
+        const accounts = await prisma.instagramAccount.findMany({
+            where: { 
+                isConnected: true,
+                tokenExpiresAt: { lte: fifteenDaysFromNow }
+            },
+            select: { userId: true, instagramId: true, instagramAccessToken: true }
+        });
+        for (const acc of accounts) {
+            await enqueueJob(tokenRefreshQueue, 'refresh-token', {
+                userId: acc.userId,
+                instagramId: acc.instagramId,
+                accessToken: acc.instagramAccessToken
+            });
+        }
+        logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} token refresh jobs.`);
+    } catch (err) {
+        logger.error('CRON:ERROR', 'Token refresh trigger failed', { error: err.message });
+    }
+});
+
+// 3. Comment Poller Cron (Every 2 minutes)
+const { pollInstagramComments } = require('./services/instagramCommentPoller');
 cron.schedule('*/2 * * * *', async () => {
     try {
         logger.info('CRON', 'Running Instagram comment poller...');
@@ -153,9 +206,8 @@ cron.schedule('*/2 * * * *', async () => {
         logger.error('CRON', 'Comment poller cron failed', { error: err.message });
     }
 });
-logger.info('WORKER', '✅ Comment poller cron scheduled (every 2 minutes)');
 
-// ─── Notification Cleanup Cron (Every 24 hours at 00:00) ───────────────────
+// 4. Notification Cleanup Cron (Every 24 hours at 00:00)
 cron.schedule('0 0 * * *', async () => {
     try {
         const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
