@@ -1,5 +1,6 @@
 const axios = require('axios');
 const UAParser = require('ua-parser-js');
+const logger = require('./logger');
 
 /**
  * Detects device information from User-Agent string
@@ -31,7 +32,23 @@ exports.detectDevice = (userAgent) => {
  */
 exports.getLocationFromIp = async (ip) => {
   try {
-    if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+    const normalizedIp = String(ip || '')
+      .split(',')[0]
+      .trim()
+      .replace(/^::ffff:/, '');
+
+    const isPrivateIp =
+      !normalizedIp ||
+      normalizedIp === '::1' ||
+      normalizedIp === '127.0.0.1' ||
+      normalizedIp.startsWith('192.168.') ||
+      normalizedIp.startsWith('10.') ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalizedIp) ||
+      normalizedIp.startsWith('fe80:') ||
+      normalizedIp.startsWith('fc') ||
+      normalizedIp.startsWith('fd');
+
+    if (isPrivateIp) {
       return {
         city: 'Local',
         region: 'Development',
@@ -39,7 +56,9 @@ exports.getLocationFromIp = async (ip) => {
       };
     }
 
-    const response = await axios.get(`http://ip-api.com/json/${ip}`);
+    const response = await axios.get(`http://ip-api.com/json/${normalizedIp}`, {
+      timeout: 2000
+    });
     
     if (response.data && response.data.status === 'success') {
       const { city, regionName, country } = response.data;
@@ -56,7 +75,10 @@ exports.getLocationFromIp = async (ip) => {
       country: 'Unknown Country'
     };
   } catch (error) {
-    logger.error('IP_LOCATION', 'Lookup failed', { error: error.message, ip });
+    logger.warn('IP_LOCATION', 'Lookup failed, continuing with unknown location', {
+      error: error.message,
+      ip
+    });
     return {
       city: 'Unknown City',
       region: 'Unknown Region',
