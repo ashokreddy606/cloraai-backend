@@ -13,6 +13,7 @@ const QRCode = require('qrcode');
 const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sessionUtils');
 const dayjs = require('dayjs');
 const pushNotificationService = require('../services/pushNotificationService');
+const notificationService = require('../services/notificationService');
 // Mongoose User model removed — all operations now use Prisma
 const transporter = require('../config/mail');
 const relativeTime = require('dayjs/plugin/relativeTime');
@@ -244,6 +245,14 @@ const login = async (req, res) => {
       await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
+    if (req.body.fcmToken) {
+      await notificationService.registerDevice(user.id, {
+        deviceId: req.body.deviceId || 'unknown',
+        fcmToken: req.body.fcmToken,
+        platform: req.body.platform || 'web'
+      }).catch(err => logger.error('AUTH:FCM', 'Failed to register FCM device', { error: err.message }));
+    }
+
     if (req.body.pushToken && pushNotificationService.isLikelyExpoToken(req.body.pushToken)) {
       await prisma.deviceToken.upsert({
         where: { token: req.body.pushToken },
@@ -256,7 +265,7 @@ const login = async (req, res) => {
           lastUsed: new Date()
         },
         update: {
-          userId: user.id, // Re-assign to current user if token was previously used by someone else
+          userId: user.id, 
           lastUsed: new Date(),
           deviceName,
           os
@@ -368,6 +377,9 @@ const logout = async (req, res) => {
       }
     }
     // Clear specific push token on logout if provided
+    if (req.body.deviceId) {
+      await notificationService.removeDevice(req.userId, req.body.deviceId).catch(() => {});
+    }
     if (req.body.pushToken) {
       await prisma.deviceToken.deleteMany({
         where: { userId: req.userId, token: req.body.pushToken }

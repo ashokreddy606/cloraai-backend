@@ -195,6 +195,91 @@ class NotificationService {
     const userObjectId = new mongoose.Types.ObjectId(userId);
     return await DeviceToken.find({ userId: userObjectId }).sort({ lastActive: -1 });
   }
+
+  // ─── CONVENIENCE METHODS (Replaces legacy PushNotificationService) ─────────
+
+  async notifyAutomationWin(userId, username, keyword) {
+    return this.sendToUser(userId, {
+      title: '🚀 New Link Sent!',
+      body: `@${username} matched '${keyword}'! Bot replied and DM'd the link.`,
+      data: { type: 'automation', username, keyword }
+    });
+  }
+
+  async notifyFollowGateBlock(userId, username) {
+    return this.sendToUser(userId, {
+      title: '🔒 Follower Only!',
+      body: `@${username} commented but isn't following you. We asked them to follow first.`,
+      data: { type: 'automation', username }
+    });
+  }
+
+  async notifyTokenExpired(userId) {
+    return this.sendToUser(userId, {
+      title: '⚠️ ACTION REQUIRED',
+      body: 'Your Instagram connection has expired. Automations are PAUSED. Tap to fix.',
+      data: { type: 'account', action: 'RECONNECT' },
+      priority: 'high'
+    });
+  }
+
+  async notifySubscriptionSuccess(userId, planName) {
+    return this.sendToUser(userId, {
+      title: '⚡ PRO Activated!',
+      body: `Your ${planName} subscription is now active. Enjoy!`,
+      data: { type: 'billing', planName }
+    });
+  }
+
+  async notifyCreditsAdded(userId, amount) {
+    return this.sendToUser(userId, {
+      title: '💰 Credits Added!',
+      body: `${amount} credits have been added to your account.`,
+      data: { type: 'billing', amount }
+    });
+  }
+
+  async notifyAILimitHit(userId, feature) {
+    return this.sendToUser(userId, {
+      title: '🛑 AI Limit Reached',
+      body: `You've reached your daily AI limit for ${feature}. Upgrade to PRO!`,
+      data: { type: 'account', feature },
+      priority: 'high'
+    });
+  }
+
+  async sendAutomationActiveNotification(userId, platform, keyword) {
+    return this.sendToUser(userId, {
+      title: '✅ Automation Active!',
+      body: `CloraAI is now monitoring ${platform} for '${keyword}'.`,
+      data: { type: 'automation', platform, keyword }
+    });
+  }
+
+  async notifyAccountAction(userId, title, body) {
+    return this.sendToUser(userId, {
+      title,
+      body,
+      data: { type: 'account' }
+    });
+  }
+
+  async notifyAutomationDeleted(userId, platform, keyword) {
+    return this.sendToUser(userId, {
+      title: '🗑️ Automation Removed',
+      body: `Your ${platform} automation for '${keyword}' was deleted.`,
+      data: { type: 'automation', action: 'DELETE', platform, keyword }
+    });
+  }
+
+  async notifyLinkSuccess(userId, platform) {
+    const isYT = platform === 'youtube';
+    return this.sendToUser(userId, {
+      title: `🔗 ${isYT ? 'YouTube' : 'Instagram'} Connected`,
+      body: `Successfully linked your ${isYT ? 'YouTube channel' : 'Instagram account'}!`,
+      data: { type: 'account', action: 'LINK', platform }
+    });
+  }
 }
 
 module.exports = new NotificationService();

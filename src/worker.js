@@ -87,8 +87,15 @@ if (!s3ConfigData.hasAccessKey || !s3ConfigData.hasSecretKey) {
     logger.warn('WORKER:S3_WARNING', 'AWS credentials are missing. Pre-signed URLs will fail.');
 }
 
-console.log("🚀 CloraAI Worker running [Production Mode]");
-logger.info('WORKER', "Worker initialized successfully");
+console.log(`
+  🚀 CLORAAI WORKER SYSTEM READY
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Status: Running [Production]
+  📦 Queues: Notification, Webhook, Analytics, Subscriptions
+  🛠️  Health: Connection Active
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`);
+logger.info('WORKER', "Worker initialized successfully and listening for jobs");
 
 // ─── Initialize BullMQ Workers ──────────────────────────────────────────────
 logger.info('WORKER', 'Initializing Redis queue processors...');
