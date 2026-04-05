@@ -147,8 +147,9 @@ const register = catchAsync(async (req, res, next) => {
 });
 
 const login = async (req, res) => {
+  let email = '';
   try {
-    const email = (req.body.email || '').toLowerCase().trim();
+    email = (req.body.email || '').toLowerCase().trim();
     const { password, deviceFingerprint, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
 

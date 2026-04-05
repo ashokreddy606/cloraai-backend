@@ -661,6 +661,32 @@ const stopInstagramAutomations = async (req, res) => {
     }
 };
 
+const stopAllAutomations = async (req, res) => {
+    try {
+        const [igResult, ytResult] = await Promise.all([
+            prisma.dMAutomation.updateMany({ data: { isActive: false } }),
+            prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } }),
+        ]);
+
+        appConfig.featureFlags.instagramAutomationEnabled = false;
+        appConfig.featureFlags.youtubeAutomationEnabled = false;
+        saveConfig();
+
+        logAdminAction(req.userId, 'STOP_ALL_AUTOMATIONS');
+
+        res.json({
+            success: true,
+            message: 'All automations stopped successfully.',
+            data: {
+                instagramDisabled: igResult.count,
+                youtubeDisabled: ytResult.count,
+            },
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to stop all automations', message: error.message });
+    }
+};
+
 const stopYouTubeAutomations = async (req, res) => {
     try {
         const { count } = await prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } });
@@ -1508,6 +1534,9 @@ module.exports = {
     getCaptions,
     deleteCaption,
     getDMAutomations,
+    stopInstagramAutomations,
+    stopYouTubeAutomations,
+    toggleAppFeature,
     stopAllAutomations,
     deleteDMAutomation,
     getBrandDeals,
