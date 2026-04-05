@@ -3,21 +3,20 @@
  */
 const { z } = require('zod');
 
-const VALID_PRODUCT_IDS = [
-    'cloraai_pro_monthly',
-    'cloraai_pro_yearly',
-    'cloraai_100_credits',
-    'cloraai_500_credits',
-];
-
-const verifyGooglePlaySchema = z.object({
+// Razorpay schemas will be added here
+const createOrderSchema = z.object({
     body: z.object({
-        purchaseToken: z.string().trim().min(10).max(2000),
-        productId: z.enum(VALID_PRODUCT_IDS, {
-            errorMap: () => ({ message: `productId must be one of: ${VALID_PRODUCT_IDS.join(', ')}` }),
-        }),
-        packageName: z.string().trim().max(200).optional().default('com.cloraai.app'),
+        amount: z.number().positive(),
+        plan: z.enum(['PRO', 'PREMIUM']),
     }),
 });
 
-module.exports = { verifyGooglePlaySchema };
+const verifyPaymentSchema = z.object({
+    body: z.object({
+        razorpay_order_id: z.string().min(1),
+        razorpay_payment_id: z.string().min(1),
+        razorpay_signature: z.string().min(1),
+    }),
+});
+
+module.exports = { createOrderSchema, verifyPaymentSchema };

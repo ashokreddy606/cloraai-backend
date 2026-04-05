@@ -38,6 +38,16 @@ const getBillingDashboard = async (req, res) => {
         const monthlyRevenue = (monthlyRevenueResult._sum.amount || 0) / 100;
         const yearlyRevenue = (yearlyRevenueResult._sum.amount || 0) / 100;
 
+        // MRR Calculation (Netflix Model)
+        const monthlyUsers = await prisma.user.count({
+            where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'MONTHLY' }
+        });
+        const yearlyUsers = await prisma.user.count({
+            where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'YEARLY' }
+        });
+
+        const mrr = (monthlyUsers * 299) + (yearlyUsers * (2499 / 12));
+
         // Subscriber Metrics
         const activeSubscribers = await prisma.user.count({
             where: { plan: { in: ['PRO', 'LIFETIME'] }, subscriptionStatus: 'ACTIVE' }
@@ -210,11 +220,77 @@ const getRecentTransactions = async (req, res) => {
     }
 };
 
+/**
+ * 7. Daily Revenue API
+ * GET /api/admin/revenue/daily
+ */
+const getDailyRevenue = async (req, res) => {
+    try {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const revenueResult = await prisma.paymentHistory.aggregate({
+            where: {
+                status: 'SUCCESS',
+                createdAt: { gte: startOfDay }
+            },
+            _sum: { amount: true },
+            _count: { id: true }
+        });
+
+        res.json({
+            success: true,
+            data: {
+                totalRevenue: (revenueResult._sum.amount || 0) / 100,
+                totalPayments: revenueResult._count.id,
+                date: startOfDay.toISOString().split('T')[0]
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+/**
+ * 8. MRR Calculation API
+ * GET /api/admin/mrr
+ */
+const getMRR = async (req, res) => {
+    try {
+        const monthlyUsers = await prisma.user.count({
+            where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'MONTHLY' }
+        });
+        const yearlyUsers = await prisma.user.count({
+            where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'YEARLY' }
+        });
+
+        // Netflix Model: MRR = (Monthly * 299) + (Yearly * 2499 / 12)
+        const mrr = (monthlyUsers * 299) + (yearlyUsers * (2499 / 12));
+
+        res.json({
+            success: true,
+            data: {
+                mrr: parseFloat(mrr.toFixed(2)),
+                monthlyUsers,
+                yearlyUsers,
+                breakdown: {
+                    monthlyRevenue: monthlyUsers * 299,
+                    yearlyRevenueContribution: parseFloat((yearlyUsers * (2499 / 12)).toFixed(2))
+                }
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 module.exports = {
     getBillingDashboard,
     getRevenueChart,
     getSubscriberGrowth,
     getPlanDistribution,
     getTopCustomers,
-    getRecentTransactions
+    getRecentTransactions,
+    getDailyRevenue,
+    getMRR
 };

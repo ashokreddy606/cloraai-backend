@@ -55,17 +55,18 @@ process.on('unhandledRejection', (reason) => {
 const authRoutes = require('./src/routes/auth');
 const instagramRoutes = require('./src/routes/instagram');
 const analyticsRoutes = require('./src/routes/analytics');
+const webhookController = require('./src/controllers/webhookController');
+const razorpayWebhookController = require('./src/controllers/razorpayWebhookController');
+const paymentRoutes = require('./src/routes/payment');
 const subscriptionRoutes = require('./src/routes/subscription');
 const dmAutomationRoutes = require('./src/routes/dmAutomation');
 const referralRoutes = require('./src/routes/referral');
 const adminRoutes = require('./src/routes/admin');
 const adminPlanRoutes = require('./src/routes/adminPlan');
 const userRoutes = require('./src/routes/user');
-// Webhook routes removed (Razorpay cleanup)
 const youtubeRoutes = require('./src/routes/youtube');
 const accountRoutes = require('./src/routes/account');
 const notificationRoutes = require('./src/routes/notification');
-const webhookController = require('./src/controllers/webhookController');
 
 // Initialize Prisma
 // (Now using shared instance from src/lib/prisma.js)
@@ -604,6 +605,8 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/instagram', checkSubscriptionExpiry, instagramRoutes);
 app.use('/api/v1/analytics', checkSubscriptionExpiry, analyticsRoutes);
 app.use('/api/v1/subscription', checkSubscriptionExpiry, subscriptionRoutes);
+app.use('/api/v1/payment', checkSubscriptionExpiry, paymentRoutes);
+app.use('/api/webhooks/razorpay', express.json(), razorpayWebhookController.handleRazorpayWebhook);
 app.use('/api/v1/dm-automation', checkSubscriptionExpiry, dmAutomationRoutes);
 app.use('/api/v1/referral', checkSubscriptionExpiry, referralRoutes);
 app.use('/api/v1/admin', adminRoutes);

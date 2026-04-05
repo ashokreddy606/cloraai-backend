@@ -19,6 +19,8 @@ router.get('/subscriber-growth', adminAnalytics.getSubscriberGrowth);
 router.get('/plan-distribution', adminAnalytics.getPlanDistribution);
 router.get('/top-customers', adminAnalytics.getTopCustomers);
 router.get('/recent-transactions', adminAnalytics.getRecentTransactions);
+router.get('/revenue/daily', adminAnalytics.getDailyRevenue);
+router.get('/mrr', adminAnalytics.getMRR);
 
 // ── User Management ───────────────────────────────────────────────────
 router.get('/users', admin.getUsers);

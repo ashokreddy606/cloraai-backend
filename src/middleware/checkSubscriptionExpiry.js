@@ -40,20 +40,30 @@ const checkSubscriptionExpiry = async (req, res, next) => {
 
         let { plan, planEndDate, subscriptionStatus } = user;
 
-        // ── 3. Enforce expiry if needed ─────────────────────────────────
+        // ── 3. Enforce expiry with 3-day Grace Period ────────────────────────
         if (
             plan !== 'FREE' &&
             plan !== 'LIFETIME' &&
             planEndDate &&
             new Date(planEndDate) < new Date()
         ) {
-            console.log(`[SubscriptionCheck] Downgrading User ${user.id} — Plan expired on ${planEndDate}`);
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' }
-            });
-            plan = 'FREE';
-            subscriptionStatus = 'EXPIRED';
+            const expiryDate = new Date(planEndDate);
+            const gracePeriodEnd = new Date(expiryDate.getTime() + (3 * 24 * 60 * 60 * 1000)); // 3 days
+
+            // If status is PAST_DUE (failed payment), allow a 3-day window
+            if (subscriptionStatus === 'PAST_DUE' && new Date() < gracePeriodEnd) {
+                logger.info('GRACE_PERIOD_ACTIVE', `User ${user.id} in grace period until ${gracePeriodEnd}`);
+                // Allow through
+            } else {
+                // Hard downgrade
+                logger.info('SUBSCRIPTION_EXPIRED', `User ${user.id} plan expired. Downgrading to FREE.`);
+                await prisma.user.update({
+                    where: { id: user.id },
+                    data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' }
+                });
+                plan = 'FREE';
+                subscriptionStatus = 'EXPIRED';
+            }
         }
 
         // ── 4. Populate cache for next requests ─────────────────────────

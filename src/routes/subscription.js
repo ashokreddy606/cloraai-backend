@@ -1,25 +1,26 @@
 /**
  * routes/subscription.js
- * Subscription management routes with input validation.
+ * Subscription management routes for Recurring Billing.
  */
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
-const { verifyGooglePlayPurchase, getStatus, getPaymentHistory, cancelSubscription } = require('../controllers/subscriptionController');
+const subscriptionController = require('../controllers/subscriptionController');
 const { cacheRoute } = require('../utils/cache');
-const validate = require('../middleware/validate');
-const { verifyGooglePlaySchema } = require('../validators/subscription');
 
-// Verify Google Play Billing purchase (validated)
-router.post('/verify-google-play', authenticate, validate(verifyGooglePlaySchema), verifyGooglePlayPurchase);
+// 1. Create Razorpay Subscription (sub_xxx)
+router.post('/create', authenticate, subscriptionController.createSubscription);
 
-// Get current subscription state (plan, status, daysRemaining, planSource)
-router.get('/status', authenticate, cacheRoute(3600, 'subscription'), getStatus);
+// 2. Verify Razorpay Subscription Signature
+router.post('/verify', authenticate, subscriptionController.verifySubscription);
 
-// Get all payment transactions for the authenticated user
-router.get('/history', authenticate, cacheRoute(3600, 'subscription'), getPaymentHistory);
+// 3. Get current subscription state (plan, status, billingCycle, currentPeriodEnd)
+router.get('/status', authenticate, cacheRoute(3600, 'subscription'), subscriptionController.getStatus);
 
-// Mark subscription for cancellation (Note: actual management is via Google Play Store)
-router.post('/cancel', authenticate, cancelSubscription);
+// 4. Get all payment transactions for the authenticated user
+router.get('/history', authenticate, cacheRoute(3600, 'subscription'), subscriptionController.getPaymentHistory);
+
+// 5. Mark subscription for cancellation (at cycle end)
+router.post('/cancel', authenticate, subscriptionController.cancelSubscription);
 
 module.exports = router;
