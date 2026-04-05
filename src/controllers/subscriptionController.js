@@ -192,8 +192,58 @@ const cancelSubscription = async (req, res) => {
 };
 
 const FinancialService = require('../services/FinancialService');
-const SubscriptionService = require('../services/SubscriptionService');
+const SubscriptionService = require('../services/subscriptionService');
 const NotificationService = require('../services/notificationService');
+
+/**
+ * 4. Get Current Subscription Status
+ * GET /api/v1/subscription/status
+ */
+const getStatus = async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.userId },
+            select: {
+                plan: true,
+                subscriptionStatus: true,
+                billingCycle: true,
+                planEndDate: true,
+                currentPeriodEnd: true
+            }
+        });
+
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        return res.status(200).json({
+            success: true,
+            data: user
+        });
+    } catch (error) {
+        logger.error('SUBSCRIPTION_STATUS_ERROR', 'Failed to get status', { error: error.message });
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
+
+/**
+ * 5. Get Payment History
+ * GET /api/v1/subscription/history
+ */
+const getPaymentHistory = async (req, res) => {
+    try {
+        const history = await prisma.paymentHistory.findMany({
+            where: { userId: req.userId },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: history
+        });
+    } catch (error) {
+        logger.error('PAYMENT_HISTORY_ERROR', 'Failed to get history', { error: error.message });
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+};
 
 /**
  * 5. Handle Razorpay Webhooks (Single Entry Point)
