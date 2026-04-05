@@ -36,7 +36,7 @@ const validateEnv = () => {
     const allVars = [...CRITICAL_ENV_VARS, ...OPTIONAL_FEATURE_VARS];
     for (const key of allVars) {
         const val = process.env[key];
-        if (val && (val.startsWith('CHANGE_ME') || val === '')) {
+        if (val && (typeof val === 'string' && (val.startsWith('CHANGE_ME') || val === ''))) {
             const msg = `${key} still has placeholder value or is empty. Set a real value before running.`;
             if (isProduction) {
                 logger.error('ENV_VALIDATOR', `CRITICAL: ${msg}`);
@@ -45,6 +45,14 @@ const validateEnv = () => {
                 logger.warn('ENV_VALIDATOR', `DEVELOPMENT WARNING: ${msg}`);
             }
         }
+    }
+
+    // ── Protocol Check for DATABASE_URL ───────────────────────────────────
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl && !dbUrl.startsWith('mongodb://') && !dbUrl.startsWith('mongodb+srv://')) {
+        const msg = `DATABASE_URL must be a MongoDB connection string. Found: ${dbUrl.split(':')[0]}://...`;
+        logger.error('ENV_VALIDATOR', `CRITICAL: ${msg}`);
+        if (isProduction) throw new Error(msg);
     }
 
     const missingCritical = CRITICAL_ENV_VARS.filter(key => !process.env[key]);
