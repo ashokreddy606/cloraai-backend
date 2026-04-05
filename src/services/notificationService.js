@@ -79,23 +79,30 @@ class NotificationService {
       if (!devices || devices.length === 0) {
         logger.warn('NOTIFICATION_SERVICE', `FALLBACK: No active devices for user ${userId}. Skipping FCM.`);
         // Still save to DB so user can see it in history later
-        return await Notification.create({
+        const fallbackData = {
           userId: userObjectId,
           title,
           body,
-          data,
-          notificationId
-        });
+          data
+        };
+        if (notificationId) fallbackData.notificationId = notificationId;
+        
+        return await Notification.create(fallbackData);
       }
 
       // 4. STORE IN HISTORY
-      const notification = await Notification.create({
+      const notificationData = {
         userId: userObjectId,
         title,
         body,
-        data: { ...data, logoUrl: 'https://clora.ai/logo-fcm.png' },
-        notificationId
-      });
+        data: { ...data, logoUrl: 'https://clora.ai/logo-fcm.png' }
+      };
+
+      if (notificationId) {
+        notificationData.notificationId = notificationId;
+      }
+
+      const notification = await Notification.create(notificationData);
 
       const tokens = devices.map(d => d.fcmToken).filter(t => !!t);
 
