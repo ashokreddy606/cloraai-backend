@@ -53,5 +53,12 @@ module.exports = {
     },
     notifySubscriptionRenewal: (pushToken, daysLeft) => {
         logger.warn('PUSH_BRIDGE', 'notifySubscriptionRenewal called with token. FCM requires userId. Skipping.');
-    }
+    },
+
+    // New Mappings
+    notifyAutomationDeleted: (userId, platform, keyword) => 
+        notificationService.notifyAutomationDeleted(userId, platform, keyword),
+
+    notifyLinkSuccess: (userId, platform) => 
+        notificationService.notifyLinkSuccess(userId, platform)
 };

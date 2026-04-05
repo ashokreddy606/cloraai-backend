@@ -7,6 +7,10 @@ const prisma = require('./lib/prisma');
 const { cache } = require('./utils/cache');
 const { config } = require('./utils/tierConfig');
 const { s3Client, awsConfig } = require('./config/aws');
+const { initializeFirebase } = require('./lib/firebase');
+
+// ─── Initialize Core Services ────────────────────────────────────────────────
+initializeFirebase();
 
 /**
  * Diagnostic function to debug why users might not be found by workers.

@@ -55,7 +55,10 @@ const sendEmail = async (to, subject, html) => {
 const sendResetPasswordEmail = (user, resetLink) => {
     const subject = "Reset Your CloraAI Password";
 
-    const html = `
+  const html = `
+    <div style="text-align: center; margin-bottom: 20px;">
+      <img src="https://clora.ai/logo-fcm.png" alt="CloraAI" style="width: 150px;" />
+    </div>
     <h2>Hello ${user.username || "User"},</h2>
     <p>You requested a password reset.</p>
     <p>Click below to reset your password:</p>
@@ -76,6 +79,9 @@ const notifyPaymentSuccess = (user, planName) => {
         user.email,
         "Welcome to CloraAI Pro 🚀",
         `
+    <div style="text-align: center; margin-bottom: 20px;">
+      <img src="https://clora.ai/logo-fcm.png" alt="CloraAI" style="width: 150px;" />
+    </div>
     <h2>Hello ${user.username || "User"},</h2>
     <p>Your payment for <strong>${planName}</strong> was successful.</p>
     <p>You now have PRO access 🎉</p>
@@ -92,6 +98,9 @@ const notifyPaymentFailed = (user, planName) => {
         user.email,
         "Payment Failed - CloraAI",
         `
+    <div style="text-align: center; margin-bottom: 20px;">
+      <img src="https://clora.ai/logo-fcm.png" alt="CloraAI" style="width: 150px;" />
+    </div>
     <h2>Hello ${user.username || "User"},</h2>
     <p>Your payment for <strong>${planName}</strong> failed.</p>
     <p>Please retry to continue using PRO features.</p>
@@ -108,6 +117,9 @@ const notifyExpiryWarning = (user, daysLeft) => {
         user.email,
         "Your CloraAI Subscription is Expiring",
         `
+    <div style="text-align: center; margin-bottom: 20px;">
+      <img src="https://clora.ai/logo-fcm.png" alt="CloraAI" style="width: 150px;" />
+    </div>
     <h2>Hello ${user.username || "User"},</h2>
     <p>Your subscription expires in <strong>${daysLeft} days</strong>.</p>
     <p>Renew now to continue enjoying premium features.</p>

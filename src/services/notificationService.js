@@ -93,7 +93,7 @@ class NotificationService {
         userId: userObjectId,
         title,
         body,
-        data,
+        data: { ...data, logoUrl: 'https://clora.ai/logo-fcm.png' },
         notificationId
       });
 
@@ -105,7 +105,11 @@ class NotificationService {
         notificationId: notification._id,
         tokens,
         payload: {
-          notification: { title, body },
+          notification: { 
+            title, 
+            body,
+            imageUrl: 'https://clora.ai/logo-fcm.png' // URL for rich notifications
+          },
           data: {
             ...data,
             notificationId: notification._id.toString(),
@@ -113,10 +117,25 @@ class NotificationService {
           },
           android: {
             priority: priority === 'high' ? 'high' : 'normal',
+            notification: {
+              channelId: 'default',
+              priority: priority === 'high' ? 'high' : 'default',
+              visibility: 'public',
+              icon: 'notification_icon',
+              largeIcon: 'https://clora.ai/logo-fcm.png', // Logo appears on the right
+              color: '#7e22ce', // CloraAI Purple
+            },
           },
           apns: {
             payload: {
-              aps: { contentAvailable: true, badge: 1 }
+              aps: { 
+                contentAvailable: true, 
+                badge: 1,
+                alert: { title, body }
+              }
+            },
+            fcm_options: {
+              image: 'https://clora.ai/logo-fcm.png' // Rich media for iOS
             }
           }
         }
