@@ -87,12 +87,20 @@ const winstonLogger = winston.createLogger({
 
 // Wrapper to maintain backward compatibility with old API
 const log = (level, context, message, meta = {}) => {
+    // ── Diagnostic Visibility ──
+    // If an error is passed in meta, append its message to the primary log message
+    // so it's visible in plain-text log viewers (like Railway) that might hide JSON metadata.
+    let finalMessage = message;
+    if (meta && meta.error) {
+        finalMessage = `${message} — DETAILS: ${meta.error}`;
+    }
+
     const scrubbedMeta = Object.keys(meta).length > 0 ? scrub(meta) : undefined;
 
     winstonLogger.log({
         level,
         context,
-        message,
+        message: finalMessage,
         ...scrubbedMeta
     });
 };

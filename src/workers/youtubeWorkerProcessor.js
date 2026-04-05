@@ -134,7 +134,10 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
             logger.debug('YOUTUBE_PROCESSOR:RULES', `Cache hit: using rules for user ${userId}`);
         }
 
-        if (!user || !user.youtubeConnected || !user.youtubeAccessToken) return;
+        if (!user || !user.youtubeConnected || !user.youtubeAccessToken || !user.youtubeChannelId) {
+            logger.debug('YOUTUBE_PROCESSOR:SKIP', `User ${userId} not fully connected or missing channelId`);
+            return;
+        }
 
         const youtube = await getYoutubeClient(user);
         logger.info('YOUTUBE_PROCESSOR', `Processing user ${user.id}`, { channelId: user.youtubeChannelId });
@@ -280,8 +283,14 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
                 });
             }
         }
-        logger.info('YOUTUBE_PROCESSOR:SUCCESS', `Job completed for user ${userId}`);
+        logger.info('YOUTUBE_PROCESSOR:SUCCESS', `Job completed for user ${userId}. Processed ${items.length} threads.`);
     } catch (error) {
+        // ── Diagnostic Trap ──
+        // Explicitly log the error to console.error to bypass winston for a moment
+        // and see the raw error message and stack in the server logs.
+        console.error(`❌ YOUTUBE_PROCESSOR CRITICAL FAILURE for user ${userId}:`, error.message);
+        if (error.stack) console.error(error.stack);
+
         logger.error('YOUTUBE_PROCESSOR:FAILED', `Job failed for user ${userId}`, { error: error.message });
         throw error;
     }
