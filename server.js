@@ -402,6 +402,8 @@ app.use((req, res, next) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     // Skip for webhook paths (Meta sends POST without Origin)
     if (req.path.startsWith('/webhook')) return next();
+    // Skip for auth paths (Initial login/register from mobile often lacks Origin)
+    if (req.path.includes('/auth/')) return next();
     // Skip if request has Authorization Bearer header (mobile app — not CSRF-vulnerable)
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) return next();
     // Skip in non-production (dev tools don't always send Origin)

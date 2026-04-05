@@ -84,10 +84,11 @@ const validateEnv = () => {
     const jwtSecret = process.env.JWT_SECRET;
     if (jwtSecret) {
         if (isProduction && jwtSecret.length < 64) {
-            logger.error('ENV_VALIDATOR', 'CRITICAL: JWT_SECRET must be at least 64 characters in production.');
-            throw new Error('JWT_SECRET must be at least 64 characters in production.');
+            const msg = `CRITICAL: JWT_SECRET is too short (${jwtSecret.length} chars). It MUST be at least 64 characters in production for security.`;
+            logger.error('ENV_VALIDATOR', msg);
+            throw new Error(msg);
         } else if (jwtSecret.length < 32) {
-            logger.warn('ENV_VALIDATOR', 'JWT_SECRET is too short (less than 32 chars). Brute-force risk high.');
+            logger.warn('ENV_VALIDATOR', `JWT_SECRET is very short (${jwtSecret.length} chars). Brute-force risk is high.`);
         }
     }
 
