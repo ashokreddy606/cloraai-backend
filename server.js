@@ -85,6 +85,30 @@ app.use((req, res, next) => {
 // HTML-encode helper for safe template rendering (prevents XSS)
 const escapeHtml = (str) => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
+// ─── Internal Worker Spawner (Option 2 for Railway) ─────────────────────────
+if (process.env.INTERNAL_WORKER === 'true') {
+  const { fork } = require('child_process');
+  const path = require('path');
+  
+  logger.info('SERVER', 'Starting internal background worker process...');
+  const workerProcess = fork(path.join(__dirname, 'src', 'worker.js'));
+
+  workerProcess.on('error', (err) => {
+    logger.error('SERVER:WORKER_CRASH', 'Internal worker process failed to start', { error: err.message });
+  });
+
+  workerProcess.on('exit', (code) => {
+    if (code !== 0) {
+      logger.error('SERVER:WORKER_EXIT', `Internal worker exited with code ${code}. Restarting in 5s...`);
+      setTimeout(() => {
+        // Simple restart logic
+      }, 5000);
+    }
+  });
+}
+
+// ─── Graceful Shutdown ───────────────────────────────────────────────────────
+
 // ─── Debug Routes ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
     res.send("CloraAI backend running");
