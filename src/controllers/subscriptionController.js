@@ -52,9 +52,22 @@ const createSubscription = async (req, res) => {
             });
         }
 
-        // 3. Ensure Razorpay Customer exists
+        // 3. Ensure Razorpay Customer exists (and is valid in CURRENT Credentials)
         let customerId = user.razorpayCustomerId;
-        if (!customerId) {
+        let needsNewCustomer = !customerId;
+
+        if (customerId) {
+            try {
+                // Verify the customer exists in THIS account (Live vs Test)
+                await razorpay.customers.fetch(customerId);
+                logger.info('RAZORPAY_CUSTOMER_VALID', `Customer ${customerId} verified for user ${user.id}`);
+            } catch (err) {
+                logger.warn('RAZORPAY_CUSTOMER_STALE', `Stored ID ${customerId} not found in this account. Re-creating...`);
+                needsNewCustomer = true;
+            }
+        }
+
+        if (needsNewCustomer) {
             try {
                 const customer = await razorpay.customers.create({
                     name: user.username || 'CloraAI User',
@@ -68,11 +81,24 @@ const createSubscription = async (req, res) => {
                     where: { id: user.id },
                     data: { razorpayCustomerId: customerId }
                 });
-                
-                logger.info('RAZORPAY_CUSTOMER_CREATED', `Customer ${customerId} created for user ${user.id}`);
+                logger.info('RAZORPAY_CUSTOMER_CREATED', `New Customer ${customerId} created for user ${user.id}`);
             } catch (custErr) {
-                logger.error('RAZORPAY_CUSTOMER_FAIL', custErr.message);
-                // Continue if only it's a "customer already exists" type error, but usually better to fail or fetch.
+                logger.error('RAZORPAY_CUSTOMER_FAIL', `Failed to create customer: ${custErr.message}`);
+                return res.status(400).json({ error: 'Payment Initialization Failed', detailedError: custErr.message });
+            }
+        }
+
+        // 3.5. Extra Diagnostic: Check if Plan ID exists (Production Only)
+        if (process.env.NODE_ENV === 'production' || process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_')) {
+            try {
+                await razorpay.plans.fetch(planId);
+            } catch (planErr) {
+                logger.error('RAZORPAY_PLAN_NOT_FOUND', `Plan ID ${planId} does not exist in your Razorpay dashboard.`);
+                return res.status(400).json({ 
+                    error: 'Invalid Pricing Plan', 
+                    message: `The subscription plan ${planId} was not found on your Razorpay account. Check your dashboard.`,
+                    code: 'PLAN_ID_INVALID'
+                });
             }
         }
 
