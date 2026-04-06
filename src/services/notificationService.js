@@ -46,7 +46,7 @@ class NotificationService {
      */
     async sendToUser(userId, { title, body, data = {}, priority = 'high' }) {
         const devices = await this.getUserDevices(userId);
-        const tokens = devices.map(d => d.fcmToken).filter(Boolean);
+        const tokens = devices.map(d => d.token).filter(Boolean);
         
         if (tokens.length === 0) return { count: 0 };
 
