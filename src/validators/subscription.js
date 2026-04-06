@@ -19,4 +19,10 @@ const verifyPaymentSchema = z.object({
     }),
 });
 
-module.exports = { createOrderSchema, verifyPaymentSchema };
+const createSubscriptionSchema = z.object({
+    body: z.object({
+        billingCycle: z.enum(['MONTHLY', 'YEARLY', 'monthly', 'yearly']),
+    }),
+});
+
+module.exports = { createOrderSchema, verifyPaymentSchema, createSubscriptionSchema };

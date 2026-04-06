@@ -7,9 +7,15 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const subscriptionController = require('../controllers/subscriptionController');
 const { cacheRoute } = require('../utils/cache');
+const validate = require('../middleware/validate');
+const { createSubscriptionSchema } = require('../validators/subscription');
 
 // 1. Create Razorpay Subscription (sub_xxx)
-router.post('/create', authenticate, subscriptionController.createSubscription);
+router.post('/create', 
+    authenticate, 
+    validate(createSubscriptionSchema), 
+    subscriptionController.createSubscription
+);
 
 // 2. Verify Razorpay Subscription Signature
 router.post('/verify', authenticate, subscriptionController.verifySubscription);

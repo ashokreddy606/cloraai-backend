@@ -19,71 +19,92 @@ const createSubscription = async (req, res) => {
         const { billingCycle } = req.body;
         const userId = req.userId;
 
-        if (!['MONTHLY', 'YEARLY'].includes(billingCycle)) {
-            return res.status(400).json({ error: 'Invalid billing cycle. Use MONTHLY or YEARLY.' });
-        }
+        // 1. Get User Data
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, email: true, username: true, razorpayCustomerId: true }
+        });
 
-        const user = await prisma.user.findUnique({ where: { id: userId } });
-        if (!user) return res.status(404).json({ error: 'User not found' });
-
-        // 1. Create or Get Razorpay Customer
-        let customerId = user.razorpayCustomerId;
-        if (!customerId) {
-            const customer = await razorpay.customers.create({
-                name: user.username || 'CloraAI User',
-                email: user.email,
-                notes: { userId }
-            });
-            customerId = customer.id;
-            await prisma.user.update({
-                where: { id: userId },
-                data: { razorpayCustomerId: customerId }
-            });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
         }
 
         const cycle = billingCycle?.toUpperCase() || 'MONTHLY';
 
         // 2. Determine Plan ID (With Fallback for Railway naming)
         const planId = cycle === 'MONTHLY' 
-            ? (process.env.RAZORPAY_PLAN_MONTHLY || process.env.RAZORPAY_PLAN_ID) 
-            : (process.env.RAZORPAY_PLAN_YEARLY || process.env.RAZORPAY_PLAN_ID_YEARLY);
- 
+            ? (process.env.RAZORPAY_PLAN_ID || process.env.RAZORPAY_PLAN_MONTHLY) 
+            : (process.env.RAZORPAY_PLAN_ID_YEARLY || process.env.RAZORPAY_PLAN_YEARLY);
+  
         if (!planId || planId === 'undefined' || planId === '') {
-            logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${billingCycle} is not configured in .env`);
+            logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${cycle} is not configured in .env`);
             return res.status(400).json({ 
-                error: 'Subscription Payment Error: Plan ID not configured. Please contact support or check backend .env file.',
+                error: 'Configuration Error',
+                message: `Subscription plan for ${cycle} is not configured on the server.`,
                 code: 'PLAN_ID_MISSING'
             });
         }
 
-        // 3. Create Razorpay Subscription
+        // 3. Ensure Razorpay Customer exists
+        let customerId = user.razorpayCustomerId;
+        if (!customerId) {
+            try {
+                const customer = await razorpay.customers.create({
+                    name: user.username || 'CloraAI User',
+                    email: user.email,
+                    notes: { userId: user.id }
+                });
+                customerId = customer.id;
+                
+                // Save customer ID for next time
+                await prisma.user.update({
+                    where: { id: user.id },
+                    data: { razorpayCustomerId: customerId }
+                });
+                
+                logger.info('RAZORPAY_CUSTOMER_CREATED', `Customer ${customerId} created for user ${user.id}`);
+            } catch (custErr) {
+                logger.error('RAZORPAY_CUSTOMER_FAIL', custErr.message);
+                // Continue if only it's a "customer already exists" type error, but usually better to fail or fetch.
+            }
+        }
+
+        // 4. Create Subscription
         const subscription = await razorpay.subscriptions.create({
             plan_id: planId,
-            customer_id: customerId,
-            total_count: billingCycle === 'MONTHLY' ? 120 : 10, // Max recurring cycles (Netflix style)
-            quantity: 1,
-            notes: { userId, billingCycle }
+            total_count: cycle === 'MONTHLY' ? 120 : 10, 
+            customer_notify: 1,
+            customer_id: customerId, 
+            notes: {
+                userId: req.userId,
+                billingCycle: cycle,
+                environment: process.env.NODE_ENV || 'production'
+            }
         });
 
-        // 4. Temporarily save Sub ID in User (Pending activation)
+        // 5. Update User Status to PENDING
         await prisma.user.update({
             where: { id: userId },
             data: { 
                 razorpaySubscriptionId: subscription.id,
-                billingCycle: billingCycle,
+                billingCycle: cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY',
                 subscriptionStatus: 'PENDING'
             }
         });
 
+        logger.info('SUBSCRIPTION_CREATED', `Sub: ${subscription.id} for User: ${req.userId}`);
+        
         return res.status(201).json({
             success: true,
             subscriptionId: subscription.id,
-            planId: subscription.plan_id,
+            plan_id: planId,
+            amount: cycle === 'MONTHLY' ? 299 : 2499,
+            currency: 'INR',
             keyId: process.env.RAZORPAY_KEY_ID
         });
 
     } catch (error) {
-        // Razorpay SDK errors are often direct objects, not axios responses
+        // Deep Debug: Unbox Razorpay SDK errors
         const errorMsg = error.description || error.response?.data?.error?.description || error.message;
         const errorCode = error.code || error.response?.data?.error?.code || 'SUBSCRIPTION_ERROR';
         const fullAudit = error.metadata || error.response?.data || error;
@@ -92,7 +113,7 @@ const createSubscription = async (req, res) => {
             userId: req.userId,
             error: errorMsg,
             code: errorCode,
-            razorpayInfo: JSON.stringify(fullAudit, null, 2)
+            details: fullAudit
         });
         
         return res.status(error.statusCode || 400).json({ 
