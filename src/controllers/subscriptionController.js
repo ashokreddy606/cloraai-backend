@@ -41,8 +41,10 @@ const createSubscription = async (req, res) => {
             });
         }
 
+        const cycle = billingCycle?.toUpperCase() || 'MONTHLY';
+
         // 2. Determine Plan ID (With Fallback for Railway naming)
-        const planId = billingCycle === 'MONTHLY' 
+        const planId = cycle === 'MONTHLY' 
             ? (process.env.RAZORPAY_PLAN_MONTHLY || process.env.RAZORPAY_PLAN_ID) 
             : (process.env.RAZORPAY_PLAN_YEARLY || process.env.RAZORPAY_PLAN_ID_YEARLY);
  
@@ -82,15 +84,18 @@ const createSubscription = async (req, res) => {
 
     } catch (error) {
         const errorMsg = error.response?.data?.error?.description || error.message;
+        const fullAudit = error.response?.data || {};
+        
         logger.error('SUBSCRIPTION_CREATE_ERROR', 'Failed to create subscription', { 
             userId: req.userId,
             error: errorMsg,
-            details: error.response?.data
+            razorpayInfo: JSON.stringify(fullAudit, null, 2)
         });
         
         return res.status(error.statusCode || 500).json({ 
             error: 'Failed to create subscription',
             message: errorMsg,
+            details: fullAudit,
             code: 'RAZORPAY_API_ERROR'
         });
     }

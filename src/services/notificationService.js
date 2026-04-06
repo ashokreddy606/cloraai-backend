@@ -9,6 +9,57 @@ const logger = require('../utils/logger');
 
 class NotificationService {
     /**
+     * Internal: Manage Device Tokens (Multi-device Support)
+     */
+    async registerDevice(userId, { deviceId, fcmToken, platform }) {
+        try {
+            await prisma.deviceToken.upsert({
+                where: { deviceId },
+                create: { userId, deviceId, fcmToken, platform, isActive: true },
+                update: { userId, fcmToken, platform, isActive: true, lastSeenAt: new Date() }
+            });
+            
+            // Also update the primary pushToken if it's the first or most recent (Legacy)
+            await prisma.user.update({
+                where: { id: userId },
+                data: { pushToken: fcmToken }
+            });
+            
+            logger.info('NOTIFICATION_REG', `Device ${deviceId} matched to user ${userId}`);
+        } catch (err) {
+            logger.error('NOTIFICATION_REG_FAIL', err.message);
+            throw err;
+        }
+    }
+
+    async removeDevice(userId, deviceId) {
+        return prisma.deviceToken.deleteMany({ where: { userId, deviceId } });
+    }
+
+    async getUserDevices(userId) {
+        return prisma.deviceToken.findMany({ where: { userId, isActive: true } });
+    }
+
+    /**
+     * Send Push to specific user devices
+     */
+    async sendToUser(userId, { title, body, data = {}, priority = 'high' }) {
+        const devices = await this.getUserDevices(userId);
+        const tokens = devices.map(d => d.fcmToken).filter(Boolean);
+        
+        if (tokens.length === 0) return { count: 0 };
+
+        try {
+            // Internal call to actual push provider
+            await pushNotificationService.sendPushNotification(tokens, title, body, data);
+            return { count: tokens.length };
+        } catch (err) {
+            logger.warn('PUSH_SEND_FAIL', `User ${userId} push failed: ${err.message}`);
+            return { count: 0 };
+        }
+    }
+
+    /**
      * Internal: Basic Push Sender
      */
     async sendPush(userId, title, body, data = {}) {
