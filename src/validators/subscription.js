@@ -21,7 +21,11 @@ const verifyPaymentSchema = z.object({
 
 const createSubscriptionSchema = z.object({
     body: z.object({
-        type: z.enum(['monthly', 'yearly', 'MONTHLY', 'YEARLY']),
+        type: z.enum([
+            'monthly', 'yearly', 
+            'MONTHLY', 'YEARLY', 
+            'Monthly', 'Yearly'
+        ]),
     }),
 });
 

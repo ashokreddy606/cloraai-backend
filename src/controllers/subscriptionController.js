@@ -19,8 +19,9 @@ const createSubscription = async (req, res) => {
         const { type } = req.body;
         const userId = req.userId;
         
-        const normalizedType = type?.toLowerCase() || 'monthly';
-        logger.info('RAZORPAY_INIT', `Received type: ${normalizedType} from user: ${userId}`);
+        // 0. Normalize the Plan Type (monthly/yearly)
+        const normalizedType = type?.toString().toLowerCase();
+        logger.info('RAZORPAY_INIT', `Received type: "${type}", Standardized to: "${normalizedType}"`);
 
         // 1. Get User Data
         const user = await prisma.user.findUnique({
@@ -32,14 +33,14 @@ const createSubscription = async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        // 2. Determine Plan ID (With Fallback for Railway naming)
+        // 2. Map to your specific Environment Variables
         // monthly -> RAZORPAY_PLAN_ID
         // yearly -> RAZORPAY_PLAN_ID_YEARLY
         const planId = normalizedType === 'monthly' 
-            ? (process.env.RAZORPAY_PLAN_ID || process.env.RAZORPAY_PLAN_MONTHLY) 
-            : (process.env.RAZORPAY_PLAN_ID_YEARLY || process.env.RAZORPAY_PLAN_YEARLY);
+            ? process.env.RAZORPAY_PLAN_ID 
+            : process.env.RAZORPAY_PLAN_ID_YEARLY;
         
-        logger.info('RAZORPAY_MAPPING', `Mapping: ${normalizedType} -> ${planId}`);
+        logger.info('RAZORPAY_MAPPING', `Mapping: ${normalizedType} -> Account for: ${planId}`);
   
         if (!planId || planId === 'undefined' || planId === '') {
             logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${cycle} is not configured in .env`);
