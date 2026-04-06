@@ -150,7 +150,7 @@ const createSubscription = async (req, res) => {
             success: true,
             subscriptionId: subscription.id,
             plan_id: planId,
-            amount: normalizedType === 'monthly' ? 299 : 2499,
+            amount: normalizedType === 'monthly' ? 29900 : 249900,
             currency: 'INR',
             keyId: process.env.RAZORPAY_KEY_ID
         });
