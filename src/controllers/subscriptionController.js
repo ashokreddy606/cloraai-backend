@@ -81,8 +81,18 @@ const createSubscription = async (req, res) => {
         });
 
     } catch (error) {
-        logger.error('SUBSCRIPTION_CREATE_ERROR', 'Failed to create subscription', { error: error.message });
-        return res.status(500).json({ error: 'Internal Server Error' });
+        const errorMsg = error.response?.data?.error?.description || error.message;
+        logger.error('SUBSCRIPTION_CREATE_ERROR', 'Failed to create subscription', { 
+            userId: req.userId,
+            error: errorMsg,
+            details: error.response?.data
+        });
+        
+        return res.status(error.statusCode || 500).json({ 
+            error: 'Failed to create subscription',
+            message: errorMsg,
+            code: 'RAZORPAY_API_ERROR'
+        });
     }
 };
 
@@ -288,7 +298,7 @@ const handleRazorpayWebhook = async (req, res) => {
             case 'subscription.charged': {
                 const currentEnd = new Date(subObj.current_end * 1000);
                 const monthlyPlanId = process.env.RAZORPAY_PLAN_MONTHLY || process.env.RAZORPAY_PLAN_ID;
-                const amountPaise = subObj.plan_id === monthlyPlanId ? 29900 : 249900;
+                const amount = subObj.plan_id === monthlyPlanId ? 29900 : 249900;
 
                 // Update User Status
                 await prisma.user.update({

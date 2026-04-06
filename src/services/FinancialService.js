@@ -19,8 +19,8 @@ class FinancialService {
             where: { plan: 'PRO', subscriptionStatus: 'ACTIVE', billingCycle: 'YEARLY' }
         });
 
-        const monthlyPrice = appConfig.subscriptionPrice || 199;
-        const yearlyPrice = appConfig.yearlyPrice || 1699;
+        const monthlyPrice = appConfig.subscriptionPrice || 299;
+        const yearlyPrice = appConfig.yearlyPrice || 2499;
 
         const mrr = (monthlyUsers * monthlyPrice) + (yearlyUsers * (yearlyPrice / 12));
         return parseFloat(mrr.toFixed(2));
@@ -57,8 +57,8 @@ class FinancialService {
         const lifetimeCount = await prisma.user.count({ where: { plan: 'LIFETIME' } });
 
         return {
-            monthly: { count: monthlyCount, mrr: monthlyCount * (appConfig.subscriptionPrice || 199) },
-            yearly: { count: yearlyCount, mrr: yearlyCount * ((appConfig.yearlyPrice || 1699) / 12) },
+            monthly: { count: monthlyCount, mrr: monthlyCount * (appConfig.subscriptionPrice || 299) },
+            yearly: { count: yearlyCount, mrr: yearlyCount * ((appConfig.yearlyPrice || 2499) / 12) },
             lifetime: { count: lifetimeCount }
         };
     }

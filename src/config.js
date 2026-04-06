@@ -5,8 +5,8 @@ const configFilePath = path.join(__dirname, 'config.json');
 
 // Default config values
 const defaultAppConfig = {
-    subscriptionPrice: 199,
-    yearlyPrice: 1699,
+    subscriptionPrice: 299,
+    yearlyPrice: 2499,
     offerPriceMonthly: null,
     offerPriceYearly: null,
     freeFeatures: [
