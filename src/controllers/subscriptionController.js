@@ -16,8 +16,11 @@ const { cache } = require('../utils/cache');
  */
 const createSubscription = async (req, res) => {
     try {
-        const { billingCycle } = req.body;
+        const { type } = req.body;
         const userId = req.userId;
+        
+        const normalizedType = type?.toLowerCase() || 'monthly';
+        logger.info('RAZORPAY_INIT', `Received type: ${normalizedType} from user: ${userId}`);
 
         // 1. Get User Data
         const user = await prisma.user.findUnique({
@@ -29,12 +32,14 @@ const createSubscription = async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        const cycle = billingCycle?.toUpperCase() || 'MONTHLY';
-
         // 2. Determine Plan ID (With Fallback for Railway naming)
-        const planId = cycle === 'MONTHLY' 
+        // monthly -> RAZORPAY_PLAN_ID
+        // yearly -> RAZORPAY_PLAN_ID_YEARLY
+        const planId = normalizedType === 'monthly' 
             ? (process.env.RAZORPAY_PLAN_ID || process.env.RAZORPAY_PLAN_MONTHLY) 
             : (process.env.RAZORPAY_PLAN_ID_YEARLY || process.env.RAZORPAY_PLAN_YEARLY);
+        
+        logger.info('RAZORPAY_MAPPING', `Mapping: ${normalizedType} -> ${planId}`);
   
         if (!planId || planId === 'undefined' || planId === '') {
             logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${cycle} is not configured in .env`);
@@ -87,7 +92,7 @@ const createSubscription = async (req, res) => {
             where: { id: userId },
             data: { 
                 razorpaySubscriptionId: subscription.id,
-                billingCycle: cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY',
+                billingCycle: normalizedType === 'monthly' ? 'MONTHLY' : 'YEARLY',
                 subscriptionStatus: 'PENDING'
             }
         });
@@ -98,7 +103,7 @@ const createSubscription = async (req, res) => {
             success: true,
             subscriptionId: subscription.id,
             plan_id: planId,
-            amount: cycle === 'MONTHLY' ? 299 : 2499,
+            amount: normalizedType === 'monthly' ? 299 : 2499,
             currency: 'INR',
             keyId: process.env.RAZORPAY_KEY_ID
         });
