@@ -25,7 +25,12 @@ const createSubscriptionSchema = z.object({
             'monthly', 'yearly', 
             'MONTHLY', 'YEARLY', 
             'Monthly', 'Yearly'
-        ]),
+        ]).optional(),
+        billingCycle: z.enum([
+            'monthly', 'yearly', 
+            'MONTHLY', 'YEARLY', 
+            'Monthly', 'Yearly'
+        ]).optional(),
     }),
 });
 

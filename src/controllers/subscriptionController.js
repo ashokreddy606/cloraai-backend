@@ -16,12 +16,13 @@ const { cache } = require('../utils/cache');
  */
 const createSubscription = async (req, res) => {
     try {
-        const { type } = req.body;
+        const { type, billingCycle } = req.body;
         const userId = req.userId;
         
-        // 0. Normalize the Plan Type (monthly/yearly)
-        const normalizedType = type?.toString().toLowerCase();
-        logger.info('RAZORPAY_INIT', `Received type: "${type}", Standardized to: "${normalizedType}"`);
+        // 0. Normalize the Plan Type (Fallback to billingCycle)
+        const rawType = type || billingCycle || 'monthly';
+        const normalizedType = rawType.toString().toLowerCase();
+        logger.info('RAZORPAY_INIT', `Received type: "${type}", billingCycle: "${billingCycle}", Standardized to: "${normalizedType}"`);
 
         // 1. Get User Data
         const user = await prisma.user.findUnique({

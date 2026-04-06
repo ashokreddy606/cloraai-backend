@@ -9,9 +9,17 @@ const mongoose = require('mongoose');
 exports.registerDevice = async (req, res) => {
   try {
     const userId = req.userId; // From JWT
-    const { deviceId, fcmToken, platform } = req.body;
+    const { token, fcmToken, os, platform, deviceName } = req.body;
 
-    await notificationService.registerDevice(userId, { deviceId, fcmToken, platform });
+    // Support both new (token, os) and old (fcmToken, platform) keys for reliability
+    const finalToken = token || fcmToken;
+    const finalOs = os || platform;
+
+    await notificationService.registerDevice(userId, { 
+      token: finalToken, 
+      os: finalOs, 
+      deviceName 
+    });
 
     res.status(200).json({
       success: true,
