@@ -69,6 +69,10 @@ const createSubscription = async (req, res) => {
 
         if (needsNewCustomer) {
             try {
+                if (!user.email) {
+                    throw new Error('User email is required for Razorpay customer creation.');
+                }
+
                 const customer = await razorpay.customers.create({
                     name: user.username || 'CloraAI User',
                     email: user.email,
@@ -83,8 +87,13 @@ const createSubscription = async (req, res) => {
                 });
                 logger.info('RAZORPAY_CUSTOMER_CREATED', `New Customer ${customerId} created for user ${user.id}`);
             } catch (custErr) {
-                logger.error('RAZORPAY_CUSTOMER_FAIL', `Failed to create customer: ${custErr.message}`);
-                return res.status(400).json({ error: 'Payment Initialization Failed', detailedError: custErr.message });
+                const errorDescription = custErr.description || custErr.error?.description || custErr.message || 'Unknown Razorpay Error';
+                logger.error('RAZORPAY_CUSTOMER_FAIL', `Failed to create customer: ${errorDescription}`, { fullError: custErr });
+                return res.status(400).json({ 
+                    error: 'Payment Initialization Failed', 
+                    message: errorDescription,
+                    details: custErr
+                });
             }
         }
 
