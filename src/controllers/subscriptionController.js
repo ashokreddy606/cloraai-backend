@@ -83,20 +83,23 @@ const createSubscription = async (req, res) => {
         });
 
     } catch (error) {
-        const errorMsg = error.response?.data?.error?.description || error.message;
-        const fullAudit = error.response?.data || {};
+        // Razorpay SDK errors are often direct objects, not axios responses
+        const errorMsg = error.description || error.response?.data?.error?.description || error.message;
+        const errorCode = error.code || error.response?.data?.error?.code || 'SUBSCRIPTION_ERROR';
+        const fullAudit = error.metadata || error.response?.data || error;
         
         logger.error('SUBSCRIPTION_CREATE_ERROR', 'Failed to create subscription', { 
             userId: req.userId,
             error: errorMsg,
+            code: errorCode,
             razorpayInfo: JSON.stringify(fullAudit, null, 2)
         });
         
-        return res.status(error.statusCode || 500).json({ 
+        return res.status(error.statusCode || 400).json({ 
             error: 'Failed to create subscription',
             message: errorMsg,
-            details: fullAudit,
-            code: 'RAZORPAY_API_ERROR'
+            code: errorCode,
+            details: fullAudit
         });
     }
 };

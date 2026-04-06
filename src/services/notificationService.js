@@ -11,33 +11,34 @@ class NotificationService {
     /**
      * Internal: Manage Device Tokens (Multi-device Support)
      */
-    async registerDevice(userId, { deviceId, fcmToken, platform }) {
+    async registerDevice(userId, { token, os, deviceName }) {
         try {
+            // In Prisma schema, 'token' is unique. Upsert by token.
             await prisma.deviceToken.upsert({
-                where: { deviceId },
-                create: { userId, deviceId, fcmToken, platform, isActive: true },
-                update: { userId, fcmToken, platform, isActive: true, lastSeenAt: new Date() }
+                where: { token },
+                create: { userId, token, os, deviceName },
+                update: { userId, os, deviceName, lastUsed: new Date() }
             });
             
-            // Also update the primary pushToken if it's the first or most recent (Legacy)
+            // Also update the primary pushToken for legacy compatibility
             await prisma.user.update({
                 where: { id: userId },
-                data: { pushToken: fcmToken }
+                data: { pushToken: token }
             });
             
-            logger.info('NOTIFICATION_REG', `Device ${deviceId} matched to user ${userId}`);
+            logger.info('NOTIFICATION_REG', `Token ${token} matched to user ${userId}`);
         } catch (err) {
             logger.error('NOTIFICATION_REG_FAIL', err.message);
             throw err;
         }
     }
 
-    async removeDevice(userId, deviceId) {
-        return prisma.deviceToken.deleteMany({ where: { userId, deviceId } });
+    async removeDevice(userId, token) {
+        return prisma.deviceToken.deleteMany({ where: { userId, token } });
     }
 
     async getUserDevices(userId) {
-        return prisma.deviceToken.findMany({ where: { userId, isActive: true } });
+        return prisma.deviceToken.findMany({ where: { userId } });
     }
 
     /**
