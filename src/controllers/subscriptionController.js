@@ -79,12 +79,12 @@ const createSubscription = async (req, res) => {
         // 4. Create Subscription
         const subscription = await razorpay.subscriptions.create({
             plan_id: planId,
-            total_count: cycle === 'MONTHLY' ? 120 : 10, 
+            total_count: billingCycle === 'MONTHLY' ? 120 : 10, 
             customer_notify: 1,
             customer_id: customerId, 
             notes: {
                 userId: req.userId,
-                billingCycle: cycle,
+                billingCycle: billingCycle || 'MONTHLY',
                 environment: process.env.NODE_ENV || 'production'
             }
         });
@@ -183,7 +183,7 @@ const verifySubscription = async (req, res) => {
                 userId,
                 razorpaySubscriptionId: razorpay_subscription_id,
                 razorpayPaymentId: razorpay_payment_id,
-                amount: subscription.plan_id === process.env.RAZORPAY_PLAN_MONTHLY ? 29900 : 249900,
+                amount: (subscription.plan_id === process.env.RAZORPAY_PLAN_ID || subscription.plan_id === process.env.RAZORPAY_PLAN_MONTHLY) ? 29900 : 249900,
                 currency: 'INR',
                 status: 'SUCCESS',
                 planName: `PRO_${user.billingCycle}`,
@@ -333,7 +333,7 @@ const handleRazorpayWebhook = async (req, res) => {
         switch (event) {
             case 'subscription.charged': {
                 const currentEnd = new Date(subObj.current_end * 1000);
-                const monthlyPlanId = process.env.RAZORPAY_PLAN_MONTHLY || process.env.RAZORPAY_PLAN_ID;
+                const monthlyPlanId = process.env.RAZORPAY_PLAN_ID || process.env.RAZORPAY_PLAN_MONTHLY;
                 const amount = subObj.plan_id === monthlyPlanId ? 29900 : 249900;
 
                 // Update User Status
@@ -355,7 +355,7 @@ const handleRazorpayWebhook = async (req, res) => {
                         userId,
                         razorpaySubscriptionId: subId,
                         razorpayPaymentId: payload.payment?.entity?.id,
-                        amount: amountPaise,
+                        amount: amount,
                         currency: 'INR',
                         status: 'SUCCESS',
                         planName: subObj.notes?.billingCycle === 'MONTHLY' ? 'PRO_MONTHLY' : 'PRO_YEARLY',
@@ -371,13 +371,13 @@ const handleRazorpayWebhook = async (req, res) => {
                         userId,
                         paymentHistoryId: payment.id,
                         invoiceNumber: invNum,
-                        amount: amountPaise,
+                        amount: amount,
                         status: 'PAID'
                     }
                 });
 
                 // Notify User
-                await NotificationService.notifyPaymentSuccess(userId, amountPaise / 100);
+                await NotificationService.notifyPaymentSuccess(userId, amount / 100);
                 logger.info('SUBSCRIPTION_CHARGED', `User ${userId} charged successfully for ${subId}`);
                 break;
             }
