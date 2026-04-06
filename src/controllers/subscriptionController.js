@@ -73,8 +73,18 @@ const createSubscription = async (req, res) => {
                     throw new Error('User email is required for Razorpay customer creation.');
                 }
 
+                // Sanitize Name for Razorpay (Avoid "The name format is invalid" error)
+                // Remove all non-alphanumeric characters except spaces/dots
+                let sanitizedName = (user.username || 'CloraAI User')
+                    .replace(/[^a-zA-Z0-0\s\.]/g, '')
+                    .trim();
+                
+                // Fallback if sanitization results in too short or empty name
+                if (sanitizedName.length < 3) sanitizedName = 'CloraAI User';
+                if (sanitizedName.length > 50) sanitizedName = sanitizedName.substring(0, 50);
+
                 const customer = await razorpay.customers.create({
-                    name: user.username || 'CloraAI User',
+                    name: sanitizedName,
                     email: user.email,
                     notes: { userId: user.id }
                 });
