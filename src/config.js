@@ -23,6 +23,7 @@ const defaultAppConfig = {
     maintenanceMode: false,
     minAppVersion: '1.1.0',
     featureFlags: {
+        youtubeEnabled: true,
         instagramAutomationEnabled: true,
         instagramAIRepliesEnabled: true,
         instagramCustomRepliesEnabled: true,

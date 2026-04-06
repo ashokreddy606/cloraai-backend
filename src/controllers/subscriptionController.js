@@ -41,10 +41,10 @@ const createSubscription = async (req, res) => {
             });
         }
 
-        // 2. Determine Plan ID
+        // 2. Determine Plan ID (With Fallback for Railway naming)
         const planId = billingCycle === 'MONTHLY' 
-            ? process.env.RAZORPAY_PLAN_MONTHLY 
-            : process.env.RAZORPAY_PLAN_YEARLY;
+            ? (process.env.RAZORPAY_PLAN_MONTHLY || process.env.RAZORPAY_PLAN_ID) 
+            : (process.env.RAZORPAY_PLAN_YEARLY || process.env.RAZORPAY_PLAN_ID_YEARLY);
  
         if (!planId || planId === 'undefined' || planId === '') {
             logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${billingCycle} is not configured in .env`);
@@ -287,7 +287,8 @@ const handleRazorpayWebhook = async (req, res) => {
         switch (event) {
             case 'subscription.charged': {
                 const currentEnd = new Date(subObj.current_end * 1000);
-                const amountPaise = subObj.plan_id === process.env.RAZORPAY_PLAN_MONTHLY ? 19900 : 169900;
+                const monthlyPlanId = process.env.RAZORPAY_PLAN_MONTHLY || process.env.RAZORPAY_PLAN_ID;
+                const amountPaise = subObj.plan_id === monthlyPlanId ? 29900 : 249900;
 
                 // Update User Status
                 await prisma.user.update({
