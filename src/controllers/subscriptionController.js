@@ -44,10 +44,10 @@ const createSubscription = async (req, res) => {
         logger.info('RAZORPAY_MAPPING', `Mapping: ${normalizedType} -> Account for: ${planId}`);
   
         if (!planId || planId === 'undefined' || planId === '') {
-            logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${cycle} is not configured in .env`);
+            logger.error('RAZORPAY_CONFIG_ERROR', `Plan ID for ${normalizedType} is not configured in .env`);
             return res.status(400).json({ 
                 error: 'Configuration Error',
-                message: `Subscription plan for ${cycle} is not configured on the server.`,
+                message: `Subscription plan for ${normalizedType} is not configured on the server.`,
                 code: 'PLAN_ID_MISSING'
             });
         }
