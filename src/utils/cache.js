@@ -36,8 +36,12 @@ const cache = {
      */
     async clearUserCache(userId) {
         try {
+            // Clear route-based caches
             const pattern = `route:${userId}:*`;
             await this._scanAndDelete(pattern);
+            
+            // Clear primary profile cache
+            await this.del(`user:profile:${userId}`);
         } catch (error) {
             logger.warn('REDIS', `Cache clear error for user: ${userId}`, { error: error.message });
         }

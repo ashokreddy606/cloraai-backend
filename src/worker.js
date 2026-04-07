@@ -12,56 +12,6 @@ const { initializeFirebase } = require('./lib/firebase');
 // ─── Initialize Core Services ────────────────────────────────────────────────
 initializeFirebase();
 
-/**
- * Diagnostic function to debug why users might not be found by workers.
- * Uses Mongoose for raw inspection of the MongoDB User collection.
- */
-async function debugUserFetching() {
-    try {
-        logger.info('DEBUG_USER', '--- STARTING USER DIAGNOSTIC ---');
-        
-        // Fetch all users using Prisma to see raw data
-        const users = await prisma.user.findMany({
-            include: { instagramAccounts: true }
-        });
-        
-        console.log("🔥 TOTAL USERS IN DB:", users.length);
-
-        const safeUsers = users.map(u => {
-            const user = { ...u };
-            // Mask sensitive fields
-            if (user.password) user.password = '***';
-            if (user.youtubeAccessToken) user.youtubeAccessToken = '***';
-            if (user.youtubeRefreshToken) user.youtubeRefreshToken = '***';
-            if (user.instagramAccessToken) user.instagramAccessToken = '***';
-            if (user.pageAccessToken) user.pageAccessToken = '***';
-            
-            // Helpful derived flags for logging
-            user._hasYoutube = !!user.youtubeChannelId && !!user.youtubeAccessToken;
-            user._hasInstagram = !!user.instagramAccounts && user.instagramAccounts.length > 0;
-            user._isActive = user.isActive !== false; // handle missing field as active if that's the logic
-
-            return user;
-        });
-
-        console.log("🔥 ALL USERS (Masked):", JSON.stringify(safeUsers, null, 2));
-
-        const activeUsersCount = safeUsers.filter(u => u.isActive || u.isActive === undefined).length;
-        const ytConnectedCount = safeUsers.filter(u => u._hasYoutube).length;
-        
-        console.log("✅ ACTIVE USERS COUNT:", activeUsersCount);
-        console.log("📺 YOUTUBE CONNECTED COUNT:", ytConnectedCount);
-        
-        if (users.length > 0) {
-            console.log("ℹ️ SAMPLE USER FIELDS:", Object.keys(users[0]));
-        }
-
-        logger.info('DEBUG_USER', '--- USER DIAGNOSTIC COMPLETE ---');
-    } catch (error) {
-        logger.error('DEBUG_USER', '❌ ERROR FETCHING USERS:', { error: error.message });
-        console.error("❌ ERROR FETCHING USERS:", error);
-    }
-}
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY

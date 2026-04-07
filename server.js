@@ -14,6 +14,8 @@ const fs = require('fs');
 const path = require('path');
 const connectDB = require('./src/lib/mongoose');
 const { initializeFirebase } = require('./src/lib/firebase');
+const http = require('http'); // Required for Socket.io
+const { initSocket } = require('./src/lib/socket');
 
 validateEnv();
 
@@ -87,7 +89,7 @@ app.use((req, res, next) => {
 const escapeHtml = (str) => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
 // ─── Internal Worker Spawner (Option 2 for Railway) ─────────────────────────
-if (process.env.INTERNAL_WORKER === 'true') {
+if (process.env.INTERNAL_WORKER === 'true' && false) { // DISABLED: Moving to separate service
   const { fork } = require('child_process');
   const path = require('path');
   
@@ -657,7 +659,12 @@ logger.info('SERVER', '✅ API Server initialized (Workers isolated to dedicated
 const PORT = process.env.PORT || 8080; 
 
 if (require.main === module) {
-    const server = app.listen(PORT, "0.0.0.0", () => {
+    const server = http.createServer(app);
+    
+    // Initialize Socket.io
+    initSocket(server);
+
+    server.listen(PORT, "0.0.0.0", () => {
         console.log(`Server running on port ${PORT}`);
     });
 

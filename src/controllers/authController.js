@@ -290,11 +290,31 @@ const login = async (req, res) => {
 };
 
 const getCurrentUser = async (req, res) => {
+  const cacheKey = `user:profile:${req.userId}`;
+  
   try {
+    // 1. Check Cache first (Ultra-Fast Path)
+    if (redisClient && !redisClient.isMock) {
+      const cachedData = await redisClient.get(cacheKey);
+      if (cachedData) {
+        return res.status(200).json({
+          success: true,
+          data: JSON.parse(cachedData),
+          _fromCache: true
+        });
+      }
+    }
+
+    // 2. Database Fetch (Minimal Select for Speed)
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
-      include: { instagramAccounts: { select: { username: true, isConnected: true } } },
+      select: {
+        id: true, email: true, username: true, profileImage: true, role: true,
+        plan: true, subscriptionStatus: true, planEndDate: true,
+        instagramAccounts: { where: { isConnected: true }, select: { username: true } }
+      }
     });
+    
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     let daysRemaining = null;
@@ -304,21 +324,42 @@ const getCurrentUser = async (req, res) => {
       daysRemaining = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
     }
 
-    if (user.plan === 'PRO' && user.subscriptionStatus === 'ACTIVE' && user.planEndDate && new Date(user.planEndDate) < new Date()) {
-      await prisma.user.update({ where: { id: req.userId }, data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' } });
-      user.plan = 'FREE'; user.subscriptionStatus = 'EXPIRED'; daysRemaining = 0;
+    // 3. Subscription Auto-Cleanup (Non-blocking background task)
+    if (user.plan === 'PRO' && user.planEndDate && new Date(user.planEndDate) < new Date()) {
+      prisma.user.update({ 
+        where: { id: req.userId }, 
+        data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' } 
+      }).catch(err => logger.error('AUTH:SUBSCRIPTION_CLEANUP', 'Failed background status update', { error: err.message, userId: req.userId }));
+      
+      user.plan = 'FREE'; 
+      user.subscriptionStatus = 'EXPIRED'; 
+      daysRemaining = 0;
     }
 
+    // 4. Lean response for <300ms mobile feel
+    const responseData = {
+      user: {
+        id: user.id, 
+        email: user.email, 
+        username: user.username, 
+        profileImage: user.profileImage, 
+        role: user.role,
+        plan: user.plan, 
+        subscriptionStatus: user.subscriptionStatus, 
+        daysRemaining,
+        instagramConnected: user.instagramAccounts.length > 0
+      },
+    };
+
+    // 5. Set Cache (TTL: 5 minutes)
+    if (redisClient && !redisClient.isMock) {
+      await redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 300);
+    }
+
+    res.set('Cache-Control', 'private, max-age=60'); // Hint for proxy/client
     res.status(200).json({
       success: true,
-      data: {
-          user: {
-            id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role,
-            phoneNumber: user.phoneNumber, bio: user.bio, instagramConnected: user.instagramAccounts?.some(a => a.isConnected) ?? false,
-            plan: user.plan, subscriptionStatus: user.subscriptionStatus, planSource: user.planSource,
-            planStartDate: user.planStartDate, planEndDate: user.planEndDate, daysRemaining, manuallyUpgraded: user.manuallyUpgraded,
-          },
-      },
+      data: responseData,
     });
   } catch (error) {
     logger.error('AUTH', 'Get current user error', { error: error.message, userId: req.userId });
@@ -360,6 +401,11 @@ const updateProfile = async (req, res) => {
 
     // ✅ NEW: Notify user of profile update
     pushNotificationService.notifyAccountAction(req.userId, '👤 Profile Updated', 'Your profile information has been successfully updated.').catch(() => {});
+
+    // Invalidate profile cache
+    if (redisClient && !redisClient.isMock) {
+      await redisClient.del(`user:profile:${req.userId}`).catch(() => {});
+    }
 
     res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber, bio: user.bio } } });
   } catch (error) {

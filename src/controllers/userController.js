@@ -97,6 +97,9 @@ const updatePushToken = async (req, res) => {
             data: { pushToken }
         });
 
+        const { cache } = require('../utils/cache');
+        await cache.clearUserCache(userId).catch(() => {});
+
         logger.info('NOTIFICATION', `Push token updated for user ${userId} (Multi-device: true)`);
         res.status(200).json({ success: true, message: 'Push token updated successfully' });
     } catch (error) {

@@ -25,13 +25,14 @@ router.get('/status', authenticate, youtubeController.getStatus);
 router.delete('/disconnect', authenticate, youtubeController.disconnect);
 
 // ── Automation Rules (validated) ───────────────────────────────────────────
-router.get('/rules', authenticate, checkProAccess, youtubeController.getRules);
-router.post('/rules', authenticate, checkProAccess, validate(createRuleSchema), youtubeController.createRule);
-router.put('/rules/:id', authenticate, checkProAccess, validate(updateRuleSchema), verifyResourceOwnership('youtubeAutomationRule'), youtubeController.updateRule);
-router.delete('/rules/:id', authenticate, checkProAccess, verifyResourceOwnership('youtubeAutomationRule'), youtubeController.deleteRule);
+// Quotas (5 for Free, Unlimited for Pro) are handled inside the controller.
+router.get('/rules', authenticate, youtubeController.getRules);
+router.post('/rules', authenticate, validate(createRuleSchema), youtubeController.createRule);
+router.put('/rules/:id', authenticate, validate(updateRuleSchema), verifyResourceOwnership('youtubeAutomationRule'), youtubeController.updateRule);
+router.delete('/rules/:id', authenticate, verifyResourceOwnership('youtubeAutomationRule'), youtubeController.deleteRule);
 
 // ── Analytics ──────────────────────────────────────────────────────────────
-router.get('/analytics', authenticate, checkProAccess, youtubeController.getAnalytics);
+router.get('/analytics', authenticate, youtubeController.getAnalytics);
 
 // ── Channel Analytics (Real YouTube Data API) ─────────────────────────────
 router.get('/channel-analytics', authenticate, youtubeController.getChannelAnalytics);

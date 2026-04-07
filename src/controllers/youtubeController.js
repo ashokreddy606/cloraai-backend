@@ -343,14 +343,12 @@ exports.createRule = async (req, res) => {
         });
         const channelId = user?.youtubeChannelId;
 
-        const isPro =
-          user?.plan === 'LIFETIME' ||
-          (
-            user?.plan === 'PRO' &&
-            ['ACTIVE', 'CANCELLED'].includes(user.subscriptionStatus) &&
-            user.planEndDate &&
+        // Optimized PRO Check (Unified logic used across the app)
+        const isPro = user?.plan === 'LIFETIME' || (
+            user?.plan === 'PRO' && 
+            user?.planEndDate && 
             new Date(user.planEndDate) > new Date()
-          );
+        );
 
         if (!isPro) {
             const ruleCount = await prisma.youtubeAutomationRule.count({
