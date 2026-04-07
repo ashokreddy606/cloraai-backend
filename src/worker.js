@@ -205,16 +205,8 @@ cron.schedule('0 1 * * *', async () => {
     }
 });
 
-// 3. Comment Poller Cron (Every 2 minutes)
-const { pollInstagramComments } = require('./services/instagramCommentPoller');
-cron.schedule('*/2 * * * *', async () => {
-    try {
-        logger.info('CRON', 'Running Instagram comment poller...');
-        await pollInstagramComments();
-    } catch (err) {
-        logger.error('CRON', 'Comment poller cron failed', { error: err.message });
-    }
-});
+// 3. Instagram Comment Polling (Managed by specialized instagramCommentPollWorker)
+// Cron logic has been moved to workers/instagramCommentPollWorker.js for better tier-awareness and locking.
 
 // 4. Notification Cleanup Cron (Every 24 hours at 00:00)
 cron.schedule('0 0 * * *', async () => {

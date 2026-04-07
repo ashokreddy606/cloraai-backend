@@ -5,6 +5,8 @@
 
 const prisma = require('../lib/prisma');
 const pushNotificationService = require('../services/pushNotificationService');
+const { admin } = require('../lib/firebase');
+const { notificationQueue, enqueueJob } = require('../utils/queue');
 const logger = require('../utils/logger');
 
 class NotificationService {
@@ -51,39 +53,140 @@ class NotificationService {
         if (tokens.length === 0) return { count: 0 };
 
         try {
-            // Internal call to actual push provider
-            await pushNotificationService.sendPushNotification(tokens, title, body, data);
-            return { count: tokens.length };
+            // Production Flow: Enqueue to BullMQ for background delivery
+            await this.enqueuePush(userId, { title, body, data, priority });
+            return { success: true, userId };
         } catch (err) {
-            logger.warn('PUSH_SEND_FAIL', `User ${userId} push failed: ${err.message}`);
+            logger.warn('PUSH_ENQUEUE_FAIL', `User ${userId} push queue failed: ${err.message}`);
             return { count: 0 };
         }
     }
 
     /**
-     * Internal: Basic Push Sender
+     * Production: Enqueue Push Notification to BullMQ
+     */
+    async enqueuePush(userId, { title, body, data = {}, priority = 'high', imageUrl = null }) {
+        try {
+            const devices = await this.getUserDevices(userId);
+            const tokens = devices.map(d => d.token).filter(Boolean);
+            
+            if (tokens.length === 0) return false;
+
+            // Normalize payload for FCM v1
+            const payload = {
+                notification: { 
+                    title, 
+                    body,
+                    ...(imageUrl && { imageUrl }) 
+                },
+                data: { 
+                    ...data, 
+                    title, 
+                    body,
+                    click_action: 'FLUTTER_NOTIFICATION_CLICK' // Standard for Android deep linking
+                },
+                android: {
+                    priority,
+                    notification: { 
+                        sound: 'default', 
+                        channelId: data.channelId || 'default',
+                        ...(imageUrl && { image: imageUrl })
+                    }
+                },
+                apns: {
+                    payload: {
+                        aps: { 
+                            alert: { title, body }, 
+                            sound: 'default', 
+                            mutableContent: true 
+                        }
+                    },
+                    fcm_options: {
+                        ...(imageUrl && { image: imageUrl })
+                    }
+                }
+            };
+
+            await enqueueJob(notificationQueue, 'send-notification', {
+                userId,
+                tokens,
+                payload
+            });
+
+            return true;
+        } catch (err) {
+            logger.error('NOTIFICATION_ENQUEUE_ERR', err.message);
+            return false;
+        }
+    }
+
+    /**
+     * Worker: Process Batch Delivery for BullMQ
+     */
+    async processBatchDelivery({ tokens, payload, userId }) {
+        if (!tokens || tokens.length === 0) return { successCount: 0, failureCount: 0 };
+
+        try {
+            // Using FCM v1 SendMulticast
+            const responses = await admin.messaging().sendEachForMulticast({
+                tokens,
+                notification: payload.notification,
+                data: payload.data,
+                android: payload.android,
+                apns: payload.apns
+            });
+
+            const successCount = responses.successCount;
+            const failureCount = responses.failureCount;
+
+            // Handle invalid tokens
+            if (failureCount > 0) {
+                const invalidTokens = [];
+                responses.responses.forEach((resp, idx) => {
+                    if (!resp.success) {
+                        const error = resp.error?.code || '';
+                        if (error === 'messaging/invalid-registration-token' || error === 'messaging/registration-token-not-registered') {
+                            invalidTokens.push(tokens[idx]);
+                        }
+                    }
+                });
+
+                if (invalidTokens.length > 0) {
+                    await prisma.deviceToken.deleteMany({
+                        where: { token: { in: invalidTokens } }
+                    });
+                    logger.info('NOTIFICATION_CLEANUP', `Purged ${invalidTokens.length} dead tokens for user ${userId}`);
+                }
+            }
+
+            return { successCount, failureCount };
+        } catch (err) {
+            logger.error('FCM_BATCH_FAIL', err.message);
+            throw err; // Trigger BullMQ retry
+        }
+    }
+
+    /**
+     * Legacy Wrapper (Redirects to enqueue)
      */
     async sendPush(userId, title, body, data = {}) {
-        try {
-            const user = await prisma.user.findUnique({
-                where: { id: userId },
-                select: { pushToken: true }
-            });
-            if (user?.pushToken) {
-                await pushNotificationService.sendPushNotification([user.pushToken], title, body, data);
-            }
-        } catch (err) {
-            logger.warn('NOTIFICATION_PUSH_FAIL', `User ${userId} push failed: ${err.message}`);
-        }
+        return this.enqueuePush(userId, { title, body, data });
     }
 
     /**
      * Internal: Basic DB Notification Creator
      */
-    async sendDB(userId, title, body, type = 'system', color = '#7C3AED') {
+    async sendDB(userId, title, body, type = 'system', color = '#7C3AED', metadata = null) {
         try {
             await prisma.notification.create({
-                data: { userId, title, body, type, color }
+                data: { 
+                    userId, 
+                    title, 
+                    body, 
+                    type, 
+                    color,
+                    metadata: metadata ? JSON.stringify(metadata) : null 
+                }
             });
         } catch (err) {
             logger.warn('NOTIFICATION_DB_FAIL', `User ${userId} DB notify failed: ${err.message}`);
@@ -91,26 +194,126 @@ class NotificationService {
     }
 
     /**
-     * Event: Payment Captured
+     * Event: Automation "Win" (Success Reply)
      */
-    async notifyPaymentSuccess(userId, amount) {
-        const title = 'Payment Received! 💳';
-        const body = `Thank you! Your payment of ₹${amount} was successful. Your Pro access is now active.`;
+    async notifyAutomationWin(userId, username, keyword) {
+        const title = 'Automation Success! ✅';
+        const body = `Successfully replied to @${username} for keyword: "${keyword}".`;
+        const data = { screen: 'DMAutomation', platform: 'instagram' };
+        
         await Promise.all([
-            this.sendDB(userId, title, body, 'payment', '#10B981'),
-            this.sendPush(userId, title, body, { type: 'payment_success' })
+            this.sendDB(userId, title, body, 'automation', '#10B981', data),
+            this.enqueuePush(userId, { 
+                title, 
+                body, 
+                data, 
+                imageUrl: 'https://clora.ai/assets/notif/ig-success.png' 
+            })
         ]);
     }
 
     /**
-     * Event: Payment Failed / Initial Attempt
+     * Event: YouTube Automation Win
+     */
+    async notifyYouTubeWin(userId, authorName) {
+        const title = 'YouTube Reply Sent! 📺';
+        const body = `AI successfully replied to a comment by ${authorName}.`;
+        const data = { screen: 'YoutubeAutomationRules', platform: 'youtube' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'automation', '#FF0000', data),
+            this.enqueuePush(userId, { 
+                title, 
+                body, 
+                data, 
+                imageUrl: 'https://clora.ai/assets/notif/yt-success.png' 
+            })
+        ]);
+    }
+
+    /**
+     * Event: Viral Alert (High Engagement)
+     */
+    async notifyViralAlert(userId, contentName, reach) {
+        const title = 'Viral Alert! 🔥';
+        const body = `Your content "${contentName}" is blowing up! Reach: ${reach}+. Check your analytics now.`;
+        const data = { screen: 'Analytics' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'viral', '#F59E0B', data),
+            this.enqueuePush(userId, { 
+                title, 
+                body, 
+                data, 
+                priority: 'high',
+                imageUrl: 'https://clora.ai/assets/notif/viral.png' 
+            })
+        ]);
+    }
+
+    /**
+     * Event: Token Expired (Critical)
+     */
+    async notifyTokenExpired(userId, platform = 'Instagram') {
+        const title = `${platform} Disconnected! 🛑`;
+        const body = `Your ${platform} session has expired. Re-link your account now to keep automations alive.`;
+        const data = { screen: 'Settings' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'error', '#EF4444', data),
+            this.enqueuePush(userId, { 
+                title, 
+                body, 
+                data, 
+                priority: 'high' 
+            })
+        ]);
+    }
+
+    /**
+     * Event: AI Limit Hit
+     */
+    async notifyAILimitHit(userId, feature) {
+        const title = 'AI Limit Reached 🤖';
+        const body = `You've reached your free usage limit for ${feature}. Upgrade to Pro for unlimited AI power!`;
+        const data = { screen: 'Upgrade' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'system', '#6366F1', data),
+            this.enqueuePush(userId, { title, body, data })
+        ]);
+    }
+
+    /**
+     * Event: Payment Captured
+     */
+    async notifyPaymentSuccess(userId, amount) {
+        const title = 'Payment Received! 💳';
+        const body = `Thank you! Your payment of ₹${amount} was successful. Pro access is now active.`;
+        const data = { screen: 'TransactionHistory' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'payment', '#10B981', data),
+            this.enqueuePush(userId, { 
+                title, 
+                body, 
+                data, 
+                imageUrl: 'https://clora.ai/assets/notif/success-sparkle.png' 
+            })
+        ]);
+    }
+
+    /**
+     * Event: Payment Failed
      */
     async notifyPaymentFailed(userId, planName) {
         const title = 'Payment Failed ⚠';
-        const body = `We couldn't process your payment for the ${planName} plan. Please update your payment method.`;
+        const body = `We couldn't process payment for ${planName}. Please check your payment method.`;
+        const data = { screen: 'Upgrade' };
+
         await Promise.all([
-            this.sendDB(userId, title, body, 'payment_error', '#EF4444'),
-            this.sendPush(userId, title, body, { type: 'payment_failed' })
+            this.sendDB(userId, title, body, 'payment_error', '#EF4444', data),
+            this.enqueuePush(userId, { title, body, data, priority: 'high' })
         ]);
     }
 
@@ -118,23 +321,50 @@ class NotificationService {
      * Event: Subscription Expiring Soon
      */
     async notifyExpiringSoon(userId, days) {
-        const title = 'Your Pro Plan is Expiring! ⏳';
-        const body = `Your CloraAI Pro subscription will expire in ${days} days. Keep your automations alive - renew now!`;
+        const title = 'Pro Plan Expiring! ⏳';
+        const body = `Your Pro subscription expires in ${days} days. Renew now to keep your rules active.`;
+        const data = { screen: 'Upgrade' };
+
         await Promise.all([
-            this.sendDB(userId, title, body, 'system', '#F59E0B'),
-            this.sendPush(userId, title, body, { type: 'expiry_alert', days })
+            this.sendDB(userId, title, body, 'system', '#F59E0B', data),
+            this.enqueuePush(userId, { title, body, data, priority: 'high' })
         ]);
     }
 
     /**
-     * Event: Subscription Halted (Permanent Failure)
+     * Event: Account Action (Custom)
      */
-    async notifyHalted(userId) {
-        const title = 'Automations Paused 🛑';
-        const body = `Your subscription has been halted due to multiple payment failures. Your automations are now inactive.`;
+    async notifyAccountAction(userId, title, body) {
         await Promise.all([
-            this.sendDB(userId, title, body, 'system', '#EF4444'),
-            this.sendPush(userId, title, body, { type: 'subscription_halted' })
+            this.sendDB(userId, title, body),
+            this.enqueuePush(userId, { title, body })
+        ]);
+    }
+
+    /**
+     * Event: Automation Deleted
+     */
+    async notifyAutomationDeleted(userId, platform, keyword) {
+        const title = 'Automation Removed 🗑';
+        const body = `Successfully deleted ${platform} rule for "${keyword}".`;
+        
+        await Promise.all([
+            this.sendDB(userId, title, body, 'system', '#94A3B8'),
+            this.enqueuePush(userId, { title, body })
+        ]);
+    }
+
+    /**
+     * Event: Automation Active
+     */
+    async sendAutomationActiveNotification(userId, platform, keyword) {
+        const title = 'Automation Active! ⚡';
+        const body = `Your ${platform} rule for "${keyword}" is now live and monitoring comments.`;
+        const data = { screen: platform === 'instagram' ? 'DMAutomation' : 'YoutubeAutomationRules' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'system', '#10B981', data),
+            this.enqueuePush(userId, { title, body, data })
         ]);
     }
 }

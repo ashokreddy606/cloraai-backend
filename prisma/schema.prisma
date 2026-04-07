@@ -182,6 +182,7 @@ model Notification {
   color     String   @default("#6D28D9")
   title     String
   body      String
+  metadata  String?  // JSON string for deep linking: { screen: '...', params: {} }
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 

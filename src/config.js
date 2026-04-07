@@ -24,6 +24,7 @@ const defaultAppConfig = {
     minAppVersion: '1.1.0',
     featureFlags: {
         youtubeEnabled: true,
+        autoDMEnabled: true, // Fixed: Added master switch used by poller and controllers
         instagramAutomationEnabled: true,
         instagramAIRepliesEnabled: true,
         instagramCustomRepliesEnabled: true,
