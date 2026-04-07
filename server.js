@@ -661,25 +661,56 @@ const PORT = process.env.PORT || 8080;
 if (require.main === module) {
     const server = http.createServer(app);
     
-    // Initialize Socket.io
-    initSocket(server);
+    // Initialize Socket.io with defensive error handling
+    (async () => {
+        try {
+            await initSocket(server);
+        } catch (err) {
+            logger.error('SERVER:SOCKET_INIT_FAILED', 'Critical: Socket.io failed to initialize. API will continue but real-time features will be disabled.', { error: err.message });
+        }
+    })();
 
     server.listen(PORT, "0.0.0.0", () => {
         console.log(`Server running on port ${PORT}`);
+        logger.info('SERVER', `Server listening on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
     });
 
-    // Tune keepAliveTimeout for AWS ALB compatibility
-    server.keepAliveTimeout = 65000; // 65 seconds
-    server.headersTimeout = 66000; // 66 seconds
+    // Tune keepAliveTimeout for AWS ALB / Railway compatibility
+    server.keepAliveTimeout = 65000; 
+    server.headersTimeout = 66000; 
 
     // Graceful shutdown handler
     const gracefulShutdown = async (signal) => {
         logger.info('SERVER', `${signal} received. Shutting down gracefully...`);
-        server.close(() => {
-            prisma.$disconnect().then(() => {
-                logger.info('SERVER', 'Shutdown complete.');
-            });
+        
+        // 1. Stop accepting new connections
+        server.close(async () => {
+            logger.info('SERVER', 'HTTP server closed.');
+            
+            try {
+                // 2. Disconnect Socket.io clients
+                const io = require('./src/lib/socket').getIO();
+                if (io) {
+                    io.close();
+                    logger.info('SERVER', 'Socket.io connections closed.');
+                }
+
+                // 3. Close database connections
+                await prisma.$disconnect();
+                
+                logger.info('SERVER', 'Graceful shutdown complete.');
+                process.exit(0);
+            } catch (err) {
+                logger.error('SERVER:SHUTDOWN_ERROR', 'Error during graceful shutdown', { error: err.message });
+                process.exit(1);
+            }
         });
+
+        // Forced shutdown after 10s
+        setTimeout(() => {
+            logger.error('SERVER:SHUTDOWN_TIMEOUT', 'Could not close connections in time, forcefully shutting down');
+            process.exit(1);
+        }, 10000);
     };
 
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));

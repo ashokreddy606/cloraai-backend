@@ -57,6 +57,8 @@
     "rate-limit-redis": "^4.3.1",
     "razorpay": "^2.9.6",
     "speakeasy": "^2.0.0",
+    "socket.io": "^4.7.4",
+    "@socket.io/redis-adapter": "^8.2.1",
     "ua-parser-js": "^2.0.9",
     "uuid": "^13.0.0",
     "winston": "^3.19.0",
