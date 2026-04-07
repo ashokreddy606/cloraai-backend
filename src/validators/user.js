@@ -46,6 +46,15 @@ const registerDeviceSchema = z.object({
   }),
 });
 
+const bulkDeleteNotificationsSchema = z.object({
+  body: z.object({
+    ids: z.array(objectIdSchema, {
+      required_error: 'Notification IDs are required',
+      invalid_type_error: 'IDs must be an array of ObjectIDs'
+    }).min(1, 'At least one ID must be provided'),
+  }),
+});
+
 module.exports = {
   updateProfileSchema,
   markNotificationReadSchema,
@@ -53,4 +62,5 @@ module.exports = {
   logoutAllDevicesSchema,
   registerPushTokenSchema,
   registerDeviceSchema,
+  bulkDeleteNotificationsSchema,
 };

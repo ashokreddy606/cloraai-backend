@@ -3,7 +3,7 @@ const router = express.Router();
 const notificationController = require('../controllers/notificationController');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const validate = require('../middleware/validate');
-const { registerDeviceSchema, markNotificationReadSchema } = require('../validators/user');
+const { registerDeviceSchema, markNotificationReadSchema, bulkDeleteNotificationsSchema } = require('../validators/user');
 
 /**
  * Multi-device Notification Routes
@@ -45,6 +45,26 @@ router.patch('/:id/read',
   authenticate, 
   validate(markNotificationReadSchema), 
   notificationController.markAsRead
+);
+
+// Bulk Delete Notifications
+router.post('/bulk-delete', 
+  authenticate, 
+  validate(bulkDeleteNotificationsSchema),
+  notificationController.bulkDelete
+);
+
+// Clear All Notifications
+router.delete('/', 
+  authenticate, 
+  notificationController.deleteAll
+);
+
+// Delete Single Notification
+router.delete('/:id', 
+  authenticate, 
+  validate(markNotificationReadSchema), // Reusing schema since it just validates ObjectID in params
+  notificationController.deleteNotification
 );
 
 // Send Test Notification (Admin only)

@@ -272,7 +272,20 @@ const getAccountDetails = async (req, res) => {
 const getAnalytics = async (req, res) => {
   try {
     const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
-    if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
+    if (!account) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          followers: 0,
+          following: 0,
+          posts: 0,
+          comments: 0,
+          repliesSent: 0,
+          growthLast30Days: 0,
+          isConnected: false
+        }
+      });
+    }
 
     const accessToken = decrypt(account.instagramAccessToken);
     if (!accessToken) return res.status(401).json({ error: 'Invalid access token. Please reconnect Instagram.' });
@@ -355,7 +368,13 @@ const getPosts = async (req, res) => {
     if (cachedData) return res.status(200).json({ success: true, data: cachedData });
 
     const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
-    if (!account) return res.status(404).json({ error: 'Instagram account not connected' });
+    if (!account) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        isConnected: false
+      });
+    }
 
     const accessToken = decrypt(account.instagramAccessToken);
     if (!accessToken) return res.status(401).json({ error: 'Invalid access token. Please reconnect Instagram.' });

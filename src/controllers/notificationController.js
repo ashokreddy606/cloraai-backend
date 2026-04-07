@@ -230,3 +230,83 @@ exports.getHealth = async (req, res) => {
     res.status(500).json({ error: 'Failed to perform health check' });
   }
 };
+
+/**
+ * Bulk Delete Notifications
+ */
+exports.bulkDelete = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'IDs array is required' });
+    }
+
+    // Convert string IDs to ObjectIds for Mongoose
+    const objectIds = ids.map(id => new mongoose.Types.ObjectId(id));
+
+    const result = await Notification.deleteMany({
+      _id: { $in: objectIds },
+      userId: new mongoose.Types.ObjectId(userId)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} notifications`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Bulk delete error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to perform bulk delete' });
+  }
+};
+
+/**
+ * Delete All Notifications (Clear All)
+ */
+exports.deleteAll = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const result = await Notification.deleteMany({
+      userId: new mongoose.Types.ObjectId(userId)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully cleared ${result.deletedCount} notifications`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Clear all error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to clear notifications' });
+  }
+};
+
+/**
+ * Delete Single Notification
+ */
+exports.deleteNotification = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { id } = req.params;
+
+    const result = await Notification.deleteOne({
+      _id: id,
+      userId: new mongoose.Types.ObjectId(userId)
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Notification deleted successfully'
+    });
+  } catch (error) {
+    logger.error('NOTIFICATION_CONTROLLER', 'Delete notification error:', { error: error.message });
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+};

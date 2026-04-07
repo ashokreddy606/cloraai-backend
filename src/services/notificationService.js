@@ -6,8 +6,11 @@
 const prisma = require('../lib/prisma');
 const pushNotificationService = require('../services/pushNotificationService');
 const { admin } = require('../lib/firebase');
+const { Expo } = require('expo-server-sdk');
 const { notificationQueue, enqueueJob } = require('../utils/queue');
 const logger = require('../utils/logger');
+
+const expo = new Expo();
 
 class NotificationService {
     /**
@@ -126,44 +129,107 @@ class NotificationService {
     async processBatchDelivery({ tokens, payload, userId }) {
         if (!tokens || tokens.length === 0) return { successCount: 0, failureCount: 0 };
 
-        try {
-            // Using FCM v1 SendMulticast
-            const responses = await admin.messaging().sendEachForMulticast({
-                tokens,
-                notification: payload.notification,
-                data: payload.data,
-                android: payload.android,
-                apns: payload.apns
-            });
+        const expoTokens = [];
+        const fcmTokens = [];
 
-            const successCount = responses.successCount;
-            const failureCount = responses.failureCount;
+        // 1. Categorize tokens (FCM vs Expo)
+        tokens.forEach(token => {
+            if (Expo.isExpoPushToken(token)) {
+                expoTokens.push(token);
+            } else {
+                fcmTokens.push(token);
+            }
+        });
 
-            // Handle invalid tokens
-            if (failureCount > 0) {
-                const invalidTokens = [];
-                responses.responses.forEach((resp, idx) => {
-                    if (!resp.success) {
-                        const error = resp.error?.code || '';
-                        if (error === 'messaging/invalid-registration-token' || error === 'messaging/registration-token-not-registered') {
-                            invalidTokens.push(tokens[idx]);
+        const results = { successCount: 0, failureCount: 0 };
+
+        // 2. Deliver via Expo Push SDK
+        if (expoTokens.length > 0) {
+            try {
+                const messages = expoTokens.map(token => ({
+                    to: token,
+                    sound: 'default',
+                    title: payload.notification.title,
+                    body: payload.notification.body,
+                    data: payload.data,
+                    priority: 'high'
+                }));
+
+                const chunks = expo.chunkPushNotifications(messages);
+                const tickets = [];
+
+                for (const chunk of chunks) {
+                    try {
+                        const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                        tickets.push(...ticketChunk);
+                    } catch (error) {
+                        logger.error('EXPO_PUSH_CHUNK_FAIL', error.message);
+                    }
+                }
+
+                // Handle invalid Expo tokens
+                const invalidExpoTokens = [];
+                tickets.forEach((ticket, idx) => {
+                    if (ticket.status === 'ok') {
+                        results.successCount++;
+                    } else if (ticket.status === 'error') {
+                        results.failureCount++;
+                        if (ticket.details?.error === 'DeviceNotRegistered') {
+                            invalidExpoTokens.push(expoTokens[idx]);
                         }
                     }
                 });
 
-                if (invalidTokens.length > 0) {
+                if (invalidExpoTokens.length > 0) {
                     await prisma.deviceToken.deleteMany({
-                        where: { token: { in: invalidTokens } }
+                        where: { token: { in: invalidExpoTokens } }
                     });
-                    logger.info('NOTIFICATION_CLEANUP', `Purged ${invalidTokens.length} dead tokens for user ${userId}`);
+                    logger.info('NOTIFICATION_CLEANUP', `Purged ${invalidExpoTokens.length} dead Expo tokens for user ${userId}`);
                 }
+            } catch (err) {
+                logger.error('EXPO_BATCH_FAIL', err.message);
             }
-
-            return { successCount, failureCount };
-        } catch (err) {
-            logger.error('FCM_BATCH_FAIL', err.message);
-            throw err; // Trigger BullMQ retry
         }
+
+        // 3. Deliver via Firebase Admin SDK
+        if (fcmTokens.length > 0) {
+            try {
+                const responses = await admin.messaging().sendEachForMulticast({
+                    tokens: fcmTokens,
+                    notification: payload.notification,
+                    data: payload.data,
+                    android: payload.android,
+                    apns: payload.apns
+                });
+
+                results.successCount += responses.successCount;
+                results.failureCount += responses.failureCount;
+
+                // Handle invalid FCM tokens
+                const invalidFcmTokens = [];
+                responses.responses.forEach((resp, idx) => {
+                    if (!resp.success) {
+                        const error = resp.error?.code || '';
+                        if (error === 'messaging/invalid-registration-token' || error === 'messaging/registration-token-not-registered') {
+                            invalidFcmTokens.push(fcmTokens[idx]);
+                        }
+                    }
+                });
+
+                if (invalidFcmTokens.length > 0) {
+                    await prisma.deviceToken.deleteMany({
+                        where: { token: { in: invalidFcmTokens } }
+                    });
+                    logger.info('NOTIFICATION_CLEANUP', `Purged ${invalidFcmTokens.length} dead FCM tokens for user ${userId}`);
+                }
+            } catch (err) {
+                logger.error('FCM_BATCH_FAIL', err.message);
+                // If it's a critical FCM error (like missing cert), we only retry if no tokens were sent at all
+                if (results.successCount === 0) throw err;
+            }
+        }
+
+        return results;
     }
 
     /**
