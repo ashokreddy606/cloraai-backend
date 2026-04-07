@@ -278,20 +278,33 @@ app.get('/privacy', (req, res) => {
             <title>Privacy Policy - CloraAI</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-                body { font-family: -apple-system, system-ui, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; color: #374151; line-height: 1.5; }
-                h1 { color: #111827; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; }
+                body { font-family: -apple-system, system-ui, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; color: #374151; line-height: 1.6; }
+                h1 { color: #111827; border-bottom: 2px solid #6366f1; padding-bottom: 0.5rem; }
+                h2 { color: #1f2937; margin-top: 2rem; }
+                .update-date { color: #6b7280; font-size: 0.9rem; font-style: italic; }
+                .highlight { color: #4338ca; font-weight: 600; }
             </style>
         </head>
         <body>
             <h1>Privacy Policy</h1>
-            <p><strong>Last Updated: March 20, 2026</strong></p>
-            <p>CloraAI respects your privacy. This policy explains how we handle your data when you use our Instagram and YouTube integration services.</p>
-            <h2>1. Data We Collect</h2>
-            <p>We only collect the data necessary to provide our services, such as your basic profile info and media insights (reach/impressions) if you explicitly grant us permission.</p>
-            <h2>2. How We Use Data</h2>
-            <p>We use your data to show you analytics and to provide automation features like Auto-DMs and comment management.</p>
-            <h2>3. Data Deletion</h2>
-            <p>You can disconnect your account at any time within the CloraAI app settings to delete our access and remove your data from our system.</p>
+            <p class="update-date">Last Updated: April 07, 2026</p>
+            <p>CloraAI ("we", "us", or "our") is dedicated to protecting your privacy while providing AI-driven social media automation and analytics.</p>
+            
+            <h2>1. Data Collection & Usage</h2>
+            <p>We collect only necessary data to facilitate our features:</p>
+            <ul>
+                <li><span class="highlight">Meta (Instagram):</span> We access your profile, messages, and comments to provide AI-powered replies and engagement analytics.</li>
+                <li><span class="highlight">Google (YouTube):</span> We access your channel data to upload content and track subscriber metrics.</li>
+                <li><span class="highlight">Artificial Intelligence:</span> Data is processed via secure third-party AI APIs (e.g., OpenAI) for generating contextual automation.</li>
+            </ul>
+
+            <h2>2. Financial Security</h2>
+            <p>Payments are securely handled via <span class="highlight">Razorpay</span>. We do not store sensitive payment card information on our servers. All transactions follow industry-standard encryption protocols (PCI-DSS).</p>
+
+            <h2>3. Your Rights & Data Deletion</h2>
+            <p>You have full control over your data. You may disconnect your social accounts or permanently delete your CloraAI account from the application settings at any time. Accounts are scrubbed from our active databases immediately upon deletion.</p>
+
+            <p style="margin-top: 3rem; font-size: 0.8rem; color: #9ca3af;">Contact: support@cloraai.com | Andhra Pradesh, India</p>
         </body>
         </html>
     `);
