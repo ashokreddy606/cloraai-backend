@@ -105,7 +105,8 @@ async function processAccount(account) {
                     params: {
                         fields: 'id,text,from,timestamp',
                         access_token: accessToken,
-                        limit: config.batch.pollCommentLimit  // ✅ Tier-aware limit
+                        limit: config.batch.pollCommentLimit,  // ✅ Tier-aware limit
+                        order: 'reverse_chronological'         // ✅ FIX: Fetch newest comments instead of getting stuck on old ones
                     }
                 });
 
