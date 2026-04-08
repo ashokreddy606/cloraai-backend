@@ -21,12 +21,22 @@ const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
  * Used as a fallback for webhooks and for FREE tier users.
  */
 
+logger.info('WORKER:INIT', 'Instagram Comment Poll Worker loaded.');
+
 cron.schedule(config.cron.instagramPoll, async () => {
-    if (!appConfig.featureFlags.autoDMEnabled) return;
+    logger.debug('IG_POLL_WORKER:CRON', 'Cron triggered');
+    
+    if (!appConfig.featureFlags.autoDMEnabled) {
+        logger.debug('IG_POLL_WORKER:SKIP', 'Auto-DM feature flag is disabled.');
+        return;
+    }
 
     const lockName = 'ig_comment_poll_worker';
     const locked = await acquireLock(lockName, 110);
-    if (!locked) return;
+    if (!locked) {
+        logger.debug('IG_POLL_WORKER:LOCK', 'Cycle skipped: Another worker holds the lock.');
+        return;
+    }
 
     try {
         const CACHE_KEY = 'ig_poll_active_accounts';
@@ -55,7 +65,7 @@ cron.schedule(config.cron.instagramPoll, async () => {
 
             activeAccounts = accounts.filter(acc => acc.user?.dmAutomations?.length > 0);
             await cache.set(CACHE_KEY, activeAccounts, config.cacheTTL.activeAccounts);
-            logger.debug('IG_POLL_WORKER', `Cache miss: loaded ${activeAccounts.length} active accounts from DB`);
+            logger.info('IG_POLL_WORKER', `Cache miss: loaded ${activeAccounts.length}/${accounts.length} accounts with active rules.`);
         } else {
             logger.debug('IG_POLL_WORKER', `Cache hit: using ${activeAccounts.length} active accounts`);
         }
@@ -102,7 +112,7 @@ async function processAccount(account) {
         const topMedia = mediaList.slice(0, config.batch.pollTopMedia);
 
         if (topMedia.length === 0) {
-            logger.info('IG_POLL_WORKER', `No recent media found for account ${account.instagramId}`);
+            logger.info('IG_POLL_WORKER', `No recent media found for account ${account.instagramId} (@${account.username})`);
             return;
         }
 
