@@ -1,7 +1,4 @@
-const fs = require('fs');
-const path = require('path');
-
-const configFilePath = path.join(__dirname, 'config.json');
+const prisma = require('./lib/prisma');
 
 // Default config values
 const defaultAppConfig = {
@@ -24,7 +21,7 @@ const defaultAppConfig = {
     minAppVersion: '1.1.0',
     featureFlags: {
         youtubeEnabled: true,
-        autoDMEnabled: true, // Fixed: Added master switch used by poller and controllers
+        autoDMEnabled: true,
         instagramAutomationEnabled: true,
         instagramAIRepliesEnabled: true,
         instagramCustomRepliesEnabled: true,
@@ -39,39 +36,55 @@ const defaultAppConfig = {
         aiTemperature: 0.7,
         aiModel: 'gpt-3.5-turbo',
     },
-    blockedFromAI: [], // userIds blocked from AI
+    blockedFromAI: [],
 };
 
-let appConfig = { ...defaultAppConfig };
+// Use const and mutate it so references remain intact across files
+const appConfig = { ...defaultAppConfig };
 
-// Synchronously load from file if it exists
-if (fs.existsSync(configFilePath)) {
+const initConfig = async () => {
     try {
-        const fileData = fs.readFileSync(configFilePath, 'utf8');
-        const parsed = JSON.parse(fileData);
-
-        // Custom merge to ensure new feature flags or limits aren't lost
-        appConfig = {
+        let dbConfig = await prisma.systemConfig.findUnique({
+            where: { key: 'global_config' }
+        });
+        
+        if (!dbConfig) {
+            dbConfig = await prisma.systemConfig.create({
+                data: {
+                    key: 'global_config',
+                    value: JSON.stringify(defaultAppConfig)
+                }
+            });
+        }
+        
+        const parsed = JSON.parse(dbConfig.value);
+        Object.assign(appConfig, {
             ...defaultAppConfig,
             ...parsed,
             featureFlags: { ...defaultAppConfig.featureFlags, ...(parsed.featureFlags || {}) },
             aiLimits: { ...defaultAppConfig.aiLimits, ...(parsed.aiLimits || {}) }
-        };
+        });
+        console.log('System configuration loaded from database.');
     } catch (err) {
-        console.error('Failed to parse config.json, using defaults:', err);
+        console.error('Failed to init SystemConfig from DB:', err.message);
     }
-}
+};
 
-// Function to save current config to disk
-const saveConfig = () => {
+// Function to save current config to disk (now database)
+const saveConfig = async () => {
     try {
-        fs.writeFileSync(configFilePath, JSON.stringify(appConfig, null, 2), 'utf8');
+        await prisma.systemConfig.upsert({
+            where: { key: 'global_config' },
+            update: { value: JSON.stringify(appConfig) },
+            create: { key: 'global_config', value: JSON.stringify(appConfig) }
+        });
     } catch (err) {
-        console.error('Failed to save config.json:', err);
+        console.error('Failed to save config to DB:', err.message);
     }
 };
 
 module.exports = {
     appConfig,
-    saveConfig
+    saveConfig,
+    initConfig
 };

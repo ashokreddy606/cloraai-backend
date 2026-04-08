@@ -114,7 +114,8 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
 
         if (forceRuleId) {
             // Bypass keyword matching logic entirely if this is a Quick Reply callback
-            matchedRule = await prisma.dMAutomation.findUnique({ where: { id: forceRuleId } });
+            // SECURITY: Ensure the forced rule actually belongs to the user resolving the event
+            matchedRule = await prisma.dMAutomation.findFirst({ where: { id: forceRuleId, userId: userId } });
             if (!matchedRule) {
                 logger.warn('WORKER:FORCE_RULE_NOT_FOUND', `Could not find forced rule ${forceRuleId}`);
                 return { success: true };
@@ -166,9 +167,22 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
                     return { success: true, bypassed: false };
                 }
             } catch (err) {
-                logger.warn('WORKER:FOLLOW_CHECK_ERROR', `Could not verify follower status for ${senderId}. Defaulting to grant access.`, { error: err.message });
-                // If API fails (e.g. scope missing), default to trusting the user so we don't break the funnel during Meta outages
-                matchedRule.mustFollow = false;
+                logger.warn('WORKER:FOLLOW_CHECK_ERROR', `Could not verify follower status for ${senderId}. Defaulting to deny access.`, { error: err.message });
+                // SECURITY: If API fails (e.g. scope missing or Meta outage), fail closed securely.
+                // Request them to try again instead of giving away gated content.
+                matchedRule.mustFollow = true;
+                const notifyUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/me/messages?access_token=${apiTokenForVerification}`;
+                
+                try {
+                    await axios.post(notifyUrl, {
+                        recipient: { id: senderId },
+                        message: {
+                            text: "We are having trouble verifying your follow status with Instagram right now. Please try clicking the button again in a few moments."
+                        }
+                    });
+                } catch(e) {}
+                
+                return { success: true, bypassed: false };
             }
         } else {
             // ─── 3. ULTRA-SPEED RULE LOOKUP (CACHED) ────────────────────────

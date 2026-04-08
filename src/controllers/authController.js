@@ -143,7 +143,7 @@ const login = async (req, res) => {
   let email = '';
   try {
     email = (req.body.email || '').toLowerCase().trim();
-    const { password, deviceFingerprint, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
+    const { password, deviceFingerprint, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs, fcmToken, pushToken, deviceId, platform } = req.body;
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
 
     if (!email || !password) return res.status(400).json({ error: 'Invalid input', message: 'Email and password are required' });
@@ -551,10 +551,20 @@ const verifyEmail = async (req, res) => {
 
 const makeAdmin = async (req, res) => {
   try {
-    const { email, secretKey } = req.body;
-    if (secretKey !== process.env.ADMIN_SECRET_KEY) return res.status(403).json({ error: 'Forbidden' });
+    // SECURITY: Limit to internal or CLI/terminal execution using secure headers
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
+    if (ip !== '127.0.0.1' && ip !== '::1') return res.status(403).json({ error: 'Forbidden. Terminal access only.' });
+
+    const { email } = req.body;
+    const authHeader = req.headers['x-admin-promotion-key'];
+    
+    if (!process.env.ADMIN_SECRET_KEY || process.env.ADMIN_SECRET_KEY.length < 16) {
+        return res.status(500).json({ error: 'Server misconfiguration. Admin promotion disabled for security.' });
+    }
+    if (authHeader !== process.env.ADMIN_SECRET_KEY) return res.status(403).json({ error: 'Forbidden' });
+
     await prisma.user.update({ where: { email }, data: { role: 'ADMIN' } });
-    res.status(200).json({ success: true, message: 'User promoted.' });
+    res.status(200).json({ success: true, message: 'User promoted to Admin securely.' });
   } catch (error) {
     logger.error('AUTH', 'Make admin error', { error: error.message, email: req.body?.email });
     res.status(500).json({ error: 'Internal Server Error' });

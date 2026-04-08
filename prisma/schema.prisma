@@ -576,3 +576,14 @@ model DeviceToken {
 
   @@index([userId])
 }
+
+// ─── System Configuration (Singleton/Global Settings) ────────────────────────
+model SystemConfig {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  key             String   @unique
+  value           String   // Stored as JSON string
+  updatedBy       String?  // Admin ID who last changed it
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+}
+

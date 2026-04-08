@@ -171,44 +171,54 @@ const getDashboard = async (req, res) => {
       }
     });
 
-    // Automation Activity (Last 30 days)
-    const automationActivity = await Promise.all(
-      Array.from({ length: 30 }).map(async (_, i) => {
+    // Automation Activity (Last 30 days) - Single query optimization
+    const thirtyDaysAgoStart = new Date(startOfToday);
+    thirtyDaysAgoStart.setDate(thirtyDaysAgoStart.getDate() - 29);
+    thirtyDaysAgoStart.setHours(0, 0, 0, 0);
+
+    const rawInteractions = await prisma.dmInteraction.findMany({
+      where: {
+        userId: req.userId,
+        status: 'sent',
+        createdAt: { gte: thirtyDaysAgoStart }
+      },
+      select: { createdAt: true }
+    });
+
+    const activityMap = new Map();
+    rawInteractions.forEach(interaction => {
+        const dateStr = new Date(interaction.createdAt.getTime() - interaction.createdAt.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+        activityMap.set(dateStr, (activityMap.get(dateStr) || 0) + 1);
+    });
+
+    const automationActivity = Array.from({ length: 30 }).map((_, i) => {
         const d = new Date(startOfToday);
         d.setDate(d.getDate() - (29 - i));
-        const start = new Date(d);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(d);
-        end.setHours(23, 59, 59, 999);
-        
-        return prisma.dmInteraction.count({
-          where: {
-            userId: req.userId,
-            status: 'sent',
-            createdAt: { gte: start, lte: end }
-          }
-        });
-      })
-    );
+        const dateStr = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+        return activityMap.get(dateStr) || 0;
+    });
 
     // Total messages handled (any interaction status)
     const totalMessagesHandled = await prisma.dmInteraction.count({
       where: { userId: req.userId }
     });
 
-    // Fetch total comments and reels count from media list (ensure decrypted token is used)
+    // Fetch total comments, likes and reels count from media list (ensure decrypted token is used)
     let totalComments = 0;
+    let totalLikes = 0;
     let reelsCount = 0;
     try {
       const decryptedToken = decrypt(account.instagramAccessToken);
       const media = await instagramService.getUserMedia(account.instagramId, decryptedToken || account.instagramAccessToken);
       if (media && media.length > 0) {
         totalComments = media.reduce((sum, m) => sum + (m.comments_count || 0), 0);
+        totalLikes = media.reduce((sum, m) => sum + (m.like_count || 0), 0);
         reelsCount = media.filter(m => m.media_type === 'VIDEO').length;
       }
     } catch (e) {
       console.warn('Media-based stats aggregation failed:', e.message);
     }
+    const totalEngagements = totalComments + totalLikes;
 
     // 30-day views
     const mediaInsights = await prisma.analyticsSnapshot.findMany({
@@ -241,7 +251,7 @@ const getDashboard = async (req, res) => {
           posts,
           following,
           reels: reelsCount,
-          engagementRate: followers > 0 ? (posts / followers) * 100 : 0,
+          engagementRate: followers > 0 ? (totalEngagements / followers) * 100 : 0,
           username: account.instagramUsername || account.username || '',
           profileImage: account.profileImage || '',
         },
@@ -323,9 +333,17 @@ const recordSnapshot = async (req, res) => {
     const following = userData.data.follows_count || 0;
     const mediaCount = userData.data.media_count || 0;
 
-    // Server-side calculation prevents frontend spoofing. 
-    // This is basic engagement; deep logic uses pages_read_engagement later.
-    const engagementRate = followers > 0 ? (mediaCount / followers) * 100 : 0;
+    let totalEngagements = 0;
+    try {
+        const media = await instagramService.getUserMedia(account.instagramId, decryptedToken);
+        if (media && media.length > 0) {
+            totalEngagements = media.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
+        }
+    } catch(e) {
+        logger.warn('ANALYTICS', 'Could not fetch media for engagement calculation', { error: e.message });
+    }
+
+    const engagementRate = followers > 0 ? (totalEngagements / followers) * 100 : 0;
 
     const snapshot = await prisma.analyticsSnapshot.create({
       data: {

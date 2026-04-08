@@ -9,6 +9,7 @@ const { checkRateLimit } = require('../utils/scaling/rateLimiter');
 const { cache } = require('../utils/cache');
 const { config } = require('../utils/tierConfig');
 const pushNotificationService = require('../services/pushNotificationService');
+const { acquireLock, releaseLock } = require('../utils/redisLock');
 
 /**
  * YouTube Worker Processor
@@ -185,8 +186,15 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
 
             if (authorChannelId === user.youtubeChannelId) continue;
 
-            const existingRecord = await prisma.youtubeComment.findUnique({ where: { commentId } });
-            if (existingRecord) continue;
+            const lockAcquired = await acquireLock(`yt_comment_${commentId}`, 30);
+            if (!lockAcquired) {
+                logger.debug('YOUTUBE_PROCESSOR', `Skipping comment ${commentId} - locked by another worker`);
+                continue;
+            }
+
+            try {
+                const existingRecord = await prisma.youtubeComment.findUnique({ where: { commentId } });
+                if (existingRecord) continue;
 
             // Logic matching for rules
             let matchedRule = user.youtubeRules.find(
@@ -281,6 +289,9 @@ const youtubeProcessor = new Worker(QUEUES.YOUTUBE, async (job) => {
                         replied: false
                     }
                 });
+            }
+            } finally {
+                await releaseLock(`yt_comment_${commentId}`);
             }
         }
         logger.info('YOUTUBE_PROCESSOR:SUCCESS', `Job completed for user ${userId}. Processed ${items.length} threads.`);

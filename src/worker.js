@@ -52,10 +52,18 @@ console.log(`
 logger.info('WORKER', "Worker initialized successfully and listening for jobs");
 
 // ─── Initialize BullMQ Workers ──────────────────────────────────────────────
-logger.info('WORKER', 'Initializing Redis queue processors...');
+(async () => {
+    try {
+        const { initConfig } = require('./config');
+        await initConfig();
+    } catch (err) {
+        logger.error('WORKER:INIT_FAILED', 'Failed to initialize config.', { error: err.message });
+    }
 
-// 1. Notification Worker
-const notificationWorker = require('./workers/notificationWorker');
+    logger.info('WORKER', 'Initializing Redis queue processors...');
+
+    // 1. Notification Worker
+    const notificationWorker = require('./workers/notificationWorker');
 
 // 2. Auth Worker (Registration/Login Background tasks)
 const authWorker = require('./workers/authWorker');
@@ -119,12 +127,17 @@ cron.schedule('0 0 * * *', async () => {
             where: { isConnected: true },
             select: { userId: true, instagramId: true, instagramAccessToken: true }
         });
-        for (const acc of accounts) {
-            await enqueueJob(analyticsQueue, 'process-analytics', {
-                userId: acc.userId,
-                instagramId: acc.instagramId,
-                accessToken: acc.instagramAccessToken
-            });
+        
+        const chunkSize = 100;
+        for (let i = 0; i < accounts.length; i += chunkSize) {
+            const chunk = accounts.slice(i, i + chunkSize);
+            await Promise.all(chunk.map(acc => 
+                enqueueJob(analyticsQueue, 'process-analytics', {
+                    userId: acc.userId,
+                    instagramId: acc.instagramId,
+                    accessToken: acc.instagramAccessToken
+                }).catch(e => logger.error('CRON:ENQUEUE', 'Failing to enqueue analytics', { error: e.message }))
+            ));
         }
         logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} analytics jobs.`);
     } catch (err) {
@@ -146,12 +159,17 @@ cron.schedule('0 1 * * *', async () => {
             },
             select: { userId: true, instagramId: true, instagramAccessToken: true }
         });
-        for (const acc of accounts) {
-            await enqueueJob(tokenRefreshQueue, 'refresh-token', {
-                userId: acc.userId,
-                instagramId: acc.instagramId,
-                accessToken: acc.instagramAccessToken
-            });
+        
+        const chunkSize = 100;
+        for (let i = 0; i < accounts.length; i += chunkSize) {
+            const chunk = accounts.slice(i, i + chunkSize);
+            await Promise.all(chunk.map(acc => 
+                enqueueJob(tokenRefreshQueue, 'refresh-token', {
+                    userId: acc.userId,
+                    instagramId: acc.instagramId,
+                    accessToken: acc.instagramAccessToken
+                }).catch(e => logger.error('CRON:ENQUEUE', 'Failing to enqueue token refresh', { error: e.message }))
+            ));
         }
         logger.info('CRON:TRIGGER', `Enqueued ${accounts.length} token refresh jobs.`);
     } catch (err) {
@@ -185,6 +203,24 @@ cron.schedule('0 0 * * *', async () => {
 });
 logger.info('WORKER', '✅ Notification cleanup scheduled (daily at 00:00)');
 
+// 5. Session Cleanup Cron (Every 24 hours at 01:00)
+cron.schedule('0 1 * * *', async () => {
+    try {
+        logger.info('CRON', 'Running 24h session cleanup...');
+        if (prisma.loginSession) {
+            const deleted = await prisma.loginSession.deleteMany({
+                where: {
+                    expiresAt: { lt: new Date() }
+                }
+            });
+            logger.info('CRON', `Cleanup complete: ${deleted.count} expired sessions removed`);
+        }
+    } catch (err) {
+        logger.error('CRON', 'Session cleanup failed', { error: err.message });
+    }
+});
+logger.info('WORKER', '✅ Session cleanup scheduled (daily at 01:00)');
+
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 const gracefulShutdown = async (signal) => {
     logger.info('WORKER', `${signal} received. Shutting down worker gracefully...`);
@@ -206,3 +242,5 @@ const gracefulShutdown = async (signal) => {
 
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+})();

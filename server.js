@@ -478,8 +478,7 @@ app.use(cors({
                             origin.startsWith('http://127.0.0.1') || 
                             origin.startsWith('http://192.168.') || 
                             origin.startsWith('http://10.') ||
-                            origin.startsWith('file://') ||
-                            origin.startsWith('chrome-extension://');
+                            origin.startsWith('file://');
 
         if (isMobileDev) return callback(null, true);
 
@@ -674,19 +673,22 @@ const PORT = process.env.PORT || 8080;
 if (require.main === module) {
     const server = http.createServer(app);
     
-    // Initialize Socket.io with defensive error handling
+    // Initialize Config and Socket.io with defensive error handling
     (async () => {
         try {
+            const { initConfig } = require('./src/config');
+            await initConfig();
+            
             await initSocket(server);
         } catch (err) {
-            logger.error('SERVER:SOCKET_INIT_FAILED', 'Critical: Socket.io failed to initialize. API will continue but real-time features will be disabled.', { error: err.message });
+            logger.error('SERVER:INIT_FAILED', 'Critical initialization failed.', { error: err.message });
         }
-    })();
 
-    server.listen(PORT, "0.0.0.0", () => {
-        console.log(`Server running on port ${PORT}`);
-        logger.info('SERVER', `Server listening on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-    });
+        server.listen(PORT, "0.0.0.0", () => {
+            console.log(`Server running on port ${PORT}`);
+            logger.info('SERVER', `Server listening on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+        });
+    })();
 
     // Tune keepAliveTimeout for AWS ALB / Railway compatibility
     server.keepAliveTimeout = 65000; 

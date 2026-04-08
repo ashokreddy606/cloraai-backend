@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { cache } = require('../utils/cache');
+const logger = require('../utils/logger');
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes — balances freshness vs DB load
 

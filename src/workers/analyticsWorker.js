@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const pushNotificationService = require('../services/pushNotificationService');
 const { config } = require('../utils/tierConfig');
 const { cache } = require('../utils/cache');
+const { decrypt } = require('../utils/cryptoUtils');
 
 /**
  * WORKER: Process single Instagram account analytics snapshot
@@ -24,7 +25,13 @@ const analyticsWorker = new Worker(QUEUES.ANALYTICS, async (job) => {
         }
 
         // ─── FAST SYNC (every 4h): 1 API call ────────────────────────────────
-        const stats = await instagramService.getAccountStats(instagramId, accessToken);
+        const decryptedToken = decrypt(accessToken);
+        if (!decryptedToken) {
+            logger.error('WORKER:ANALYTICS:DECRYPT_ERROR', 'Failed to decrypt token', { userId });
+            return { skipped: true, reason: 'Decryption failed' };
+        }
+        
+        const stats = await instagramService.getAccountStats(instagramId, decryptedToken);
 
         const today = new Date();
         today.setUTCHours(0, 0, 0, 0);
@@ -54,12 +61,12 @@ const analyticsWorker = new Worker(QUEUES.ANALYTICS, async (job) => {
         if (syncType === 'deep') {
             // ✅ FIX: Was fetching 20 posts with individual API calls each (21 calls)
             // Now: only fetch TOP 5 most recent posts (6 calls max for deep sync)
-            const media = await instagramService.getUserMedia(instagramId, accessToken);
+            const media = await instagramService.getUserMedia(instagramId, decryptedToken);
             const topMedia = media.slice(0, 5);
 
             // ✅ PERF: Parallel insight fetching instead of sequential loop
             const insightResults = await Promise.allSettled(
-                topMedia.map(item => instagramService.getMediaInsights(item.id, accessToken, item.media_type))
+                topMedia.map(item => instagramService.getMediaInsights(item.id, decryptedToken, item.media_type))
             );
 
             for (const result of insightResults) {

@@ -3,7 +3,7 @@ const { connection, QUEUES } = require('../utils/queue');
 const instagramService = require('../services/instagramService');
 const prisma = require('../lib/prisma');
 const logger = require('../utils/logger');
-const { encrypt } = require('../utils/cryptoUtils');
+const { encrypt, decrypt } = require('../utils/cryptoUtils');
 const pushNotificationService = require('../services/pushNotificationService');
 
 /**
@@ -21,7 +21,8 @@ const tokenRefreshWorker = new Worker(QUEUES.TOKEN_REFRESH, async (job) => {
         }
 
         // 1. Call Meta API to refresh long-lived token
-        const refreshData = await instagramService.refreshToken(accessToken);
+        const decryptedToken = decrypt(accessToken);
+        const refreshData = await instagramService.refreshToken(decryptedToken);
 
         if (!refreshData || !refreshData.accessToken) {
             logger.error('WORKER:TOKEN_REFRESH:API_ERROR', `Failed to refresh token from Meta API`, { userId });

@@ -653,7 +653,7 @@ const stopInstagramAutomations = async (req, res) => {
         const { count } = await prisma.dMAutomation.updateMany({ data: { isActive: false } });
         const { appConfig, saveConfig } = require('../config');
         appConfig.featureFlags.instagramAutomationEnabled = false;
-        saveConfig();
+        await saveConfig();
         logAdminAction(req.userId, 'STOP_INSTAGRAM_AUTO');
         res.json({ success: true, message: `Stopped All Instagram: ${count} rules disabled.` });
     } catch (err) {
@@ -670,7 +670,7 @@ const stopAllAutomations = async (req, res) => {
 
         appConfig.featureFlags.instagramAutomationEnabled = false;
         appConfig.featureFlags.youtubeAutomationEnabled = false;
-        saveConfig();
+        await saveConfig();
 
         logAdminAction(req.userId, 'STOP_ALL_AUTOMATIONS');
 
@@ -692,7 +692,7 @@ const stopYouTubeAutomations = async (req, res) => {
         const { count } = await prisma.youtubeAutomationRule.updateMany({ data: { isActive: false } });
         const { appConfig, saveConfig } = require('../config');
         appConfig.featureFlags.youtubeAutomationEnabled = false;
-        saveConfig();
+        await saveConfig();
         logAdminAction(req.userId, 'STOP_YOUTUBE_AUTO');
         res.json({ success: true, message: `Stopped All YouTube: ${count} rules disabled.` });
     } catch (err) {
@@ -708,7 +708,7 @@ const toggleAppFeature = async (req, res) => {
              return res.status(400).json({ error: 'Invalid feature flag' });
         }
         appConfig.featureFlags[flag] = status;
-        saveConfig();
+        await saveConfig();
         logAdminAction(req.userId, `TOGGLE_${flag.toUpperCase()}`, status);
         res.json({ success: true, message: `Feature ${flag} updated to ${status}` });
     } catch (err) {

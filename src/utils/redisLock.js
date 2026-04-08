@@ -28,6 +28,7 @@ if (redisUrl && !isPlaceholder && process.env.NODE_ENV !== 'test') {
  * @returns {Promise<boolean>} - True if acquired, false if already locked elsewhere.
  */
 const acquireLock = async (lockName, ttlSeconds = 60) => {
+    if (!redisClient) return true; // Bypass in dev if no redis
     // SET NX (Not Exists) EX (Expire in Seconds)
     // Guarantees atomic check-and-set
     const result = await redisClient.set(`lock:${lockName}`, '1', 'NX', 'EX', ttlSeconds);
@@ -39,6 +40,7 @@ const acquireLock = async (lockName, ttlSeconds = 60) => {
  * @param {string} lockName - The unique name of the lock.
  */
 const releaseLock = async (lockName) => {
+    if (!redisClient) return;
     await redisClient.del(`lock:${lockName}`);
 };
 
