@@ -14,6 +14,7 @@ const { detectDevice, getLocationFromIp, isSuspicious } = require('../utils/sess
 const dayjs = require('dayjs');
 const pushNotificationService = require('../services/pushNotificationService');
 const notificationService = require('../services/notificationService');
+const { authQueue, enqueueJob } = require('../utils/queue');
 // Mongoose User model removed — all operations now use Prisma
 const transporter = require('../config/mail');
 const relativeTime = require('dayjs/plugin/relativeTime');
@@ -66,41 +67,31 @@ const register = catchAsync(async (req, res, next) => {
     if (inviter) referredById = inviter.id;
   }
 
+  console.time('Register:HashPassword');
   const hashedPassword = await hashPassword(password);
+  console.timeEnd('Register:HashPassword');
+  
   const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4);
 
-  const user = await prisma.$transaction(async (tx) => {
-    const newUser = await tx.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        username: username || email.split('@')[0],
-        referralCode,
-        referredById,
-        ipAddress,
-        deviceFingerprint: deviceFingerprint || null,
-        tosAccepted: true,
-        tosAcceptedAt: new Date(),
-        isEmailVerified: false,
-        emailVerificationToken: crypto.randomBytes(32).toString('hex'),
-        role: 'USER'
-      }
-    });
-    if (referredById) {
-      await tx.user.update({
-        where: { id: referredById },
-        data: { totalReferrals: { increment: 1 } }
-      });
-      
-      // Notify the inviter
-      if (inviter) {
-        await pushNotificationService.notifyReferralSuccess(referredById, username || email.split('@')[0]).catch(err => 
-          logger.warn('AUTH:NOTIFY_ERROR', 'Failed to send referral notification', { error: err.message, referrerId: referredById })
-        );
-      }
+  console.time('Register:DB_CreateUser');
+  const user = await prisma.user.create({
+    data: {
+      email,
+      password: hashedPassword,
+      username: username || email.split('@')[0],
+      referralCode,
+      referredById,
+      ipAddress,
+      deviceFingerprint: deviceFingerprint || null,
+      tosAccepted: true,
+      tosAcceptedAt: new Date(),
+      isEmailVerified: false,
+      emailVerificationToken: crypto.randomBytes(32).toString('hex'),
+      role: 'USER'
     }
-    return newUser;
   });
+  console.timeEnd('Register:DB_CreateUser');
+
 
   const sessionToken = crypto.randomBytes(32).toString('hex');
   const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
@@ -109,7 +100,8 @@ const register = catchAsync(async (req, res, next) => {
   const userAgent = req.headers['user-agent'] || '';
   const detectedInfo = detectDevice(userAgent);
   const location = await getLocationFromIp(ipAddress);
-  
+
+  console.time('Register:DB_CreateSession');
   await prisma.loginSession.create({
     data: {
       userId: user.id,
@@ -128,17 +120,18 @@ const register = catchAsync(async (req, res, next) => {
       lastActive: new Date()
     }
   });
+  console.timeEnd('Register:DB_CreateSession');
 
   if (redisClient) await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
 
+  // 🚀 BACKGROUND TASK: Email & Referral Logic
   const verifyLink = `${process.env.FRONTEND_URL || 'https://cloraai-backend-production.up.railway.app'}/verify-email?token=${user.emailVerificationToken}`;
   const emailHtml = `<!DOCTYPE html><html><body><h2>Welcome to CloraAI, ${user.username}!</h2><p>Please verify your email address to access all features.</p><a href="${verifyLink}" style="padding:10px 20px; background:#4F46E5; color:white; text-decoration:none; border-radius:5px;">Verify Email</a></body></html>`;
 
-  try {
-    await sendEmail({ to: user.email, subject: 'Welcome to CloraAI - Verify Email', html: emailHtml });
-  } catch (err) {
-    logger.error('AUTH', 'Failed to send verification email', { error: err.message, userId: user.id });
-  }
+  enqueueJob(authQueue, 'process-registration', {
+    user: { id: user.id, email: user.email, username: user.username, referredById: user.referredById },
+    emailHtml
+  });
 
   res.status(201).json({
     success: true,
@@ -155,14 +148,18 @@ const login = async (req, res) => {
 
     if (!email || !password) return res.status(400).json({ error: 'Invalid input', message: 'Email and password are required' });
 
+    console.time('Login:DB_UserLookup');
     const user = await prisma.user.findUnique({ where: { email } });
+    console.timeEnd('Login:DB_UserLookup');
     const INVALID_CREDS = { error: 'Invalid credentials', message: 'Invalid email or password' };
     const LOCKED_OUT = { error: 'Account locked', message: 'Too many failed login attempts. Please try again after 30 minutes.' };
 
     if (!user) return res.status(401).json(INVALID_CREDS);
     if (user.lockoutUntil && new Date(user.lockoutUntil) > new Date()) return res.status(403).json(LOCKED_OUT);
 
+    console.time('Login:VerifyPassword');
     const passwordValid = await verifyPassword(password, user.password);
+    console.timeEnd('Login:VerifyPassword');
     if (!passwordValid) {
       const newAttempts = user.failedLoginAttempts + 1;
       const lockoutUntil = newAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
@@ -178,101 +175,39 @@ const login = async (req, res) => {
 
     const sessionToken = require('crypto').randomBytes(32).toString('hex');
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
-    
+
     // Production Session Management
     const userAgent = req.headers['user-agent'] || '';
     const ipAddress = ip;
     const detectedInfo = detectDevice(userAgent);
     const location = await getLocationFromIp(ipAddress);
-    
+
     // Use requested device info if available (for mobile), fallback to detected info
     const deviceName = reqDeviceName || detectedInfo.deviceModel;
     const deviceType = reqDeviceType || detectedInfo.deviceType;
     const os = reqOs || detectedInfo.os;
     const browser = detectedInfo.browser;
 
-    const expiresAt = deviceType === 'mobile' ? 
-      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
+    const expiresAt = deviceType === 'mobile' ?
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) :
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    const latestSession = await prisma.loginSession.findFirst({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    // Mark previous sessions as NOT current for this user
-    await prisma.loginSession.updateMany({
-      where: { userId: user.id, isCurrent: true },
-      data: { isCurrent: false }
-    });
-
-    const currentSessionData = {
+    // 🚀 BACKGROUND TASK: Side Effects (Session Update, FCM Registration, etc)
+    enqueueJob(authQueue, 'process-login-side-effects', {
       userId: user.id,
+      fcmToken,
+      pushToken,
+      deviceId,
+      platform,
       deviceName,
       deviceType,
       os,
       browser,
       ipAddress,
-      city: location.city,
-      region: location.region,
-      country: location.country,
-      timezone: location.timezone,
+      location,
       sessionToken,
-      expiresAt,
-      isCurrent: true,
-      loginTime: new Date(),
-      lastActive: new Date()
-    };
-
-    if (isSuspicious(latestSession, currentSessionData)) {
-      try {
-        await prisma.notification.create({
-          data: {
-            userId: user.id,
-            type: 'suspicious_login',
-            title: 'New Login Detected',
-            body: `New login from ${deviceName} in ${location.city}, ${location.country}. If this wasn't you, please secure your account.`,
-            icon: 'shield-alert',
-            color: '#EF4444'
-          }
-        });
-      } catch (err) { logger.error('Failed to create suspicious login notification:', err); }
-    }
-
-    // Always create a NEW session record
-    await prisma.loginSession.create({ data: currentSessionData });
-
-    if (redisClient && process.env.NODE_ENV !== 'test') {
-      await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
-    }
-
-    if (req.body.fcmToken) {
-      await notificationService.registerDevice(user.id, {
-        deviceId: req.body.deviceId || 'unknown',
-        fcmToken: req.body.fcmToken,
-        platform: req.body.platform || 'web'
-      }).catch(err => logger.error('AUTH:FCM', 'Failed to register FCM device', { error: err.message }));
-    }
-
-    if (req.body.pushToken && pushNotificationService.isLikelyExpoToken(req.body.pushToken)) {
-      await prisma.deviceToken.upsert({
-        where: { token: req.body.pushToken },
-        create: {
-          token: req.body.pushToken,
-          userId: user.id,
-          deviceName,
-          deviceType,
-          os,
-          lastUsed: new Date()
-        },
-        update: {
-          userId: user.id, 
-          lastUsed: new Date(),
-          deviceName,
-          os
-        }
-      });
-    }
+      expiresAt
+    });
 
     await prisma.user.update({
       where: { id: user.id },
@@ -291,7 +226,7 @@ const login = async (req, res) => {
 
 const getCurrentUser = async (req, res) => {
   const cacheKey = `user:profile:${req.userId}`;
-  
+
   try {
     // 1. Check Cache first (Ultra-Fast Path)
     if (redisClient && !redisClient.isMock) {
@@ -314,7 +249,7 @@ const getCurrentUser = async (req, res) => {
         instagramAccounts: { where: { isConnected: true }, select: { username: true } }
       }
     });
-    
+
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     let daysRemaining = null;
@@ -326,26 +261,26 @@ const getCurrentUser = async (req, res) => {
 
     // 3. Subscription Auto-Cleanup (Non-blocking background task)
     if (user.plan === 'PRO' && user.planEndDate && new Date(user.planEndDate) < new Date()) {
-      prisma.user.update({ 
-        where: { id: req.userId }, 
-        data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' } 
+      prisma.user.update({
+        where: { id: req.userId },
+        data: { plan: 'FREE', subscriptionStatus: 'EXPIRED' }
       }).catch(err => logger.error('AUTH:SUBSCRIPTION_CLEANUP', 'Failed background status update', { error: err.message, userId: req.userId }));
-      
-      user.plan = 'FREE'; 
-      user.subscriptionStatus = 'EXPIRED'; 
+
+      user.plan = 'FREE';
+      user.subscriptionStatus = 'EXPIRED';
       daysRemaining = 0;
     }
 
     // 4. Lean response for <300ms mobile feel
     const responseData = {
       user: {
-        id: user.id, 
-        email: user.email, 
-        username: user.username, 
-        profileImage: user.profileImage, 
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        profileImage: user.profileImage,
         role: user.role,
-        plan: user.plan, 
-        subscriptionStatus: user.subscriptionStatus, 
+        plan: user.plan,
+        subscriptionStatus: user.subscriptionStatus,
         billingCycle: user.billingCycle,
         daysRemaining,
         instagramConnected: user.instagramAccounts.length > 0
@@ -376,9 +311,9 @@ const updateProfile = async (req, res) => {
     if (username) {
       // Sanitize: only allow alphanumeric, underscores, 3-30 chars
       if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-        return res.status(400).json({ 
-          error: 'Invalid username', 
-          message: 'Username must be 3-30 characters and contain only letters, numbers, and underscores' 
+        return res.status(400).json({
+          error: 'Invalid username',
+          message: 'Username must be 3-30 characters and contain only letters, numbers, and underscores'
         });
       }
 
@@ -392,20 +327,20 @@ const updateProfile = async (req, res) => {
 
     const user = await prisma.user.update({
       where: { id: req.userId },
-      data: { 
-        ...(username && { username }), 
-        ...(phoneNumber !== undefined && { phoneNumber: phoneNumber || null }), 
+      data: {
+        ...(username && { username }),
+        ...(phoneNumber !== undefined && { phoneNumber: phoneNumber || null }),
         ...(profileImage !== undefined && { profileImage: profileImage || null }),
         ...(bio !== undefined && { bio: bio || null })
       }
     });
 
     // ✅ NEW: Notify user of profile update
-    pushNotificationService.notifyAccountAction(req.userId, '👤 Profile Updated', 'Your profile information has been successfully updated.').catch(() => {});
+    pushNotificationService.notifyAccountAction(req.userId, '👤 Profile Updated', 'Your profile information has been successfully updated.').catch(() => { });
 
     // Invalidate profile cache
     if (redisClient && !redisClient.isMock) {
-      await redisClient.del(`user:profile:${req.userId}`).catch(() => {});
+      await redisClient.del(`user:profile:${req.userId}`).catch(() => { });
     }
 
     res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, phoneNumber: user.phoneNumber, bio: user.bio } } });
@@ -426,7 +361,7 @@ const logout = async (req, res) => {
     }
     // Clear specific push token on logout if provided
     if (req.body.deviceId) {
-      await notificationService.removeDevice(req.userId, req.body.deviceId).catch(() => {});
+      await notificationService.removeDevice(req.userId, req.body.deviceId).catch(() => { });
     }
     if (req.body.pushToken) {
       await prisma.deviceToken.deleteMany({
@@ -454,15 +389,15 @@ const refreshToken = catchAsync(async (req, res, next) => {
 
   if (redisClient && process.env.NODE_ENV !== 'test') {
     if (!decoded.sessionToken) return next(new AppError('Invalid session. Please login again.', 401));
-    
+
     const redisKey = `refresh_token:${decoded.userId}:${decoded.sessionToken}`;
     const isValid = await redisClient.get(redisKey);
-    
+
     if (!isValid) {
       logger.warn('AUTH:REFRESH', 'Invalid or revoked session attempt', { userId: decoded.userId, sessionToken: decoded.sessionToken });
       return next(new AppError('Session revoked or expired. Please login again.', 401));
     }
-    
+
     const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { id: true, tokenVersion: true } });
     if (!user || user.tokenVersion !== decoded.tokenVersion) {
       await redisClient.del(redisKey);
@@ -471,7 +406,7 @@ const refreshToken = catchAsync(async (req, res, next) => {
 
     // ── ROTATE: Generate new session token ──────────────────────────────
     const newSessionToken = require('crypto').randomBytes(32).toString('hex');
-    
+
     // Update the record in Prisma
     await prisma.loginSession.updateMany({
       where: { userId: user.id, sessionToken: decoded.sessionToken },
@@ -500,7 +435,7 @@ const forgotPassword = async (req, res) => {
     }
 
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-    
+
     // For security, don't reveal if user exists
     if (!user) {
       return res.status(200).json({ success: true, message: 'If an account exists with that email, a reset link has been sent.' });
@@ -595,9 +530,9 @@ const deleteAccount = async (req, res) => {
     const { secureDeleteAccount } = require('../services/userService');
     await secureDeleteAccount(req.userId);
     res.status(200).json({ success: true, message: 'Account and associated data have been permanently deleted.' });
-  } catch (error) { 
+  } catch (error) {
     logger.error('AUTH', 'Delete account error', { error: error.message, userId: req.userId });
-    res.status(500).json({ error: 'Failed to delete account securely' }); 
+    res.status(500).json({ error: 'Failed to delete account securely' });
   }
 };
 
@@ -608,9 +543,9 @@ const verifyEmail = async (req, res) => {
     if (!user) return res.status(400).json({ error: 'Invalid token' });
     await prisma.user.update({ where: { id: user.id }, data: { isEmailVerified: true, emailVerificationToken: null } });
     res.status(200).json({ success: true, message: 'Email verified.' });
-  } catch (error) { 
+  } catch (error) {
     logger.error('AUTH', 'Verify email error', { error: error.message });
-    res.status(500).json({ error: 'Internal Server Error' }); 
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -620,9 +555,9 @@ const makeAdmin = async (req, res) => {
     if (secretKey !== process.env.ADMIN_SECRET_KEY) return res.status(403).json({ error: 'Forbidden' });
     await prisma.user.update({ where: { email }, data: { role: 'ADMIN' } });
     res.status(200).json({ success: true, message: 'User promoted.' });
-  } catch (error) { 
+  } catch (error) {
     logger.error('AUTH', 'Make admin error', { error: error.message, email: req.body?.email });
-    res.status(500).json({ error: 'Internal Server Error' }); 
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -630,43 +565,43 @@ const googleAuth = async (req, res) => {
   try {
     const { idToken, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
     const ipAddress = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
-    
+
     if (!idToken) return res.status(400).json({ error: 'idToken required' });
     const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
     const ticket = await googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
     const payload = ticket.getPayload();
     const email = payload.email.toLowerCase().trim();
-    
+
     let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       const hashedPassword = await hashPassword(require('crypto').randomBytes(16).toString('hex') + 'A1!');
-      user = await prisma.user.create({ 
-        data: { 
-          email, 
-          password: hashedPassword, 
-          username: payload.name || email.split('@')[0], 
-          profileImage: payload.picture, 
-          referralCode: Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4), 
-          ipAddress, 
-          role: 'USER' 
-        } 
+      user = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          username: payload.name || email.split('@')[0],
+          profileImage: payload.picture,
+          referralCode: Math.random().toString(36).substring(2, 8).toUpperCase() + Date.now().toString().slice(-4),
+          ipAddress,
+          role: 'USER'
+        }
       });
     }
 
     const sessionToken = require('crypto').randomBytes(32).toString('hex');
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
-    
+
     const userAgent = req.headers['user-agent'] || '';
     const detectedInfo = detectDevice(userAgent);
     const location = await getLocationFromIp(ipAddress);
-    
+
     const deviceName = reqDeviceName || detectedInfo.deviceModel;
     const deviceType = reqDeviceType || detectedInfo.deviceType;
     const os = reqOs || detectedInfo.os;
     const browser = detectedInfo.browser;
 
-    const expiresAt = deviceType === 'mobile' ? 
-      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
+    const expiresAt = deviceType === 'mobile' ?
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) :
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const latestSession = await prisma.loginSession.findFirst({
@@ -718,17 +653,17 @@ const googleAuth = async (req, res) => {
     if (redisClient && process.env.NODE_ENV !== 'test') {
       await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
-    res.status(200).json({ 
-      success: true, 
-      data: { 
-        user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, 
-        accessToken, 
-        refreshToken 
-      } 
+    res.status(200).json({
+      success: true,
+      data: {
+        user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role },
+        accessToken,
+        refreshToken
+      }
     });
-  } catch (error) { 
+  } catch (error) {
     logger.error('AUTH', 'Google Auth error', { error: error.message });
-    res.status(500).json({ error: 'Internal Server Error' }); 
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -738,9 +673,9 @@ const setup2FA = async (req, res) => {
     const secret = speakeasy.generateSecret({ length: 20, name: `CloraAI (${user.email})` });
     await prisma.user.update({ where: { id: user.id }, data: { twoFactorSecret: secret.base32 } });
     QRCode.toDataURL(secret.otpauth_url, (err, data_url) => { res.status(200).json({ success: true, secret: secret.base32, qrCode: data_url }); });
-  } catch (err) { 
+  } catch (err) {
     logger.error('AUTH', '2FA setup error', { error: err.message, userId: req.userId });
-    res.status(500).json({ error: 'Internal Server Error' }); 
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -748,30 +683,30 @@ const verify2FA = async (req, res) => {
   try {
     const { token, deviceName: reqDeviceName, deviceType: reqDeviceType, os: reqOs } = req.body;
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || '127.0.0.1';
-    
+
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    
+
     const verified = speakeasy.totp.verify({ secret: user.twoFactorSecret, encoding: 'base32', token });
     if (!verified) return res.status(400).json({ error: 'Invalid token' });
-    
+
     if (!user.twoFactorEnabled) await prisma.user.update({ where: { id: user.id }, data: { twoFactorEnabled: true } });
-    
+
     // Production Session Management
     const sessionToken = require('crypto').randomBytes(32).toString('hex');
     const { accessToken, refreshToken } = generateTokens(user.id, user.tokenVersion, sessionToken);
-    
+
     const userAgent = req.headers['user-agent'] || '';
     const detectedInfo = detectDevice(userAgent);
     const location = await getLocationFromIp(ip);
-    
+
     const deviceName = reqDeviceName || detectedInfo.deviceModel;
     const deviceType = reqDeviceType || detectedInfo.deviceType;
     const os = reqOs || detectedInfo.os;
     const browser = detectedInfo.browser;
 
-    const expiresAt = deviceType === 'mobile' ? 
-      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : 
+    const expiresAt = deviceType === 'mobile' ?
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) :
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     // Mark previous current session as false
@@ -804,29 +739,29 @@ const verify2FA = async (req, res) => {
       await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
     }
 
-    res.status(200).json({ 
-      success: true, 
-      data: { 
-        user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role }, 
-        accessToken, 
-        refreshToken 
-      } 
+    res.status(200).json({
+      success: true,
+      data: {
+        user: { id: user.id, email: user.email, username: user.username, profileImage: user.profileImage, role: user.role },
+        accessToken,
+        refreshToken
+      }
     });
-  } catch (err) { 
+  } catch (err) {
     logger.error('AUTH', '2FA verification error', { error: err.message, userId: req.userId });
-    res.status(500).json({ error: 'Internal Server Error' }); 
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
 const getSessions = catchAsync(async (req, res, next) => {
-  const sessions = await prisma.loginSession.findMany({ 
-    where: { userId: req.userId }, 
-    orderBy: { lastActive: 'desc' } 
+  const sessions = await prisma.loginSession.findMany({
+    where: { userId: req.userId },
+    orderBy: { lastActive: 'desc' }
   });
-  
+
   // Filtering out expired sessions if they have an expiration date
   const activeSessions = sessions.filter(s => !s.expiresAt || new Date(s.expiresAt) > new Date());
-  
+
   // identify the device that made the current request
   // Use toString() to ensure comparison works regardless of type (ObjectId vs String)
   const current = activeSessions.find(s => s.id.toString() === req.sessionId?.toString()) || activeSessions[0];
@@ -843,8 +778,8 @@ const getSessions = catchAsync(async (req, res, next) => {
     currentDevice: isCurrentReq
   });
 
-  res.status(200).json({ 
-    success: true, 
+  res.status(200).json({
+    success: true,
     data: {
       currentDevice: current ? formatSession(current, true) : null,
       otherDevices: other.map(s => formatSession(s, false))
@@ -874,7 +809,7 @@ const logoutSession = catchAsync(async (req, res, next) => {
   if (!isPasswordValid) {
     const newAttempts = user.failedLogoutAttempts + 1;
     let logoutLockoutUntil = user.logoutLockoutUntil;
-    
+
     if (newAttempts >= 5) {
       logoutLockoutUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
     }
@@ -911,11 +846,11 @@ const logoutSession = catchAsync(async (req, res, next) => {
   }
 
   await prisma.loginSession.delete({ where: { id: sessionId } });
-  
+
   // Clear push token as well when a specific session is logged out
   if (req.body.pushToken) {
     await prisma.deviceToken.deleteMany({
-       where: { userId: req.userId, token: req.body.pushToken }
+      where: { userId: req.userId, token: req.body.pushToken }
     });
   }
 
@@ -948,7 +883,7 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
   if (!isPasswordValid) {
     const newAttempts = user.failedLogoutAttempts + 1;
     let logoutLockoutUntil = user.logoutLockoutUntil;
-    
+
     if (newAttempts >= 5) {
       logoutLockoutUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
     }
@@ -970,8 +905,8 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
     data: { failedLogoutAttempts: 0, logoutLockoutUntil: null }
   });
 
-  const sessions = await prisma.loginSession.findMany({ 
-    where: { 
+  const sessions = await prisma.loginSession.findMany({
+    where: {
       userId: req.userId,
       id: { not: req.sessionId }
     }
@@ -986,11 +921,11 @@ const logoutAllDevices = catchAsync(async (req, res, next) => {
     }
   }
 
-  await prisma.loginSession.deleteMany({ 
-    where: { 
+  await prisma.loginSession.deleteMany({
+    where: {
       userId: req.userId,
       id: { not: req.sessionId }
-    } 
+    }
   });
 
   res.status(200).json({ success: true, message: 'Logged out from all other devices.' });

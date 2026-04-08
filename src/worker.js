@@ -57,7 +57,10 @@ logger.info('WORKER', 'Initializing Redis queue processors...');
 // 1. Notification Worker
 const notificationWorker = require('./workers/notificationWorker');
 
-// 2. Webhook Processor
+// 2. Auth Worker (Registration/Login Background tasks)
+const authWorker = require('./workers/authWorker');
+
+// 3. Webhook Processor
 const webhookWorker = new Worker(QUEUES.WEBHOOKS, async (job) => {
     logger.info('WORKER', `Processing webhook: ${job.name}`, { jobId: job.id });
 }, {
@@ -102,6 +105,7 @@ attachErrorHandlers(webhookWorker, 'Webhook');
 attachErrorHandlers(subscriptionWorker, 'Subscription');
 attachErrorHandlers(youtubeWorker, 'YouTube');
 attachErrorHandlers(notificationWorker, 'Notification');
+attachErrorHandlers(authWorker, 'Auth');
 
 // ─── Cron Triggers (Distributed) ───────────────────────────────────────────
 const cron = require('node-cron');
