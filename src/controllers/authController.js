@@ -310,7 +310,7 @@ const getCurrentUser = async (req, res) => {
       where: { id: req.userId },
       select: {
         id: true, email: true, username: true, profileImage: true, role: true,
-        plan: true, subscriptionStatus: true, planEndDate: true,
+        plan: true, subscriptionStatus: true, planEndDate: true, billingCycle: true,
         instagramAccounts: { where: { isConnected: true }, select: { username: true } }
       }
     });
@@ -346,6 +346,7 @@ const getCurrentUser = async (req, res) => {
         role: user.role,
         plan: user.plan, 
         subscriptionStatus: user.subscriptionStatus, 
+        billingCycle: user.billingCycle,
         daysRemaining,
         instagramConnected: user.instagramAccounts.length > 0
       },
