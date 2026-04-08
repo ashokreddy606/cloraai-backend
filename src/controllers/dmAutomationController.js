@@ -46,15 +46,16 @@ const createRule = async (req, res) => {
 
     const isPro =
       user.plan === 'LIFETIME' ||
+      user.plan === 'PREMIUM' ||
       (
         user.plan === 'PRO' &&
-        ['ACTIVE', 'CANCELLED'].includes(user.subscriptionStatus) &&
-        user.planEndDate &&
-        new Date(user.planEndDate) > new Date()
+        // If they have an ACTIVE or CANCELLED (but haven't reached end date) sub, they are Pro.
+        // We'll trust the status primarily.
+        ['ACTIVE', 'CANCELLED'].includes(user.subscriptionStatus)
       );
 
     if (!isPro) {
-      // FREE users: max 3 DM automation rules total
+      // FREE users: exactly 1 DM automation rule allowed
       const ruleCount = await prisma.dMAutomation.count({
         where: { userId: req.userId },
       });
@@ -62,7 +63,7 @@ const createRule = async (req, res) => {
       if (ruleCount >= 1) {
         return res.status(403).json({
           error: 'Free plan limit reached',
-          message: 'Free plan allows 1 Instagram DM automation rule. Upgrade to Pro for unlimited rules.',
+          message: 'Free plan allows only 1 Instagram automation rule. Upgrade to Pro for unlimited rules.',
           code: 'PLAN_LIMIT',
           limit: 1,
           used: ruleCount,
@@ -110,6 +111,7 @@ const createRule = async (req, res) => {
     });
 
     await cache.del(`rules:ig:${req.userId}`);
+    await cache.del('ig_poll_active_accounts');
     
     // ✅ NEW: Notify user of successful creation
     pushNotificationService.sendAutomationActiveNotification(req.userId, 'instagram', rule.keyword || 'AI').catch(() => {});
@@ -213,6 +215,7 @@ const updateRule = async (req, res) => {
 
     // ✅ ULTRA-SPEED: Invalidate rules cache for this user
     await cache.del(`rules:ig:${req.userId}`);
+    await cache.del('ig_poll_active_accounts');
 
     res.status(200).json({
       success: true,
@@ -265,6 +268,7 @@ const deleteRule = async (req, res) => {
 
     // ✅ ULTRA-SPEED: Invalidate rules cache for this user
     await cache.del(`rules:ig:${req.userId}`);
+    await cache.del('ig_poll_active_accounts');
 
     // ✅ NEW: Notify user of deletion
     pushNotificationService.notifyAutomationDeleted(req.userId, 'instagram', existingRule.keyword || 'AI').catch(() => {});

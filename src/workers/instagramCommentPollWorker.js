@@ -14,8 +14,13 @@ const axios = require('axios');
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
-// ✅ PERF: Use tier-aware cron schedule
-// FREE: Every 3min  |  SMALL: Every 2min  |  LARGE: Every 1min
+/**
+ * instagramCommentPollWorker.js
+ * 
+ * Polling runner for Instagram account comments.
+ * Used as a fallback for webhooks and for FREE tier users.
+ */
+
 cron.schedule(config.cron.instagramPoll, async () => {
     if (!appConfig.featureFlags.autoDMEnabled) return;
 
@@ -24,9 +29,6 @@ cron.schedule(config.cron.instagramPoll, async () => {
     if (!locked) return;
 
     try {
-        // ✅ PERF FIX: Cache the active accounts list.
-        // This was hitting the DB every 1 minute for ALL active accounts — at 25K users
-        // that's a massive read every minute. Cache it for the tier-appropriate TTL.
         const CACHE_KEY = 'ig_poll_active_accounts';
         let activeAccounts = await cache.get(CACHE_KEY);
 
@@ -39,6 +41,7 @@ cron.schedule(config.cron.instagramPoll, async () => {
                     userId: true,
                     instagramAccessToken: true,
                     pageAccessToken: true,
+                    username: true,
                     user: {
                         select: {
                             dmAutomations: {
@@ -50,7 +53,6 @@ cron.schedule(config.cron.instagramPoll, async () => {
                 }
             });
 
-            // ✅ PERF: Only select relevant fields, skip accounts with no rules
             activeAccounts = accounts.filter(acc => acc.user?.dmAutomations?.length > 0);
             await cache.set(CACHE_KEY, activeAccounts, config.cacheTTL.activeAccounts);
             logger.debug('IG_POLL_WORKER', `Cache miss: loaded ${activeAccounts.length} active accounts from DB`);
@@ -60,7 +62,6 @@ cron.schedule(config.cron.instagramPoll, async () => {
 
         if (activeAccounts.length === 0) return;
 
-        // ✅ BACKPRESSURE: Skip polling if queue is already overloaded
         const pressure = await checkBackpressure(commentQueue, config.backpressure.commentQueue);
         if (pressure.overloaded) {
             logger.warn('IG_POLL_WORKER:BACKPRESSURE', `Queue overloaded (${pressure.count} jobs). Skipping poll cycle.`);
@@ -69,7 +70,6 @@ cron.schedule(config.cron.instagramPoll, async () => {
 
         logger.debug('IG_POLL_WORKER', `Polling ${activeAccounts.length} accounts (Tier: ${TIER})`);
 
-        // Process all accounts in parallel (controlled batch for free tier)
         const batchSize = config.batch.analyticsConcurrentUsers;
         for (let i = 0; i < activeAccounts.length; i += batchSize) {
             const batch = activeAccounts.slice(i, i + batchSize);
@@ -93,45 +93,59 @@ async function processAccount(account) {
             return;
         }
 
+        logger.info('IG_POLL_WORKER', `Processing account ${account.instagramId} (@${account.username || 'unknown'})`);
+
         const mediaList = await instagramService.getUserMedia(account.instagramId, accessToken);
-        // ✅ PERF: Only check N most recent posts (tier-aware: 2 for free, 3 for paid)
         const topMedia = mediaList.slice(0, config.batch.pollTopMedia);
 
-        if (topMedia.length === 0) return;
+        if (topMedia.length === 0) {
+            logger.info('IG_POLL_WORKER', `No recent media found for account ${account.instagramId}`);
+            return;
+        }
+
+        logger.info('IG_POLL_WORKER', `Checking ${topMedia.length} top media items for account ${account.instagramId}`);
 
         for (const media of topMedia) {
             try {
+                logger.debug('IG_POLL_WORKER', `Fetching comments for media ${media.id}`);
+                
                 const commentsResponse = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${media.id}/comments`, {
                     params: {
                         fields: 'id,text,from,timestamp',
                         access_token: accessToken,
-                        limit: config.batch.pollCommentLimit,  // ✅ Tier-aware limit
-                        order: 'reverse_chronological'         // ✅ FIX: Fetch newest comments instead of getting stuck on old ones
+                        limit: config.batch.pollCommentLimit,
+                        order: 'reverse_chronological'
                     }
                 });
 
                 const comments = commentsResponse.data.data || [];
+                logger.info('IG_POLL_WORKER', `Found ${comments.length} comments on media ${media.id}`);
 
                 for (const comment of comments) {
                     const commentId = comment.id;
                     const senderId = comment.from?.id;
                     const text = comment.text;
 
-                    if (senderId === account.instagramId) continue;
-                    if (!senderId || !text) continue;
+                    if (senderId === account.instagramId) {
+                        logger.debug('IG_POLL_WORKER', `Skipping self-comment ${commentId}`);
+                        continue;
+                    }
+                    if (!senderId || !text) {
+                        logger.warn('IG_POLL_WORKER', `Skipping comment ${commentId}: Missing sender or text`);
+                        continue;
+                    }
 
-                    // Deduplication via Redis
                     const cacheKey = `ig_comment_seen_${commentId}`;
                     const seen = await cache.get(cacheKey);
-                    if (seen) continue;
+                    if (seen) {
+                        logger.debug('IG_POLL_WORKER', `Comment ${commentId} already processed (cache hit)`);
+                        continue;
+                    }
 
-                    // Mark as seen for 30 days
                     await cache.set(cacheKey, true, 86400 * 30);
-
-                    // ✅ Dynamic delay: simulates human timing, prevents bot detection
                     const delay = await getDynamicDelay(commentQueue);
 
-                    logger.info('IG_POLL_WORKER', `New comment via poll on media ${media.id}`, { commentId, senderId });
+                    logger.info('IG_POLL_WORKER:NEW_DETECTED', `New comment ${commentId} by ${senderId} on media ${media.id}. Text: "${text.substring(0, 30)}..."`, { delay });
 
                     await enqueueJob(commentQueue, 'process-comment', {
                         mediaId: media.id,
@@ -143,6 +157,8 @@ async function processAccount(account) {
                         instagramAccessToken: accessToken,
                         pageAccessToken: pageAccessToken
                     }, { delay });
+
+                    logger.info('IG_POLL_WORKER:QUEUED', `Queued process-comment for ${commentId}`);
                 }
             } catch (err) {
                 if (err.response?.data?.error?.code !== 100) {

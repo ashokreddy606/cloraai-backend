@@ -216,20 +216,26 @@ const commentWorker = new Worker(QUEUES.COMMENT, async (job) => {
             });
 
             for (const rule of sortedRules) {
-                // STEP 4: Verify Reel Filtering with flexibility
-                const isMatchReel = !rule.reelId || (mediaId && String(mediaId).includes(String(rule.reelId)));
+                // STEP 4: Verify Reel Filtering with flexibility (trim and stringify)
+                const normalizedMediaId = mediaId ? String(mediaId).trim() : '';
+                const normalizedRuleReelId = rule.reelId ? String(rule.reelId).trim() : '';
+                
+                const isMatchReel = !rule.reelId || (normalizedMediaId && (normalizedMediaId === normalizedRuleReelId || normalizedMediaId.includes(normalizedRuleReelId)));
                 const isMatchKeyword = rule.triggerType === 'any' || matchesKeyword(incomingText, rule.keyword);
 
-                logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.keyword}`, {
+                logger.debug('WORKER:RULE_CHECK', `Checking rule: ${rule.id}`, {
                     jobId: job.id,
+                    ruleKeyword: rule.keyword || 'ANY',
                     reelFilter: rule.reelId || 'GLOBAL',
+                    mediaId: normalizedMediaId,
                     reelMatch: isMatchReel,
-                    keywordMatch: isMatchKeyword
+                    keywordMatch: isMatchKeyword,
+                    incomingText: (incomingText || '').substring(0, 30)
                 });
 
                 if (isMatchReel && isMatchKeyword) {
                     matchedRule = rule;
-                    logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword}`, { jobId: job.id, ruleId: rule.id });
+                    logger.info('WORKER:RULE_MATCHED', `Matched rule: ${rule.keyword || 'ANY'} (${rule.id})`, { jobId: job.id, ruleId: rule.id });
                     break;
                 }
             }
