@@ -60,7 +60,10 @@ cron.schedule(config.cron.instagramPoll, async () => {
             logger.debug('IG_POLL_WORKER', `Cache hit: using ${activeAccounts.length} active accounts`);
         }
 
-        if (activeAccounts.length === 0) return;
+        if (activeAccounts.length === 0) {
+            logger.info('IG_POLL_WORKER', 'Cycle started: 0 accounts with active rules found.');
+            return;
+        }
 
         const pressure = await checkBackpressure(commentQueue, config.backpressure.commentQueue);
         if (pressure.overloaded) {
@@ -68,7 +71,7 @@ cron.schedule(config.cron.instagramPoll, async () => {
             return;
         }
 
-        logger.debug('IG_POLL_WORKER', `Polling ${activeAccounts.length} accounts (Tier: ${TIER})`);
+        logger.info('IG_POLL_WORKER', `Cycle started: Polling ${activeAccounts.length} accounts (Tier: ${TIER})`);
 
         const batchSize = config.batch.analyticsConcurrentUsers;
         for (let i = 0; i < activeAccounts.length; i += batchSize) {

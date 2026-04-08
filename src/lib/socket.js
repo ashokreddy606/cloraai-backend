@@ -59,7 +59,7 @@ const initSocket = async (httpServer) => {
     });
 
     io.on('connection', (socket) => {
-      const userId = socket.user?.id || socket.user?._id || socket.user?.sub;
+      const userId = socket.user?.userId || socket.user?.id || socket.user?._id || socket.user?.sub;
       
       if (!userId) {
         logger.error('SOCKET', 'User connected but no userId found in token payload', { socketId: socket.id });

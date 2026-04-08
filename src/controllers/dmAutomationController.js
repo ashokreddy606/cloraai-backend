@@ -44,14 +44,15 @@ const createRule = async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    const currentPlan = String(user.plan || 'FREE').toUpperCase();
+    const currentStatus = String(user.subscriptionStatus || 'NONE').toUpperCase();
+
     const isPro =
-      user.plan === 'LIFETIME' ||
-      user.plan === 'PREMIUM' ||
+      currentPlan === 'LIFETIME' ||
+      currentPlan === 'PREMIUM' ||
       (
-        user.plan === 'PRO' &&
-        // If they have an ACTIVE or CANCELLED (but haven't reached end date) sub, they are Pro.
-        // We'll trust the status primarily.
-        ['ACTIVE', 'CANCELLED'].includes(user.subscriptionStatus)
+        currentPlan === 'PRO' &&
+        ['ACTIVE', 'CANCELLED', 'PAST_DUE', 'PENDING', 'PAUSED'].includes(currentStatus)
       );
 
     if (!isPro) {
