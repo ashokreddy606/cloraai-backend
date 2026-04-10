@@ -11,7 +11,14 @@ logger.info('ANALYTICS', 'Analytics Controller initialized');
 
 // Get Analytics Dashboard
 const getDashboard = async (req, res) => {
+  const cacheKey = `ig_dashboard_${req.userId}`;
   try {
+    const cachedData = await cache.get(cacheKey);
+    if (cachedData && req.query.forceRefresh !== 'true') {
+      logger.info('ANALYTICS', 'Returning cached dashboard', { userId: req.userId });
+      return res.status(200).json(cachedData);
+    }
+
     const account = await prisma.instagramAccount.findUnique({ where: { userId: req.userId } });
 
     if (!account) {
@@ -258,7 +265,7 @@ const getDashboard = async (req, res) => {
     const posts = liveStats.media_count;
     const following = liveStats.follows_count;
 
-    res.status(200).json({
+    const finalResponse = {
       success: true,
       isRefreshing: isStale,
       isFallback: fallbackToSnapshot,
@@ -311,7 +318,12 @@ const getDashboard = async (req, res) => {
           unfollowed: snap.unfollowed ?? 0
         }))
       }
-    });
+    };
+
+    // ── Save to Cache ──
+    await cache.set(cacheKey, finalResponse, 300);
+
+    res.status(200).json(finalResponse);
   } catch (error) {
     console.error('Get dashboard error:', error);
     res.status(500).json({

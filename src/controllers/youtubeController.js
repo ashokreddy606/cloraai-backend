@@ -146,6 +146,19 @@ exports.handleCallback = async (req, res) => {
         // 2. Verify and decode the signed state JWT to extract userId securely
         let userId;
         let returnTo;
+        
+        // Helper for consistent redirection (app-aware) - Defined early for catch-block safety
+        const redirectWithError = (msg) => {
+            if (returnTo) {
+                try {
+                    const base = returnTo.replace('success', 'error');
+                    const separator = base.includes('?') ? '&' : '?';
+                    return res.redirect(`${base}${separator}message=${encodeURIComponent(msg)}`);
+                } catch (e) { /* fallback */ }
+            }
+            return res.redirect(getRedirectUrl('youtube-error', { message: msg }));
+        };
+
         try {
             const decoded = jwt.verify(state, process.env.JWT_SECRET);
             userId = decoded.userId;
@@ -155,19 +168,6 @@ exports.handleCallback = async (req, res) => {
             logger.warn('YOUTUBE_CALLBACK', 'OAuth state JWT verification failed', { error: stateError.message });
             return res.redirect(getRedirectUrl('youtube-error', { message: 'invalid_state' }));
         }
-
-        // Helper for consistent redirection (app-aware)
-        const redirectWithError = (msg) => {
-            if (returnTo) {
-                try {
-                    // Try to construct a deep link back to the app with the error
-                    const base = returnTo.replace('success', 'error');
-                    const separator = base.includes('?') ? '&' : '?';
-                    return res.redirect(`${base}${separator}message=${encodeURIComponent(msg)}`);
-                } catch (e) { /* fallback */ }
-            }
-            return res.redirect(getRedirectUrl('youtube-error', { message: msg }));
-        };
 
         // 3. Exchange code for tokens
         const client = getOAuth2Client();
@@ -565,7 +565,14 @@ exports.getAnalytics = async (req, res) => {
 // ── Channel Analytics (Real YouTube Data API) ─────────────────────────────
 
 exports.getChannelAnalytics = async (req, res) => {
+    const cacheKey = `yt_analytics_${req.userId}`;
     try {
+        const cachedData = await cache.get(cacheKey);
+        if (cachedData && req.query.forceRefresh !== 'true') {
+            logger.info('YOUTUBE', 'Returning cached analytics', { userId: req.userId });
+            return res.json(cachedData);
+        }
+
         const { youtube, client } = await getYoutubeClientForUser(req.userId);
         const youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth: client });
 
@@ -722,7 +729,7 @@ exports.getChannelAnalytics = async (req, res) => {
             where: { userId_snapshotDate: { userId: req.userId, snapshotDate: startOfToday } },
             create: { userId: req.userId, snapshotDate: startOfToday, subscribers: currentSubs, views: parseInt(stats.viewCount || 0), videos: parseInt(stats.videoCount || 0) },
             update: { subscribers: currentSubs, views: parseInt(stats.viewCount || 0), videos: parseInt(stats.videoCount || 0) }
-        }).catch(err => logger.warn('YOUTUBE', 'Snapshot failed', { error: err.message }));
+        }).catch(err => logger.warn('YOUTUBE', 'Snapshot upsert error', { error: err.message }));
 
         // 2. Fetch baseline for "Today" (most recent before today)
         const prevSnapshot = await prisma.youtubeAnalyticsSnapshot.findFirst({
@@ -745,24 +752,30 @@ exports.getChannelAnalytics = async (req, res) => {
             : 0;
 
         // ── Automation Activity Implementation (Last 30 Days) ──
-        const automationActivity = await Promise.all(
-            Array.from({ length: 30 }).map(async (_, i) => {
-                const date = dayjs().subtract(29 - i, 'day');
-                const start = date.startOf('day').toDate();
-                const end = date.endOf('day').toDate();
-
-                const [replies, leads] = await Promise.all([
-                    prisma.youtubeComment.count({ where: { userId: req.userId, replied: true, createdAt: { gte: start, lte: end } } }),
-                    prisma.youtubeLead.count({ where: { userId: req.userId, createdAt: { gte: start, lte: end } } })
-                ]);
-
-                return {
-                    date: date.format('MM-DD'),
-                    replies,
-                    leads
-                };
+        // ✅ PERFORMANCE: Replaced 60 separate DB counts with 2 efficient grouped queries
+        const [recentComments, recentLeads] = await Promise.all([
+            prisma.youtubeComment.findMany({
+                where: { userId: req.userId, replied: true, createdAt: { gte: minus30dDate } },
+                select: { createdAt: true }
+            }),
+            prisma.youtubeLead.findMany({
+                where: { userId: req.userId, createdAt: { gte: minus30dDate } },
+                select: { createdAt: true }
             })
-        );
+        ]);
+
+        const automationActivity = Array.from({ length: 30 }).map((_, i) => {
+            const date = dayjs().subtract(29 - i, 'day');
+            const dateStr = date.format('MM-DD');
+            const startStr = date.startOf('day').toISOString();
+            const endStr = date.endOf('day').toISOString();
+
+            return {
+                date: dateStr,
+                replies: recentComments.filter(c => dayjs(c.createdAt).isBetween(startStr, endStr, null, '[]')).length,
+                leads: recentLeads.filter(l => dayjs(l.createdAt).isBetween(startStr, endStr, null, '[]')).length
+            };
+        });
         responsePayload.automationActivity = automationActivity;
 
         // ── Subscriber History for Charts (Last 30 Days) ──
@@ -779,10 +792,8 @@ exports.getChannelAnalytics = async (req, res) => {
             responsePayload.stats.subscriberHistory = snapshots.map(s => s.subscribers || 0);
         }
 
-        logger.info('YOUTUBE', 'Analytics response prepared', { 
-            views28d: responsePayload.stats.views28d, 
-            historyCount: responsePayload.stats.subscriberHistory.length 
-        });
+        // ── Cache the refined result ──
+        await cache.set(cacheKey, responsePayload, 600); 
 
         res.json(responsePayload);
 

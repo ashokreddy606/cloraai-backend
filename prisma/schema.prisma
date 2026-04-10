@@ -558,6 +558,7 @@ model YoutubeAnalyticsSnapshot {
   snapshotDate DateTime? @default(now())
   createdAt    DateTime? @default(now())
 
+  @@unique([userId, snapshotDate])
   @@index([userId, snapshotDate(sort: Desc)])
 }
 

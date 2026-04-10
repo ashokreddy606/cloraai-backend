@@ -433,6 +433,20 @@ class NotificationService {
             this.enqueuePush(userId, { title, body, data })
         ]);
     }
+
+    /**
+     * Event: Account Linked Successfully
+     */
+    async notifyLinkSuccess(userId, platform) {
+        const title = 'Account Connected! 🔗';
+        const body = `Your ${platform.charAt(0).toUpperCase() + platform.slice(1)} account was successfully linked to CloraAI.`;
+        const data = { screen: 'Settings' };
+
+        await Promise.all([
+            this.sendDB(userId, title, body, 'system', '#10B981', data),
+            this.enqueuePush(userId, { title, body, data })
+        ]);
+    }
 }
 
 module.exports = new NotificationService();
