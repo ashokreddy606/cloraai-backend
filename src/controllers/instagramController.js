@@ -10,7 +10,7 @@ const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
-const { notifyPostSuccess } = require('../services/pushNotificationService');
+const pushNotificationService = require('../services/pushNotificationService');
 const { instagramQueue, enqueueJob } = require('../utils/queue');
 const jwt = require('jsonwebtoken');
 

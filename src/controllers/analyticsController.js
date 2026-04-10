@@ -71,22 +71,39 @@ const getDashboard = async (req, res) => {
       }).catch(err => logger.error('ANALYTICS:ENQUEUE_FAIL', err.message));
     }
 
-    // ALWAYS fetch live summary stats for "real-time" dashboard feel
-    let liveStats = { followers_count: 0, follows_count: 0, media_count: 0 };
+    let liveStats = null;
+    let fallbackToSnapshot = false;
+
     try {
       const decryptedToken = decrypt(account.instagramAccessToken);
       if (decryptedToken) {
-        liveStats = await instagramService.getAccountStats(account.instagramId, decryptedToken);
+        const stats = await instagramService.getAccountStats(account.instagramId, decryptedToken);
+        if (stats && typeof stats.followers_count === 'number') {
+           liveStats = stats;
+        } else {
+           throw new Error('Invalid stats received from Meta');
+        }
       } else {
-        throw new Error('Encryption error');
+        throw new Error('Encryption error: Token unreadable');
       }
     } catch (e) {
-      console.warn('Live stats fetch failed, falling back to snapshot:', e.message);
+      logger.warn('ANALYTICS', `Live stats fetch failed for ${req.userId}, falling back to snapshot: ${e.message}`);
+      fallbackToSnapshot = true;
       liveStats = {
         followers_count: latestSnapshot?.followers ?? 0,
         follows_count: latestSnapshot?.following ?? 0,
         media_count: latestSnapshot?.mediaCount ?? 0
       };
+    }
+
+    // If we have NO data at all (no snapshot, no live stats), return 503 so frontend knows to retry later
+    if (fallbackToSnapshot && !latestSnapshot && liveStats.followers_count === 0 && account.isConnected) {
+       return res.status(503).json({
+         success: false,
+         error: 'Meta API Unavailable',
+         message: 'Real-time data could not be fetched and no cached snapshots exist. Please try again in 1 minute.',
+         isRefreshing: true
+       });
     }
 
     // Improved Previous Snapshot Lookup (find most recent snapshot before today)
@@ -244,6 +261,7 @@ const getDashboard = async (req, res) => {
     res.status(200).json({
       success: true,
       isRefreshing: isStale,
+      isFallback: fallbackToSnapshot,
       lastUpdated: latestSnapshot?.snapshotDate || null,
       data: {
         current: {
