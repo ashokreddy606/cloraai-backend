@@ -192,7 +192,32 @@ const login = async (req, res) => {
       new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) :
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    // 🚀 BACKGROUND TASK: Side Effects (Session Update, FCM Registration, etc)
+    // 🚀 SYNC SESSION CREATION (Required for immediate Auth middleware success)
+    await prisma.loginSession.create({
+      data: {
+        userId: user.id,
+        deviceName,
+        deviceType,
+        os,
+        browser,
+        ipAddress,
+        city: location.city,
+        region: location.region,
+        country: location.country,
+        timezone: location.timezone,
+        sessionToken,
+        isCurrent: true,
+        loginTime: new Date(),
+        lastActive: new Date(),
+        expiresAt
+      }
+    });
+
+    if (redisClient && process.env.NODE_ENV !== 'test') {
+      await redisClient.set(`refresh_token:${user.id.toString()}:${sessionToken}`, 'valid', 'EX', 7 * 24 * 60 * 60);
+    }
+
+    // 🚀 BACKGROUND TASK: Non-critical side effects (FCM Registration, etc)
     enqueueJob(authQueue, 'process-login-side-effects', {
       userId: user.id,
       fcmToken,
@@ -200,13 +225,7 @@ const login = async (req, res) => {
       deviceId,
       platform,
       deviceName,
-      deviceType,
-      os,
-      browser,
-      ipAddress,
-      location,
-      sessionToken,
-      expiresAt
+      os
     });
 
     await prisma.user.update({
