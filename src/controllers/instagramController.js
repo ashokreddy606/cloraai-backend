@@ -141,6 +141,17 @@ const handleOAuthCallback = async (req, res) => {
       mediaCount: profileData.media_count || 0
     };
 
+    // Professional Duplicate Account Check
+    const existingOtherAccount = await prisma.instagramAccount.findUnique({
+      where: { instagramId: instagramBusinessAccountId }
+    });
+
+    if (existingOtherAccount && existingOtherAccount.userId !== connectionUserId) {
+        logger.warn('INSTAGRAM', `Connection failed: IG Account ${instagramBusinessAccountId} already linked to user ${existingOtherAccount.userId}`);
+        const errorMsg = 'This Instagram account is already connected with another user. Please try another username or another Instagram account.';
+        return res.redirect(`${FRONTEND_URL}/instagram-error?error=duplicate_account&message=${encodeURIComponent(errorMsg)}`);
+    }
+
     await prisma.instagramAccount.upsert({
       where: { userId: connectionUserId },
       create: { 
@@ -380,19 +391,27 @@ const getPosts = async (req, res) => {
     if (!accessToken) return res.status(401).json({ error: 'Invalid access token. Please reconnect Instagram.' });
 
     const posts = await instagramService.getUserMedia(account.instagramId, accessToken);
-    
-    const enrichedPosts = await Promise.all(posts.slice(0, 50).map(async (post) => {
-      try {
-        const insights = await instagramService.getMediaInsights(post.id, accessToken, post.media_type);
-        // Create a display title from caption or metadata
-        const displayTitle = post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}`;
-        return { ...post, ...insights, title: displayTitle };
-      } catch (err) {
-        return { ...post, title: post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}` };
-      }
-    }));
+    if (!posts || !Array.isArray(posts)) throw new Error('No media found for this account.');
 
-    await cache.set(cacheKey, enrichedPosts, 600); // 10 min TTL
+    const isQuickMode = req.query.quick === 'true';
+    
+    // For quick mode (used in Reel Selection grid), skip enrichment to save high latency
+    const enrichedPosts = isQuickMode 
+      ? posts.slice(0, 75).map(post => ({
+          ...post,
+          title: post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}`
+        }))
+      : await Promise.all(posts.slice(0, 50).map(async (post) => {
+          try {
+            const insights = await instagramService.getMediaInsights(post.id, accessToken, post.media_type);
+            const displayTitle = post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}`;
+            return { ...post, ...insights, title: displayTitle };
+          } catch (err) {
+            return { ...post, title: post.caption || `Post from ${new Date(post.timestamp).toLocaleDateString()}` };
+          }
+        }));
+
+    await cache.set(cacheKey, enrichedPosts, isQuickMode ? 120 : 600); 
 
     res.status(200).json({ success: true, data: enrichedPosts });
   } catch (error) {
